@@ -84,6 +84,9 @@
             align-items: center;
             gap: 8px;
             min-width: 0;
+            flex: 1;
+            overflow: hidden;
+            padding-right: 8px;
         }
 
         .titlebar-logo {
@@ -99,6 +102,8 @@
             font-weight: 600;
             letter-spacing: 0.02em;
             white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
 
         .titlebar .window-controls {
@@ -310,7 +315,7 @@
     <div class="titlebar">
         <div class="titlebar-brand">
             <img src="./logo.png" alt="" class="titlebar-logo" width="18" height="18" />
-            <span class="app-name">Zyron</span>
+            <span id="titlebar-title" class="app-name">Zyron</span>
         </div>
         <div class="window-controls">
             <button id="min-btn" type="button" aria-label="Minimizar">
@@ -417,7 +422,7 @@
                         <div class="flex flex-wrap items-center justify-between gap-3 py-1">
                             <label class="flex items-center gap-3 cursor-pointer select-none">
                                 <input class="w-4 h-4 rounded border-outline/40 text-primary focus:ring-primary/25 cursor-pointer" type="checkbox" name="remember" />
-                                <span class="text-sm text-on-surface-variant font-medium">Mantener sesión iniciada</span>
+                                <span class="text-sm text-on-surface-variant font-medium">Recordar contraseña</span>
                             </label>
                             <a class="text-sm font-semibold text-primary hover:text-tertiary transition-colors" href="#">¿Olvidaste tu contraseña?</a>
                         </div>
@@ -429,6 +434,7 @@
                             <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
                         </button>
                     </form>
+                    <p id="login-status" class="hidden form-status" role="status" aria-live="polite"></p>
                     <div class="relative flex items-center gap-4 py-1">
                         <div class="flex-grow h-px bg-outline-variant/40"></div>
                         <span class="text-[0.65rem] font-bold tracking-[0.12em] text-on-surface-variant/65 uppercase">O accede con</span>
@@ -615,7 +621,7 @@
         </nav>
 
         <div class="flex min-w-0 min-h-0 flex-1 flex-col">
-            <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-outline-variant/50 bg-surface-container-low px-5 lg:px-8">
+            <header id="dashboard-app-header" class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-outline-variant/50 bg-surface-container-low px-5 lg:px-8">
                 <div class="flex min-w-0 flex-1 items-center gap-5">
                     <button id="sidebar-toggle-btn" type="button" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-black/[0.04]" aria-label="Ocultar barra lateral" title="Ocultar barra lateral">
                         <span id="sidebar-toggle-icon" class="material-symbols-outlined text-[22px]">menu_open</span>
@@ -646,7 +652,8 @@
             </header>
 
             <main class="dash-main p-6 lg:p-9">
-                <div class="mx-auto flex w-full max-w-7xl flex-col gap-8">
+                <div id="session-notice-banner" class="mx-auto mb-4 hidden w-full max-w-7xl rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3 text-sm text-on-surface" role="status"></div>
+                <div id="dashboard-content" class="mx-auto flex w-full max-w-7xl flex-col gap-8">
                     <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
                         <div>
                             <h2 class="font-headline text-2xl font-bold tracking-tight text-primary">Resumen operativo</h2>
@@ -714,43 +721,64 @@
                                         <button type="button" class="rounded-md px-3 py-1 text-xs font-medium text-on-surface-variant hover:bg-surface-container/60">Trimestral</button>
                                     </div>
                                 </div>
-                                <div class="relative flex h-64 w-full items-stretch gap-1 border-b border-outline-variant/25 pt-4 pl-7 pr-1 pb-7">
-                                    <div class="pointer-events-none absolute bottom-8 left-0 top-4 flex w-6 flex-col justify-between text-[10px] font-medium text-outline">
+                                <div class="relative w-full rounded-lg border border-outline-variant/25 bg-surface px-2 py-3">
+                                    <div class="pointer-events-none absolute left-9 right-2 top-3 bottom-10 flex flex-col justify-between">
+                                        <div class="h-px bg-outline-variant/30"></div>
+                                        <div class="h-px bg-outline-variant/25"></div>
+                                        <div class="h-px bg-outline-variant/20"></div>
+                                        <div class="h-px bg-outline-variant/15"></div>
+                                        <div class="h-px bg-outline-variant/30"></div>
+                                    </div>
+                                    <div class="pointer-events-none absolute left-2 top-3 bottom-10 flex w-6 flex-col justify-between text-[11px] font-semibold text-on-surface-variant">
                                         <span>1&nbsp;M</span>
                                         <span>750&nbsp;k</span>
                                         <span>500&nbsp;k</span>
                                         <span>250&nbsp;k</span>
                                         <span>0</span>
                                     </div>
-                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
-                                        <div class="h-[60%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                        <div class="h-[40%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
-                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Ene</span>
-                                    </div>
-                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
-                                        <div class="h-[75%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                        <div class="h-[45%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
-                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Feb</span>
-                                    </div>
-                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
-                                        <div class="h-[65%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                        <div class="h-[50%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
-                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Mar</span>
-                                    </div>
-                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
-                                        <div class="h-[85%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                        <div class="h-[55%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
-                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Abr</span>
-                                    </div>
-                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
-                                        <div class="h-[90%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                        <div class="h-[60%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
-                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">May</span>
-                                    </div>
-                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
-                                        <div class="h-[70%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                        <div class="h-[45%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
-                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Jun</span>
+                                    <div class="relative ml-8 flex h-56 min-w-0 items-end gap-2">
+                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
+                                                <div class="h-[60%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                                <div class="h-[40%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
+                                            </div>
+                                            <span class="text-[11px] font-semibold text-primary/80">Ene</span>
+                                        </div>
+                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
+                                                <div class="h-[75%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                                <div class="h-[45%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
+                                            </div>
+                                            <span class="text-[11px] font-semibold text-primary/80">Feb</span>
+                                        </div>
+                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
+                                                <div class="h-[65%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                                <div class="h-[50%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
+                                            </div>
+                                            <span class="text-[11px] font-semibold text-primary/80">Mar</span>
+                                        </div>
+                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
+                                                <div class="h-[85%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                                <div class="h-[55%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
+                                            </div>
+                                            <span class="text-[11px] font-semibold text-primary/80">Abr</span>
+                                        </div>
+                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
+                                                <div class="h-[90%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                                <div class="h-[60%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
+                                            </div>
+                                            <span class="text-[11px] font-semibold text-primary/80">May</span>
+                                        </div>
+                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
+                                                <div class="h-[70%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                                <div class="h-[45%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
+                                            </div>
+                                            <span class="text-[11px] font-semibold text-primary/80">Jun</span>
+                                        </div>
                                     </div>
                                 </div>
                                 <div class="mt-8 flex flex-wrap justify-center gap-6">
@@ -932,15 +960,88 @@
             }
         };
 
-        window.electronAPI.onWindowMaximized(updateMaximizeIcon);
-
-        document.getElementById('min-btn').addEventListener('click', () => window.electronAPI.minimize());
-        document.getElementById('max-btn').addEventListener('click', () => window.electronAPI.maximize());
-        document.getElementById('close-btn').addEventListener('click', () => window.electronAPI.close());
+        if (window.electronAPI) {
+            window.electronAPI.onWindowMaximized(updateMaximizeIcon);
+            document.getElementById('min-btn').addEventListener('click', () => window.electronAPI.minimize());
+            document.getElementById('max-btn').addEventListener('click', () => window.electronAPI.maximize());
+            document.getElementById('close-btn').addEventListener('click', () => window.electronAPI.close());
+        }
 
         const passwordInput = document.getElementById('password');
         const togglePw = document.getElementById('toggle-password');
         const pwIcon = document.getElementById('pw-icon');
+        const loginForm = document.getElementById('login-form');
+        const registerForm = document.getElementById('register-form');
+        const openRegisterLink = document.getElementById('open-register-link');
+        const backToLoginLink = document.getElementById('back-to-login-link');
+        const logoutBtn = document.getElementById('logout-btn');
+        const loginStatus = document.getElementById('login-status');
+        const registerStatus = document.getElementById('register-status');
+
+        const viewLogin = document.getElementById('view-login');
+        const viewRegister = document.getElementById('view-register');
+        const viewDashboard = document.getElementById('view-dashboard');
+        const sidebarNav = document.getElementById('sidebar-nav');
+        const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        const sidebarToggleIcon = document.getElementById('sidebar-toggle-icon');
+        const sidebarModulesContainer = sidebarNav.querySelector('.flex.flex-1.flex-col.gap-1');
+        const dashboardContent = document.getElementById('dashboard-content');
+        const titlebarTitleEl = document.getElementById('titlebar-title');
+        const dashboardAppHeader = document.getElementById('dashboard-app-header');
+
+        const defaultDashboardMarkup = dashboardContent.innerHTML;
+        const sessionNoticeBanner = document.getElementById('session-notice-banner');
+
+        const state = {
+            sessionUser: null,
+            appUser: null,
+            membership: null,
+            currentTenantId: null,
+            isSuperAdmin: false,
+            currentModule: 'panel'
+        };
+
+        const isTenantPendingApproval = () =>
+            Boolean(state.appUser && !state.isSuperAdmin && String(state.appUser.status || '').toLowerCase() === 'pending');
+
+        const updateSessionNoticeBanner = () => {
+            if (!sessionNoticeBanner) return;
+            sessionNoticeBanner.textContent = '';
+            sessionNoticeBanner.classList.add('hidden');
+        };
+
+        const superAdminModules = [
+            { key: 'empresas', label: 'Empresas', icon: 'apartment' }
+        ];
+
+        const tenantModules = [
+            { key: 'panel', label: 'Panel principal', icon: 'dashboard' },
+            { key: 'usuarios', label: 'Usuarios', icon: 'group' },
+            { key: 'roles', label: 'Roles', icon: 'admin_panel_settings' },
+            { key: 'facturas', label: 'Facturas', icon: 'receipt_long' },
+            { key: 'pagos', label: 'Pagos y cobros', icon: 'payments' },
+            { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
+            { key: 'clientes', label: 'Clientes', icon: 'groups' },
+            { key: 'reportes', label: 'Reportes', icon: 'monitoring' },
+            { key: 'config', label: 'Configuracion', icon: 'settings' }
+        ];
+
+        const permissionCatalog = [
+            { key: 'users.manage', label: 'Gestion de usuarios' },
+            { key: 'roles.manage', label: 'Gestion de roles' },
+            { key: 'billing.manage', label: 'Facturacion' },
+            { key: 'inventory.manage', label: 'Inventario' },
+            { key: 'reports.view', label: 'Reportes' }
+        ];
+
+        const rolePresets = [
+            { role_key: 'tenant_admin', label: 'Admin empresa', hierarchy_level: 10, permissions: permissionCatalog.map((p) => p.key) },
+            { role_key: 'manager', label: 'Gerente', hierarchy_level: 20, permissions: ['users.manage', 'billing.manage', 'inventory.manage', 'reports.view'] },
+            { role_key: 'billing_agent', label: 'Facturacion', hierarchy_level: 30, permissions: ['billing.manage', 'reports.view'] },
+            { role_key: 'inventory_agent', label: 'Inventario', hierarchy_level: 40, permissions: ['inventory.manage'] },
+            { role_key: 'viewer', label: 'Solo lectura', hierarchy_level: 50, permissions: ['reports.view'] }
+        ];
+
         togglePw.addEventListener('click', () => {
             const show = passwordInput.type === 'password';
             passwordInput.type = show ? 'text' : 'password';
@@ -948,18 +1049,88 @@
             togglePw.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
         });
 
-        const viewLogin = document.getElementById('view-login');
-        const viewRegister = document.getElementById('view-register');
-        const viewDashboard = document.getElementById('view-dashboard');
-        const registerStatus = document.getElementById('register-status');
-        const sidebarNav = document.getElementById('sidebar-nav');
-        const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
-        const sidebarToggleIcon = document.getElementById('sidebar-toggle-icon');
+        const setStatus = (el, message, isError = false) => {
+            if (!el) return;
+            el.textContent = message;
+            el.classList.remove('hidden');
+            el.classList.toggle('form-status--error', isError);
+        };
 
-        const setRegisterStatus = (message, isError = false) => {
-            registerStatus.textContent = message;
-            registerStatus.classList.remove('hidden');
-            registerStatus.classList.toggle('form-status--error', isError);
+        const clearStatus = (el) => {
+            if (!el) return;
+            el.classList.add('hidden');
+            el.textContent = '';
+            el.classList.remove('form-status--error');
+        };
+
+        const hideAllViews = () => {
+            viewLogin.classList.add('hidden');
+            viewRegister.classList.add('hidden');
+            viewDashboard.classList.add('hidden');
+        };
+
+        const sessionDisplayName = () => {
+            const u = state.appUser;
+            if (!u) return '';
+            const name = String(u.full_name || '').trim();
+            if (name) return name;
+            const email = String(u.email || '').trim();
+            if (email) return email.split('@')[0] || email;
+            const authMail = String(state.sessionUser?.email || '').trim();
+            if (authMail) return authMail.split('@')[0] || authMail;
+            return 'Usuario';
+        };
+
+        const updateTitlebarAndDocumentTitle = () => {
+            if (!titlebarTitleEl) return;
+            if (!state.appUser) {
+                titlebarTitleEl.textContent = 'Zyron';
+                return;
+            }
+            const who = sessionDisplayName();
+            titlebarTitleEl.textContent = `Zyron — ${who}`;
+        };
+
+        const showLogin = () => {
+            hideAllViews();
+            viewLogin.classList.remove('hidden');
+            document.title = 'Zyron | Acceder';
+            if (titlebarTitleEl) titlebarTitleEl.textContent = 'Zyron';
+            sidebarNav?.classList.remove('hidden');
+            sidebarToggleBtn?.classList.remove('pointer-events-none', 'opacity-40');
+            dashboardAppHeader?.classList.remove('hidden');
+        };
+
+        const showRegister = () => {
+            hideAllViews();
+            viewRegister.classList.remove('hidden');
+            document.title = 'Zyron | Registrarse';
+            if (titlebarTitleEl) titlebarTitleEl.textContent = 'Zyron';
+            sidebarNav?.classList.remove('hidden');
+            sidebarToggleBtn?.classList.remove('pointer-events-none', 'opacity-40');
+            dashboardAppHeader?.classList.remove('hidden');
+        };
+
+        const showDashboard = () => {
+            hideAllViews();
+            viewDashboard.classList.remove('hidden');
+            const who = sessionDisplayName();
+            if (isTenantPendingApproval()) {
+                document.title = 'Zyron | Pendiente de aprobacion';
+            } else {
+                document.title = state.isSuperAdmin ? `Zyron — ${who} | Super Admin` : `Zyron — ${who} | Panel`;
+            }
+            updateTitlebarAndDocumentTitle();
+            if (!isTenantPendingApproval()) {
+                updateSessionNoticeBanner();
+            } else if (sessionNoticeBanner) {
+                sessionNoticeBanner.classList.add('hidden');
+                sessionNoticeBanner.textContent = '';
+            }
+            if (dashboardAppHeader) {
+                if (isTenantPendingApproval()) dashboardAppHeader.classList.add('hidden');
+                else dashboardAppHeader.classList.remove('hidden');
+            }
         };
 
         const updateSidebarToggleState = () => {
@@ -970,96 +1141,1355 @@
             sidebarToggleBtn.setAttribute('title', label);
         };
 
-        const hideAllViews = () => {
-            viewLogin.classList.add('hidden');
-            viewRegister.classList.add('hidden');
-            viewDashboard.classList.add('hidden');
+        const toDateString = (value) => {
+            if (!value) return '-';
+            try {
+                return new Date(value).toLocaleDateString('es-DO');
+            } catch (_) {
+                return String(value);
+            }
         };
 
-        const showDashboard = () => {
-            hideAllViews();
-            viewDashboard.classList.remove('hidden');
-            document.title = 'Zyron | Panel principal';
+        const zyronLog = (tag, detail) => {
+            try {
+                if (typeof localStorage !== 'undefined' && localStorage.getItem('zyron_debug') === '0') return;
+            } catch (_) {
+                /* ignore */
+            }
+            console.log(`[Zyron:${tag}]`, detail);
         };
 
-        const showLogin = () => {
-            hideAllViews();
-            viewLogin.classList.remove('hidden');
-            document.title = 'Zyron | Acceder';
+        const safeCall = async (handler) => {
+            try {
+                return await handler();
+            } catch (error) {
+                zyronLog('safeCall:exception', { message: error.message || String(error) });
+                return { data: null, error: { message: error.message || String(error) } };
+            }
         };
 
-        const showRegister = () => {
-            hideAllViews();
-            viewRegister.classList.remove('hidden');
-            document.title = 'Zyron | Solicitar acceso';
+        const dbSelect = (payload) => safeCall(() => window.insforgeAPI.database.select(payload));
+        const dbInsert = (payload) => safeCall(() => window.insforgeAPI.database.insert(payload));
+        const dbUpdate = (payload) => safeCall(() => window.insforgeAPI.database.update(payload));
+        const dbDelete = (payload) => safeCall(() => window.insforgeAPI.database.delete(payload));
+        const dbRpc = (functionName, args = {}) => safeCall(() => window.insforgeAPI.database.rpc({ functionName, args }));
+        const invokeFn = (slug, body = {}, method = 'POST') =>
+            safeCall(() => window.insforgeAPI.functions.invoke({ slug, body, method }));
+
+        const normalizeRpcRows = (data) => {
+            if (data == null) return [];
+            return Array.isArray(data) ? data : [data];
         };
 
-        document.getElementById('login-form').addEventListener('submit', (e) => {
-            e.preventDefault();
+        const APP_USER_STATUS_LABEL = {
+            pending: 'Pendiente (falta aprobar solicitud)',
+            approved: 'Aprobado',
+            active: 'Activo',
+            inactive: 'Inactivo (pago / bloqueo)',
+            suspended: 'Inactivo (pago / bloqueo)',
+            blocked: 'Bloqueado'
+        };
+        const formatAppUserStatus = (status) => APP_USER_STATUS_LABEL[String(status || '').toLowerCase()] || status || '-';
+
+        const REQUEST_STATUS_LABEL = {
+            pending: 'Pendiente',
+            approved: 'Aprobada',
+            rejected: 'Rechazada'
+        };
+        const formatRequestStatus = (status) => REQUEST_STATUS_LABEL[String(status || '').toLowerCase()] || status || '-';
+
+        const loadAppUsersSuperOrFallback = async () => {
+            const { data, error } = await dbRpc('super_admin_list_app_users', {});
+            if (!error && data != null) {
+                const rows = normalizeRpcRows(data);
+                zyronLog('loadAppUsersSuperOrFallback:rpc', { count: rows.length });
+                return rows;
+            }
+            zyronLog('loadAppUsersSuperOrFallback:fallback', { error: error?.message || error });
+            const { data: rows } = await dbSelect({ table: 'app_users', order: { column: 'created_at', ascending: false } });
+            return rows || [];
+        };
+
+        const loadAccessRequestsSuperOrFallback = async () => {
+            const { data, error } = await dbRpc('super_admin_list_user_access_requests', {});
+            if (!error && data != null) {
+                const rows = normalizeRpcRows(data);
+                zyronLog('loadAccessRequestsSuperOrFallback:rpc', { count: rows.length });
+                return rows;
+            }
+            zyronLog('loadAccessRequestsSuperOrFallback:fallback', { error: error?.message || error });
+            const { data: rows } = await dbSelect({ table: 'user_access_requests', order: { column: 'created_at', ascending: false } });
+            return rows || [];
+        };
+
+        const loadMyActiveMembershipsOrFallback = async (appUserId) => {
+            const { data, error } = await dbRpc('zyron_my_active_memberships', {});
+            if (!error && data != null) {
+                const rows = normalizeRpcRows(data);
+                zyronLog('loadMyActiveMembershipsOrFallback:rpc', { count: rows.length });
+                return { data: rows, error: null };
+            }
+            zyronLog('loadMyActiveMembershipsOrFallback:fallback', { error: error?.message || error });
+            return dbSelect({
+                table: 'tenant_memberships',
+                filters: [
+                    { op: 'eq', column: 'app_user_id', value: appUserId },
+                    { op: 'eq', column: 'status', value: 'active' }
+                ],
+                limit: 1
+            });
+        };
+
+        const runApproveAccessRequest = async (requestId, action) => {
+            if (!requestId) {
+                window.alert('Solicitud invalida.');
+                return { error: { message: 'Missing requestId' } };
+            }
+            zyronLog('approveAccessRequest', { requestId, action });
+            const res = await invokeFn('approve-access-request', { requestId, action });
+            if (res.error) {
+                zyronLog('approveAccessRequest:error', res.error);
+                window.alert(res.error.message || 'No se pudo completar la accion. Revisa que la funcion approve-access-request este desplegada.');
+                return res;
+            }
+            window.alert(
+                action === 'approve'
+                    ? 'Solicitud aprobada: empresa creada y usuario en estado Aprobado. La fila sale de solicitudes pendientes. Para cobros usa Suspender / Reactivar en Usuarios del sistema.'
+                    : 'Solicitud rechazada.'
+            );
+            return res;
+        };
+
+        const REMEMBER_EMAIL_KEY = 'zyron_remember_email';
+        const REMEMBER_PASSWORD_KEY = 'zyron_remember_password';
+
+        const applyRememberedCredentials = () => {
+            try {
+                const emailField = document.getElementById('email');
+                const rememberField = loginForm?.querySelector('input[name="remember"]');
+                const savedEmail = localStorage.getItem(REMEMBER_EMAIL_KEY);
+                const savedPassword = localStorage.getItem(REMEMBER_PASSWORD_KEY);
+                if (emailField && savedEmail) emailField.value = savedEmail;
+                if (passwordInput && savedPassword) passwordInput.value = savedPassword;
+                if (rememberField && savedEmail && savedPassword) rememberField.checked = true;
+            } catch (_) {
+                /* ignore */
+            }
+        };
+
+        applyRememberedCredentials();
+
+        const upsertAppUser = async (authUser) => {
+            const normalizedEmail = String(authUser.email || '').toLowerCase();
+            zyronLog('upsertAppUser:start', { authUserId: authUser.id, email: normalizedEmail });
+            const { data: existingRows, error: selectError } = await dbSelect({
+                table: 'app_users',
+                filters: [{ op: 'eq', column: 'auth_user_id', value: authUser.id }],
+                limit: 1
+            });
+            if (selectError) {
+                zyronLog('upsertAppUser:selectError', selectError);
+                return { appUser: null, error: selectError };
+            }
+
+            if (existingRows && existingRows.length > 0) {
+                const current = existingRows[0];
+                zyronLog('upsertAppUser:existing', { id: current.id, status: current.status, global_role: current.global_role });
+                if (normalizedEmail === 'admin@zyron.com' && current.global_role !== 'super_admin') {
+                    const { data: updatedRows } = await dbUpdate({
+                        table: 'app_users',
+                        values: { global_role: 'super_admin', status: 'active' },
+                        filters: [{ op: 'eq', column: 'id', value: current.id }]
+                    });
+                    return { appUser: (updatedRows && updatedRows[0]) || { ...current, global_role: 'super_admin' }, error: null };
+                }
+                return { appUser: current, error: null };
+            }
+
+            zyronLog('upsertAppUser:insertPath', { reason: 'no_row_for_auth_user', authUserId: authUser.id });
+            const isSuperEmail = normalizedEmail === 'admin@zyron.com';
+            const { data: insertedRows, error: insertError } = await dbInsert({
+                table: 'app_users',
+                values: [{
+                    auth_user_id: authUser.id,
+                    email: normalizedEmail,
+                    full_name: authUser.profile?.name || normalizedEmail.split('@')[0],
+                    global_role: isSuperEmail ? 'super_admin' : 'user',
+                    status: isSuperEmail ? 'active' : 'pending'
+                }]
+            });
+            if (insertError) zyronLog('upsertAppUser:insertError', insertError);
+            else zyronLog('upsertAppUser:insertOk', { id: insertedRows?.[0]?.id });
+            return { appUser: insertedRows && insertedRows[0], error: insertError };
+        };
+
+        const bootstrapSession = async () => {
+            zyronLog('bootstrapSession:start', {});
+            const { data: currentUserData, error: userError } = await safeCall(() => window.insforgeAPI.auth.getCurrentUser());
+            if (userError || !currentUserData?.user) {
+                zyronLog('bootstrapSession:noAuthUser', { userError: userError?.message });
+                return { ok: false, message: null };
+            }
+
+            const { appUser, error: appUserError } = await upsertAppUser(currentUserData.user);
+            if (appUserError || !appUser) {
+                zyronLog('bootstrapSession:appUserFailed', { appUserError: appUserError?.message || appUserError, hasAppUser: Boolean(appUser) });
+                return {
+                    ok: false,
+                    message: 'No se pudo cargar tu perfil de aplicacion. Si acabas de registrarte, espera un momento e intenta de nuevo.'
+                };
+            }
+
+            state.sessionUser = currentUserData.user;
+            state.appUser = appUser;
+            state.isSuperAdmin = appUser.global_role === 'super_admin';
+            zyronLog('bootstrapSession:appUser', { id: appUser.id, status: appUser.status, isSuperAdmin: state.isSuperAdmin });
+
+            const accountStatus = String(appUser.status || '').toLowerCase();
+            const pendingGate = !state.isSuperAdmin && accountStatus === 'pending';
+
+            if (!state.isSuperAdmin) {
+                const blockedAccountStatuses = ['suspended', 'inactive', 'blocked'];
+                if (blockedAccountStatuses.includes(accountStatus)) {
+                    zyronLog('bootstrapSession:accountBlocked', { status: appUser.status });
+                    await safeCall(() => window.insforgeAPI.auth.signOut());
+                    return {
+                        ok: false,
+                        message:
+                            'Tu cuenta no esta disponible para usar la aplicacion (servicio suspendido o inactivo). Si crees que es un error, contacta al administrador.'
+                    };
+                }
+
+                if (pendingGate) {
+                    state.membership = null;
+                    state.currentTenantId = null;
+                    zyronLog('bootstrapSession:pendingGate', { appUserId: appUser.id });
+                } else {
+                    const { data: memberships, error: membershipError } = await loadMyActiveMembershipsOrFallback(appUser.id);
+                    const activeRows = memberships && memberships.length ? memberships : [];
+                    if (membershipError) {
+                        zyronLog('bootstrapSession:membershipLoadWarning', { message: membershipError?.message || membershipError });
+                    }
+                    if (activeRows.length > 0) {
+                        state.membership = activeRows[0];
+                        state.currentTenantId = activeRows[0].tenant_id;
+                        zyronLog('bootstrapSession:tenant', { tenantId: state.currentTenantId });
+                    } else {
+                        state.membership = null;
+                        state.currentTenantId = null;
+                        zyronLog('bootstrapSession:noActiveTenant', { appUserStatus: appUser.status, hadMembershipError: Boolean(membershipError) });
+                    }
+                }
+            } else {
+                state.membership = null;
+                state.currentTenantId = null;
+            }
+
+            if (!pendingGate) {
+                void (async () => {
+                    await safeCall(() => window.insforgeAPI.realtime.connect());
+                    if (state.isSuperAdmin) {
+                        await safeCall(() => window.insforgeAPI.realtime.subscribe('super-admin:alerts'));
+                    } else if (state.currentTenantId) {
+                        await safeCall(() => window.insforgeAPI.realtime.subscribe(`tenant:${state.currentTenantId}:alerts`));
+                    }
+                })();
+            }
+
+            await renderSidebar();
             showDashboard();
+            if (pendingGate) {
+                await renderPendingApprovalScreen();
+                zyronLog('bootstrapSession:success', { module: 'pending-gate' });
+            } else {
+                void openModule(state.isSuperAdmin ? 'empresas' : 'panel');
+                zyronLog('bootstrapSession:success', { module: state.isSuperAdmin ? 'empresas' : 'panel' });
+            }
+            return { ok: true, message: null };
+        };
+
+        const renderPendingApprovalScreen = async () => {
+            state.currentModule = 'pending-gate';
+            sidebarToggleBtn?.classList.add('pointer-events-none', 'opacity-40');
+            refreshSidebarSelection();
+            dashboardContent.innerHTML = `
+                <div class="mx-auto flex w-full max-w-lg flex-col items-center justify-center gap-6 rounded-2xl border border-outline-variant/30 bg-surface-container-lowest p-10 text-center">
+                    <span class="material-symbols-outlined text-5xl text-primary/80" aria-hidden="true">hourglass_top</span>
+                    <div>
+                        <h2 class="text-xl font-bold text-primary">Cuenta pendiente de aprobacion</h2>
+                        <p class="mt-3 text-sm text-on-surface-variant leading-relaxed">
+                            Tu registro fue recibido. Un administrador debe aprobar tu solicitud antes de que puedas ver el panel y los modulos de la aplicacion.
+                        </p>
+                    </div>
+                    <button type="button" id="pending-gate-logout" class="rounded-lg border border-outline-variant/50 bg-surface-container px-5 py-2.5 text-sm font-semibold text-primary hover:bg-surface-container-high">
+                        Cerrar sesion
+                    </button>
+                </div>
+            `;
+            const gateBtn = document.getElementById('pending-gate-logout');
+            if (gateBtn) gateBtn.addEventListener('click', () => performLogout());
+        };
+
+        const renderSidebar = async () => {
+            sidebarModulesContainer.innerHTML = '';
+            if (isTenantPendingApproval()) {
+                refreshSidebarSelection();
+                return;
+            }
+            const allowedModules = state.isSuperAdmin ? superAdminModules : tenantModules;
+            for (const module of allowedModules) {
+                const link = document.createElement('a');
+                link.className = `nav-module ${module.key === state.currentModule ? 'is-active' : ''}`;
+                link.href = '#';
+                link.dataset.module = module.key;
+                if (module.key === state.currentModule) {
+                    link.setAttribute('aria-current', 'page');
+                }
+                link.innerHTML = `
+                    <span class="material-symbols-outlined text-[20px] shrink-0">${module.icon}</span>
+                    <span>${module.label}</span>
+                `;
+                link.addEventListener('click', async (event) => {
+                    event.preventDefault();
+                    await openModule(module.key);
+                });
+                sidebarModulesContainer.appendChild(link);
+            }
+        };
+
+        const refreshSidebarSelection = () => {
+            document.querySelectorAll('.nav-module[data-module]').forEach((el) => {
+                if (el.dataset.module === state.currentModule) {
+                    el.classList.add('is-active');
+                    el.setAttribute('aria-current', 'page');
+                } else {
+                    el.classList.remove('is-active');
+                    el.removeAttribute('aria-current');
+                }
+            });
+        };
+
+        const renderModuleHeader = (title, subtitle) => `
+            <div class="flex flex-col justify-between gap-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-5 sm:flex-row sm:items-center">
+                <div>
+                    <h2 class="text-2xl font-bold tracking-tight text-primary">${title}</h2>
+                    <p class="mt-1 text-sm text-on-surface-variant">${subtitle}</p>
+                </div>
+                <span class="inline-flex items-center rounded-full bg-surface-container px-3 py-1 text-xs font-semibold text-on-surface-variant">
+                    ${state.isSuperAdmin ? 'Super Admin' : (state.membership?.role_key || 'Usuario')}
+                </span>
+            </div>
+        `;
+
+        const renderPanelModule = async () => {
+            dashboardContent.innerHTML = defaultDashboardMarkup;
+            if (!state.isSuperAdmin) return;
+            const { data: overview } = await invokeFn('get-super-admin-overview', {}, 'GET');
+            if (!overview?.metrics) return;
+            const metrics = overview.metrics;
+            const wrapper = document.createElement('div');
+            wrapper.className = 'rounded-xl border border-outline-variant/30 bg-surface-container-low p-4';
+            wrapper.innerHTML = `
+                <h3 class="text-sm font-bold text-primary mb-3">Centro de control super admin</h3>
+                <div class="grid grid-cols-2 gap-3 md:grid-cols-4 text-sm">
+                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Empresas</div><div class="text-xl font-bold text-primary">${metrics.totalTenants}</div></div>
+                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Usuarios</div><div class="text-xl font-bold text-primary">${metrics.totalUsers}</div></div>
+                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Solicitudes</div><div class="text-xl font-bold text-primary">${metrics.pendingRequests}</div></div>
+                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Empresas bloqueadas</div><div class="text-xl font-bold text-primary">${metrics.blockedTenants}</div></div>
+                </div>
+            `;
+            dashboardContent.prepend(wrapper);
+        };
+
+        const renderEmpresasModule = async () => {
+            if (!state.isSuperAdmin) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Empresas', 'Solo disponible para super admin')}<div class="rounded-lg bg-error-container/20 p-4 text-sm text-error">No tienes acceso a este modulo.</div>`;
+                return;
+            }
+            const [{ data: tenants }, users, requests] = await Promise.all([
+                dbSelect({ table: 'tenants', order: { column: 'created_at', ascending: false } }),
+                loadAppUsersSuperOrFallback(),
+                loadAccessRequestsSuperOrFallback()
+            ]);
+            const usersAll = users || [];
+            const usersPanel = usersAll.filter((u) => u.global_role !== 'super_admin');
+            const tenantList = tenants || [];
+            const registrationRequests = (requests || []).filter((r) => String(r.request_status || '').toLowerCase() === 'pending');
+            const firstTenantId = tenantList[0]?.id || '';
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Empresas', 'Gestion global de empresas del SaaS')}
+                <div class="rounded-xl bg-surface-container-low p-1">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+                            <div>
+                                <h3 class="text-sm font-bold text-primary">Editar empresa</h3>
+                                <p class="text-xs text-on-surface-variant">Nombre legal, identificador, limites de usuarios y estado comercial.</p>
+                            </div>
+                            ${tenantList.length ? `
+                            <div class="flex flex-wrap gap-2">
+                                <label class="flex flex-col gap-1 text-xs text-on-surface-variant">
+                                    Seleccionar empresa
+                                    <select id="tenant-editor-select" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1 text-sm text-on-surface">
+                                        ${tenantList.map((tenant) => `
+                                            <option value="${tenant.id}">${tenant.display_name || tenant.legal_name || tenant.slug}</option>
+                                        `).join('')}
+                                    </select>
+                                </label>
+                            </div>
+                            ` : ''}
+                        </div>
+                        ${tenantList.length ? `
+                        <form id="tenant-profile-form" class="mt-4 grid gap-3 md:grid-cols-2">
+                            <label class="flex flex-col gap-1 text-xs text-on-surface-variant">
+                                Nombre visible
+                                <input name="display_name" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm text-on-surface" />
+                            </label>
+                            <label class="flex flex-col gap-1 text-xs text-on-surface-variant">
+                                Razon social
+                                <input name="legal_name" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm text-on-surface" />
+                            </label>
+                            <label class="flex flex-col gap-1 text-xs text-on-surface-variant">
+                                Slug (URL interna)
+                                <input name="slug" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm text-on-surface" />
+                            </label>
+                            <label class="flex flex-col gap-1 text-xs text-on-surface-variant">
+                                Max usuarios
+                                <input name="max_users" type="number" min="1" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm text-on-surface" />
+                            </label>
+                            <label class="flex items-center gap-2 text-sm text-on-surface md:col-span-2">
+                                <input name="allow_more_users" type="checkbox" class="h-4 w-4 rounded border-outline/40 text-primary" />
+                                Permitir superar el limite de usuarios (crecimiento)
+                            </label>
+                            <div class="flex flex-wrap gap-2 md:col-span-2">
+                                <button type="submit" class="rounded-md bg-primary px-3 py-2 text-xs font-semibold text-white">Guardar cambios</button>
+                                <button type="button" id="tenant-editor-block" class="rounded-md bg-error px-3 py-2 text-xs font-semibold text-white">Bloquear empresa</button>
+                                <button type="button" id="tenant-editor-unblock" class="rounded-md bg-surface-container px-3 py-2 text-xs font-semibold text-on-surface">Desbloquear empresa</button>
+                            </div>
+                        </form>
+                        <p id="tenant-editor-status" class="mt-2 hidden text-xs" role="status"></p>
+                        ` : '<p class="mt-3 text-sm text-on-surface-variant">Aun no hay empresas registradas.</p>'}
+                    </div>
+                </div>
+                <div class="rounded-xl bg-surface-container-low p-1 mt-6">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <h3 class="mb-3 text-sm font-bold text-primary">Empresas registradas</h3>
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/30">
+                                    <th class="py-2">Empresa</th>
+                                    <th class="py-2">Estado</th>
+                                    <th class="py-2">Max usuarios</th>
+                                    <th class="py-2">Permite crecer</th>
+                                    <th class="py-2 text-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${tenantList.map((tenant) => `
+                                    <tr class="border-b border-outline-variant/20">
+                                        <td class="py-3 font-medium text-on-surface">${tenant.display_name}</td>
+                                        <td class="py-3">${tenant.status}</td>
+                                        <td class="py-3">${tenant.max_users}</td>
+                                        <td class="py-3">${tenant.allow_more_users ? 'Si' : 'No'}</td>
+                                        <td class="py-3 text-right">
+                                            <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white" data-tenant-edit="${tenant.id}">Editar</button>
+                                            <button type="button" class="rounded-md bg-surface-container px-2 py-1 text-xs" data-tenant-row-action="${tenant.status === 'blocked' ? 'unblock' : 'block'}" data-tenant-id="${tenant.id}">
+                                                ${tenant.status === 'blocked' ? 'Desbloquear' : 'Bloquear'}
+                                            </button>
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="rounded-xl bg-surface-container-low p-1 mt-6">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <h3 class="mb-1 text-sm font-bold text-primary">Usuarios del sistema</h3>
+                        <p class="mb-3 text-xs text-on-surface-variant">Estados: <strong>Pendiente</strong> (falta aprobar la solicitud), <strong>Aprobado</strong> (solicitud OK), <strong>Activo</strong> (servicio en uso), <strong>Inactivo</strong> (bloqueo por pago). Los botones de suspender / reactivar solo aparecen cuando el usuario ya esta <strong>Aprobado</strong>, <strong>Activo</strong> o <strong>Inactivo</strong>.</p>
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/30">
+                                    <th class="py-2">Correo</th>
+                                    <th class="py-2">Rol global</th>
+                                    <th class="py-2">Estado</th>
+                                    <th class="py-2 text-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${usersPanel.map((user) => `
+                                    <tr class="border-b border-outline-variant/20">
+                                        <td class="py-3">${user.email}</td>
+                                        <td class="py-3">${user.global_role}</td>
+                                        <td class="py-3">${formatAppUserStatus(user.status)}</td>
+                                        <td class="py-3 text-right">
+                                            <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-1" data-reset-password="${user.email}">Restablecer clave</button>
+                                            ${user.status === 'pending'
+                                                ? '<span class="text-xs text-on-surface-variant mr-1">Aprobar la solicitud de registro abajo.</span>'
+                                                : user.status === 'approved' || user.status === 'active' || user.status === 'inactive' || user.status === 'suspended'
+                                                  ? `<button type="button" class="rounded-md bg-surface-container px-2 py-1 text-xs mr-1" data-toggle-user-status="${user.id}" data-user-status="${user.status}">${user.status === 'inactive' || user.status === 'suspended' ? 'Reactivar (activo)' : 'Suspender por pago (inactivo)'}</button>`
+                                                  : ''}
+                                            ${user.status !== 'pending'
+                                                ? `<button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-delete-user="${user.id}">Eliminar</button>`
+                                                : ''}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="rounded-xl bg-surface-container-low p-1 mt-6">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <h3 class="mb-1 text-sm font-bold text-primary">Solicitudes de registro</h3>
+                        <p class="mb-3 text-xs text-on-surface-variant">Solo se listan solicitudes <strong>pendientes</strong>. Al aprobar, el usuario pasa a <strong>Aprobado</strong>, se crea la empresa y la fila desaparece de aqui. <strong>Rechazar</strong> marca la solicitud como rechazada.</p>
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/30">
+                                    <th class="py-2">Correo</th>
+                                    <th class="py-2">Empresa</th>
+                                    <th class="py-2">Usuario</th>
+                                    <th class="py-2">Estado</th>
+                                    <th class="py-2 text-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${registrationRequests.length === 0
+                                    ? `<tr><td colspan="5" class="py-4 text-sm text-on-surface-variant">No hay solicitudes pendientes.</td></tr>`
+                                    : registrationRequests
+                                          .map(
+                                              (item) => `
+                                    <tr class="border-b border-outline-variant/20">
+                                        <td class="py-3">${item.requested_email}</td>
+                                        <td class="py-3">${item.company_name}</td>
+                                        <td class="py-3">${item.username}</td>
+                                        <td class="py-3">${formatRequestStatus(item.request_status)}</td>
+                                        <td class="py-3 text-right">
+                                            <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}">Aprobar</button>
+                                            <button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-request-action="reject" data-request-id="${item.id}">Rechazar</button>
+                                        </td>
+                                    </tr>
+                                `
+                                          )
+                                          .join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            dashboardContent.querySelectorAll('[data-tenant-row-action]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const tenantId = button.getAttribute('data-tenant-id');
+                    const action = button.getAttribute('data-tenant-row-action');
+                    await invokeFn('manage-tenant', { tenantId, action });
+                    await renderEmpresasModule();
+                });
+            });
+
+            const tenantEditorSelect = dashboardContent.querySelector('#tenant-editor-select');
+            const tenantProfileForm = dashboardContent.querySelector('#tenant-profile-form');
+            const tenantEditorStatus = dashboardContent.querySelector('#tenant-editor-status');
+            const tenantEditorBlock = dashboardContent.querySelector('#tenant-editor-block');
+            const tenantEditorUnblock = dashboardContent.querySelector('#tenant-editor-unblock');
+
+            const setTenantEditorStatus = (message, isError = false) => {
+                if (!tenantEditorStatus) return;
+                tenantEditorStatus.textContent = message || '';
+                tenantEditorStatus.classList.toggle('hidden', !message);
+                tenantEditorStatus.classList.toggle('text-error', isError);
+                tenantEditorStatus.classList.toggle('text-on-surface-variant', !isError);
+            };
+
+            const fillTenantEditorForm = (tenantId) => {
+                if (!tenantProfileForm) return;
+                const tenant = tenantList.find((item) => item.id === tenantId);
+                if (!tenant) return;
+                tenantProfileForm.display_name.value = tenant.display_name || '';
+                tenantProfileForm.legal_name.value = tenant.legal_name || '';
+                tenantProfileForm.slug.value = tenant.slug || '';
+                tenantProfileForm.max_users.value = String(tenant.max_users || 1);
+                tenantProfileForm.allow_more_users.checked = Boolean(tenant.allow_more_users);
+                setTenantEditorStatus('');
+            };
+
+            if (tenantEditorSelect && tenantProfileForm) {
+                if (firstTenantId) tenantEditorSelect.value = firstTenantId;
+                fillTenantEditorForm(tenantEditorSelect.value || firstTenantId);
+
+                tenantEditorSelect.addEventListener('change', () => {
+                    fillTenantEditorForm(tenantEditorSelect.value);
+                });
+
+                tenantProfileForm.addEventListener('submit', async (event) => {
+                    event.preventDefault();
+                    const tenantId = tenantEditorSelect.value;
+                    if (!tenantId) return;
+                    const fd = new FormData(tenantProfileForm);
+                    const payload = {
+                        tenantId,
+                        action: 'update_profile',
+                        displayName: String(fd.get('display_name') || '').trim(),
+                        legalName: String(fd.get('legal_name') || '').trim(),
+                        slug: String(fd.get('slug') || '').trim().toLowerCase(),
+                        maxUsers: Number(fd.get('max_users') || 1),
+                        allowMoreUsers: Boolean(fd.get('allow_more_users'))
+                    };
+                    const { error } = await invokeFn('manage-tenant', payload);
+                    if (error) setTenantEditorStatus(error.message || 'No se pudo guardar.', true);
+                    else setTenantEditorStatus('Cambios guardados.');
+                    await renderEmpresasModule();
+                });
+            }
+
+            tenantEditorBlock?.addEventListener('click', async () => {
+                const tenantId = tenantEditorSelect?.value;
+                if (!tenantId) return;
+                await invokeFn('manage-tenant', { tenantId, action: 'block' });
+                await renderEmpresasModule();
+            });
+            tenantEditorUnblock?.addEventListener('click', async () => {
+                const tenantId = tenantEditorSelect?.value;
+                if (!tenantId) return;
+                await invokeFn('manage-tenant', { tenantId, action: 'unblock' });
+                await renderEmpresasModule();
+            });
+
+            dashboardContent.querySelectorAll('[data-tenant-edit]').forEach((button) => {
+                button.addEventListener('click', () => {
+                    const tenantId = button.getAttribute('data-tenant-edit');
+                    if (tenantEditorSelect && tenantId) {
+                        tenantEditorSelect.value = tenantId;
+                        fillTenantEditorForm(tenantId);
+                        tenantEditorSelect.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+            });
+
+            dashboardContent.querySelectorAll('[data-delete-user]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const userId = button.getAttribute('data-delete-user');
+                    const candidate = usersAll.find((item) => item.id === userId);
+                    if (!candidate || candidate.global_role === 'super_admin') return;
+                    await dbDelete({
+                        table: 'tenant_memberships',
+                        filters: [{ op: 'eq', column: 'app_user_id', value: userId }]
+                    });
+                    await dbDelete({
+                        table: 'app_users',
+                        filters: [{ op: 'eq', column: 'id', value: userId }]
+                    });
+                    await renderEmpresasModule();
+                });
+            });
+
+            dashboardContent.querySelectorAll('[data-reset-password]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const email = button.getAttribute('data-reset-password');
+                    if (!email) return;
+                    const { error } = await invokeFn('admin-reset-user-password', {
+                        targetEmail: email,
+                        reason: 'Super admin solicito restablecimiento'
+                    });
+                    if (error) window.alert(error.message || 'No se pudo enviar el correo de restablecimiento.');
+                    else window.alert('Se envio un correo para restablecer la contraseña.');
+                });
+            });
+
+            dashboardContent.querySelectorAll('[data-toggle-user-status]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const userId = button.getAttribute('data-toggle-user-status');
+                    const current = String(button.getAttribute('data-user-status') || 'active');
+                    if (current === 'pending') return;
+                    const normalized = current === 'suspended' ? 'inactive' : current;
+                    const next = normalized === 'inactive' ? 'active' : 'inactive';
+                    await dbUpdate({
+                        table: 'app_users',
+                        values: { status: next },
+                        filters: [{ op: 'eq', column: 'id', value: userId }]
+                    });
+                    await renderEmpresasModule();
+                });
+            });
+
+            dashboardContent.querySelectorAll('[data-request-action]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const requestId = button.getAttribute('data-request-id');
+                    const action = button.getAttribute('data-request-action');
+                    const { error } = await runApproveAccessRequest(requestId, action);
+                    if (!error) await renderEmpresasModule();
+                });
+            });
+        };
+
+        const renderSolicitudesModule = async () => {
+            let requests = [];
+            if (state.isSuperAdmin) {
+                const all = await loadAccessRequestsSuperOrFallback();
+                requests = (all || []).filter((r) => String(r.request_status || '').toLowerCase() === 'pending');
+            } else {
+                const { data } = await dbSelect({
+                    table: 'user_access_requests',
+                    filters: [{ op: 'eq', column: 'request_status', value: 'pending' }],
+                    order: { column: 'created_at', ascending: false }
+                });
+                requests = data || [];
+            }
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Solicitudes', 'Solo solicitudes pendientes de revision')}
+                <div class="rounded-xl bg-surface-container-low p-1">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/30">
+                                    <th class="py-2">Correo</th>
+                                    <th class="py-2">Empresa</th>
+                                    <th class="py-2">Usuario</th>
+                                    <th class="py-2">Estado</th>
+                                    <th class="py-2 text-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(requests || []).length === 0
+                                    ? `<tr><td colspan="5" class="py-4 text-sm text-on-surface-variant">No hay solicitudes pendientes.</td></tr>`
+                                    : (requests || [])
+                                          .map(
+                                              (item) => `
+                                    <tr class="border-b border-outline-variant/20">
+                                        <td class="py-3">${item.requested_email}</td>
+                                        <td class="py-3">${item.company_name}</td>
+                                        <td class="py-3">${item.username}</td>
+                                        <td class="py-3">${formatRequestStatus(item.request_status)}</td>
+                                        <td class="py-3 text-right">
+                                            ${state.isSuperAdmin ? `
+                                                <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}">Aprobar</button>
+                                                <button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-request-action="reject" data-request-id="${item.id}">Rechazar</button>
+                                            ` : '<span class="text-xs text-on-surface-variant">Solo el super admin puede aprobar.</span>'}
+                                        </td>
+                                    </tr>
+                                `
+                                          )
+                                          .join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            if (!state.isSuperAdmin) return;
+            dashboardContent.querySelectorAll('[data-request-action]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const requestId = button.getAttribute('data-request-id');
+                    const action = button.getAttribute('data-request-action');
+                    const { error } = await runApproveAccessRequest(requestId, action);
+                    if (!error) await renderSolicitudesModule();
+                });
+            });
+        };
+
+        const renderUsuariosModule = async () => {
+            let users = [];
+            if (state.isSuperAdmin) {
+                const raw = await loadAppUsersSuperOrFallback();
+                users = (raw || []).filter((u) => u.global_role !== 'super_admin');
+            } else if (state.currentTenantId) {
+                const { data: memberships } = await dbSelect({
+                    table: 'tenant_memberships',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }]
+                });
+                const appUserIds = (memberships || []).map((row) => row.app_user_id);
+                if (appUserIds.length > 0) {
+                    const { data } = await dbSelect({
+                        table: 'app_users',
+                        filters: [{ op: 'in', column: 'id', value: appUserIds }]
+                    });
+                    users = data || [];
+                }
+            }
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Usuarios', 'Gestion de usuarios, bloqueo y restablecimiento')}
+                <div class="rounded-xl bg-surface-container-low p-1">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <div class="mb-4 flex gap-2">
+                            <input id="new-user-email" class="w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="correo@empresa.com" />
+                            <input id="new-user-role" class="w-44 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="staff" />
+                            <button id="add-user-btn" type="button" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Agregar</button>
+                        </div>
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/30">
+                                    <th class="py-2">Correo</th>
+                                    <th class="py-2">Rol global</th>
+                                    <th class="py-2">Estado</th>
+                                    <th class="py-2 text-right">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${users.map((user) => `
+                                    <tr class="border-b border-outline-variant/20">
+                                        <td class="py-3">${user.email}</td>
+                                        <td class="py-3">${user.global_role}</td>
+                                        <td class="py-3">${formatAppUserStatus(user.status)}</td>
+                                        <td class="py-3 text-right">
+                                            <button type="button" class="rounded-md bg-surface-container px-2 py-1 text-xs mr-2" data-reset-email="${user.email}">Reset pass</button>
+                                            ${state.currentTenantId ? `<button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white mr-2" data-suspend-email="${user.email}">Suspender</button>` : ''}
+                                            ${user.global_role === 'super_admin'
+                                                ? '<span class="text-xs font-semibold text-on-surface-variant">Protegido</span>'
+                                                : `<button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-delete-user="${user.id}">Eliminar</button>`}
+                                        </td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+
+            const addUserBtn = document.getElementById('add-user-btn');
+            if (addUserBtn && state.currentTenantId) {
+                addUserBtn.addEventListener('click', async () => {
+                    const targetEmail = document.getElementById('new-user-email').value.trim();
+                    const roleKey = document.getElementById('new-user-role').value.trim() || 'staff';
+                    if (!targetEmail) return;
+                    await invokeFn('manage-tenant-user', { tenantId: state.currentTenantId, targetEmail, roleKey, action: 'upsert' });
+                    await renderUsuariosModule();
+                });
+            } else if (addUserBtn) {
+                addUserBtn.disabled = true;
+                addUserBtn.classList.add('opacity-50');
+            }
+
+            dashboardContent.querySelectorAll('[data-reset-email]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    await invokeFn('admin-reset-user-password', {
+                        tenantId: state.currentTenantId,
+                        targetEmail: button.getAttribute('data-reset-email')
+                    });
+                });
+            });
+
+            dashboardContent.querySelectorAll('[data-suspend-email]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    await invokeFn('manage-tenant-user', {
+                        tenantId: state.currentTenantId,
+                        targetEmail: button.getAttribute('data-suspend-email'),
+                        action: 'suspend'
+                    });
+                    await renderUsuariosModule();
+                });
+            });
+
+            dashboardContent.querySelectorAll('[data-delete-user]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const userId = button.getAttribute('data-delete-user');
+                    const user = (users || []).find((item) => item.id === userId);
+                    if (user?.global_role === 'super_admin') return;
+                    if (state.isSuperAdmin) {
+                        await dbDelete({
+                            table: 'tenant_memberships',
+                            filters: [{ op: 'eq', column: 'app_user_id', value: userId }]
+                        });
+                        await dbDelete({
+                            table: 'app_users',
+                            filters: [{ op: 'eq', column: 'id', value: userId }]
+                        });
+                    } else if (state.currentTenantId) {
+                        await dbDelete({
+                            table: 'tenant_memberships',
+                            filters: [
+                                { op: 'eq', column: 'tenant_id', value: state.currentTenantId },
+                                { op: 'eq', column: 'app_user_id', value: userId }
+                            ]
+                        });
+                    }
+                    await renderUsuariosModule();
+                });
+            });
+        };
+
+        const ensureRolePresetsForTenant = async (tenantId) => {
+            if (!tenantId) return;
+
+            const { data: existingRoles } = await dbSelect({
+                table: 'role_catalog',
+                filters: [{ op: 'eq', column: 'tenant_id', value: tenantId }]
+            });
+            const roleMap = new Map((existingRoles || []).map((role) => [role.role_key, role]));
+
+            for (const preset of rolePresets) {
+                if (roleMap.has(preset.role_key)) continue;
+                const { data: inserted } = await dbInsert({
+                    table: 'role_catalog',
+                    values: [{
+                        tenant_id: tenantId,
+                        role_key: preset.role_key,
+                        label: preset.label,
+                        hierarchy_level: preset.hierarchy_level,
+                        is_system: true
+                    }]
+                });
+                if (inserted?.[0]) roleMap.set(preset.role_key, inserted[0]);
+            }
+
+            const { data: permissionRows } = await dbSelect({ table: 'permission_catalog' });
+            const permissionMap = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
+
+            for (const preset of rolePresets) {
+                const role = roleMap.get(preset.role_key);
+                if (!role) continue;
+                const { data: assignedRows } = await dbSelect({
+                    table: 'role_permissions',
+                    filters: [{ op: 'eq', column: 'role_id', value: role.id }]
+                });
+                const assignedPermissionIds = new Set((assignedRows || []).map((row) => row.permission_id));
+                for (const key of preset.permissions) {
+                    const permissionId = permissionMap.get(key);
+                    if (!permissionId || assignedPermissionIds.has(permissionId)) continue;
+                    await dbInsert({
+                        table: 'role_permissions',
+                        values: [{ role_id: role.id, permission_id: permissionId }]
+                    });
+                }
+            }
+        };
+
+        const renderRolesModule = async () => {
+            if (!state.currentTenantId) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Roles', 'Los roles predefinidos se gestionan por empresa activa')}`;
+                return;
+            }
+
+            await ensureRolePresetsForTenant(state.currentTenantId);
+
+            const [{ data: roles }, { data: permissionRows }] = await Promise.all([
+                dbSelect({
+                    table: 'role_catalog',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                    order: { column: 'hierarchy_level', ascending: true }
+                }),
+                dbSelect({ table: 'permission_catalog' })
+            ]);
+            const permissionMap = new Map((permissionRows || []).map((perm) => [perm.id, perm.permission_key]));
+
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Roles', 'Roles predefinidos con permisos en cascada y ajustes especificos')}
+                <div class="rounded-xl bg-surface-container-low p-1">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <p class="mb-4 text-sm text-on-surface-variant">No se crean roles manuales. Usa presets y ajusta permisos especificos.</p>
+                        <div class="space-y-4">
+                            ${(roles || []).map((role) => `
+                                <div class="rounded-lg border border-outline-variant/30 p-4">
+                                    <div class="mb-3 flex items-center justify-between">
+                                        <div>
+                                            <h4 class="font-semibold text-primary">${role.label}</h4>
+                                            <p class="text-xs text-on-surface-variant">${role.role_key} · nivel ${role.hierarchy_level}</p>
+                                        </div>
+                                        <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white" data-role-save="${role.id}">Guardar permisos</button>
+                                    </div>
+                                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                        ${permissionCatalog.map((permission) => `
+                                            <label class="flex items-center gap-2 text-sm">
+                                                <input type="checkbox" class="h-4 w-4" data-role-perm-role="${role.id}" data-role-perm-key="${permission.key}" />
+                                                <span>${permission.label}</span>
+                                            </label>
+                                        `).join('')}
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            for (const role of roles || []) {
+                const { data: assignedRows } = await dbSelect({
+                    table: 'role_permissions',
+                    filters: [{ op: 'eq', column: 'role_id', value: role.id }]
+                });
+                const assignedKeys = new Set((assignedRows || []).map((row) => permissionMap.get(row.permission_id)).filter(Boolean));
+                dashboardContent.querySelectorAll(`[data-role-perm-role="${role.id}"]`).forEach((checkbox) => {
+                    const key = checkbox.getAttribute('data-role-perm-key');
+                    checkbox.checked = assignedKeys.has(key);
+                });
+            }
+
+            dashboardContent.querySelectorAll('[data-role-save]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const roleId = button.getAttribute('data-role-save');
+                    const selectedKeys = Array.from(dashboardContent.querySelectorAll(`[data-role-perm-role="${roleId}"]`))
+                        .filter((checkbox) => checkbox.checked)
+                        .map((checkbox) => checkbox.getAttribute('data-role-perm-key'));
+
+                    const { data: existingRows } = await dbSelect({
+                        table: 'role_permissions',
+                        filters: [{ op: 'eq', column: 'role_id', value: roleId }]
+                    });
+                    for (const row of existingRows || []) {
+                        await dbDelete({
+                            table: 'role_permissions',
+                            filters: [{ op: 'eq', column: 'id', value: row.id }]
+                        });
+                    }
+
+                    const { data: allPermissions } = await dbSelect({ table: 'permission_catalog' });
+                    const permissionByKey = new Map((allPermissions || []).map((perm) => [perm.permission_key, perm.id]));
+                    const payload = selectedKeys
+                        .map((key) => permissionByKey.get(key))
+                        .filter(Boolean)
+                        .map((permissionId) => ({ role_id: roleId, permission_id: permissionId }));
+                    if (payload.length > 0) {
+                        await dbInsert({
+                            table: 'role_permissions',
+                            values: payload
+                        });
+                    }
+                });
+            });
+        };
+
+        const renderFacturasModule = async () => {
+            if (!state.currentTenantId) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Facturas', 'Necesitas seleccionar una empresa')}`;
+                return;
+            }
+            const { data: invoices } = await dbSelect({
+                table: 'invoices',
+                filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                order: { column: 'created_at', ascending: false }
+            });
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Facturas', 'Creacion y seguimiento de facturas')}
+                <div class="rounded-xl bg-surface-container-low p-1">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <div class="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
+                            <input id="invoice-customer-id" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Customer ID (opcional)" />
+                            <input id="invoice-desc" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Descripcion" />
+                            <input id="invoice-qty" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Cantidad" type="number" value="1" />
+                            <input id="invoice-price" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Precio" type="number" value="100" />
+                        </div>
+                        <button id="create-invoice-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white mb-4" type="button">Crear factura</button>
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/30">
+                                    <th class="py-2">Numero</th>
+                                    <th class="py-2">Estado</th>
+                                    <th class="py-2">Total</th>
+                                    <th class="py-2">Fecha</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(invoices || []).map((invoice) => `
+                                    <tr class="border-b border-outline-variant/20">
+                                        <td class="py-3">${invoice.series || 'FAC'}-${invoice.number}</td>
+                                        <td class="py-3">${invoice.status}</td>
+                                        <td class="py-3">${invoice.total}</td>
+                                        <td class="py-3">${toDateString(invoice.created_at)}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+            document.getElementById('create-invoice-btn').addEventListener('click', async () => {
+                const customerId = document.getElementById('invoice-customer-id').value.trim();
+                const description = document.getElementById('invoice-desc').value.trim() || 'Servicio';
+                const quantity = Number(document.getElementById('invoice-qty').value || 1);
+                const unitPrice = Number(document.getElementById('invoice-price').value || 0);
+                await invokeFn('create-invoice-with-stock', {
+                    tenantId: state.currentTenantId,
+                    customerId: customerId || null,
+                    items: [{ description, quantity, unitPrice, taxRate: 18 }]
+                });
+                await renderFacturasModule();
+            });
+        };
+
+        const renderSimpleCrudModule = async (key, table, title, subtitle, columns) => {
+            if (!state.currentTenantId) {
+                dashboardContent.innerHTML = `${renderModuleHeader(title, 'Necesitas una empresa activa para este modulo')}`;
+                return;
+            }
+            const { data: rows } = await dbSelect({
+                table,
+                filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                order: { column: 'created_at', ascending: false },
+                limit: 50
+            });
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader(title, subtitle)}
+                <div class="rounded-xl bg-surface-container-low p-1">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <table class="w-full text-left text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/30">
+                                    ${columns.map((col) => `<th class="py-2">${col.label}</th>`).join('')}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${(rows || []).map((row) => `
+                                    <tr class="border-b border-outline-variant/20">
+                                        ${columns.map((col) => `<td class="py-3">${row[col.key] ?? '-'}</td>`).join('')}
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            `;
+        };
+
+        const openModule = async (moduleKey) => {
+            if (isTenantPendingApproval()) {
+                await renderPendingApprovalScreen();
+                return;
+            }
+            if (state.isSuperAdmin && moduleKey !== 'empresas') {
+                moduleKey = 'empresas';
+            }
+            state.currentModule = moduleKey;
+            refreshSidebarSelection();
+            if (moduleKey === 'panel') return renderPanelModule();
+            if (moduleKey === 'empresas') return renderEmpresasModule();
+            if (moduleKey === 'solicitudes') return renderSolicitudesModule();
+            if (moduleKey === 'usuarios') return renderUsuariosModule();
+            if (moduleKey === 'roles') return renderRolesModule();
+            if (moduleKey === 'facturas') return renderFacturasModule();
+            if (moduleKey === 'inventario') return renderSimpleCrudModule('inventario', 'products', 'Inventario', 'Productos y stock', [
+                { key: 'sku', label: 'SKU' },
+                { key: 'name', label: 'Producto' },
+                { key: 'stock', label: 'Stock' },
+                { key: 'price', label: 'Precio' }
+            ]);
+            if (moduleKey === 'clientes') return renderSimpleCrudModule('clientes', 'customers', 'Clientes', 'Registro y seguimiento de clientes', [
+                { key: 'name', label: 'Nombre' },
+                { key: 'email', label: 'Correo' },
+                { key: 'phone', label: 'Telefono' },
+                { key: 'credit_limit', label: 'Limite credito' }
+            ]);
+            if (moduleKey === 'pagos') return renderSimpleCrudModule('pagos', 'payments', 'Pagos y cobros', 'Seguimiento de pagos aplicados', [
+                { key: 'payment_method', label: 'Metodo' },
+                { key: 'amount', label: 'Monto' },
+                { key: 'status', label: 'Estado' },
+                { key: 'paid_at', label: 'Fecha pago' }
+            ]);
+            if (moduleKey === 'reportes') return renderSimpleCrudModule('reportes', 'report_exports', 'Reportes', 'Exportaciones y reportes del sistema', [
+                { key: 'report_type', label: 'Tipo reporte' },
+                { key: 'file_url', label: 'Archivo' },
+                { key: 'created_at', label: 'Fecha' }
+            ]);
+            if (moduleKey === 'config') return renderSimpleCrudModule('config', 'app_settings', 'Configuracion', 'Ajustes por empresa y sistema', [
+                { key: 'setting_key', label: 'Clave' },
+                { key: 'setting_value', label: 'Valor' },
+                { key: 'updated_at', label: 'Actualizado' }
+            ]);
+        };
+
+        loginForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            clearStatus(loginStatus);
+            const formData = new FormData(loginForm);
+            const email = String(formData.get('email') || '').trim().toLowerCase();
+            const password = String(formData.get('password') || '');
+            if (!email || !password) {
+                setStatus(loginStatus, 'Debes completar correo y contraseña.', true);
+                return;
+            }
+
+            zyronLog('login:submit', { email });
+            const { data, error } = await safeCall(() => window.insforgeAPI.auth.signInWithPassword({ email, password }));
+            if (error || !data?.user) {
+                zyronLog('login:signInError', { message: error?.message, hasUser: Boolean(data?.user) });
+                setStatus(loginStatus, error?.message || 'No fue posible iniciar sesion.', true);
+                return;
+            }
+            zyronLog('login:signInOk', { userId: data.user.id });
+
+            const remember = Boolean(formData.get('remember'));
+            try {
+                if (remember) {
+                    localStorage.setItem(REMEMBER_EMAIL_KEY, email);
+                    localStorage.setItem(REMEMBER_PASSWORD_KEY, password);
+                } else {
+                    localStorage.removeItem(REMEMBER_EMAIL_KEY);
+                    localStorage.removeItem(REMEMBER_PASSWORD_KEY);
+                }
+            } catch (_) {
+                /* ignore */
+            }
+
+            const boot = await bootstrapSession();
+            if (!boot.ok) {
+                zyronLog('login:bootstrapFailed', { email, message: boot.message });
+                const isSuperAdminEmail = email === 'admin@zyron.com';
+                setStatus(
+                    loginStatus,
+                    boot.message
+                        || (isSuperAdminEmail
+                            ? 'No fue posible cargar el perfil super admin. Intenta de nuevo en unos segundos.'
+                            : 'No fue posible cargar tu perfil. Verifica tu aprobacion.'),
+                    true
+                );
+            }
         });
 
-        document.getElementById('open-register-link').addEventListener('click', (e) => {
-            e.preventDefault();
-            registerStatus.classList.add('hidden');
-            registerStatus.textContent = '';
-            registerStatus.classList.remove('form-status--error');
+        openRegisterLink.addEventListener('click', (event) => {
+            event.preventDefault();
+            clearStatus(registerStatus);
             showRegister();
         });
 
-        document.getElementById('back-to-login-link').addEventListener('click', (e) => {
-            e.preventDefault();
+        backToLoginLink.addEventListener('click', (event) => {
+            event.preventDefault();
+            clearStatus(registerStatus);
             showLogin();
         });
 
-        document.getElementById('register-form').addEventListener('submit', (e) => {
-            e.preventDefault();
-            const formData = new FormData(e.currentTarget);
+        registerForm.addEventListener('submit', async (event) => {
+            event.preventDefault();
+            clearStatus(registerStatus);
+
+            const formData = new FormData(registerForm);
+            const fullName = String(formData.get('fullName') || '').trim();
+            const company = String(formData.get('company') || '').trim();
+            const email = String(formData.get('email') || '').trim().toLowerCase();
+            const phone = String(formData.get('phone') || '').trim();
+            const notes = String(formData.get('notes') || '').trim();
             const username = String(formData.get('username') || '').trim();
             const password = String(formData.get('password') || '');
             const passwordConfirm = String(formData.get('passwordConfirm') || '');
 
-            if (username.length < 4) {
-                setRegisterStatus('El usuario debe tener al menos 4 caracteres.', true);
-                return;
+            if (username.length < 4) return setStatus(registerStatus, 'El usuario debe tener al menos 4 caracteres.', true);
+            if (password.length < 8) return setStatus(registerStatus, 'La contraseña debe tener al menos 8 caracteres.', true);
+            if (password !== passwordConfirm) return setStatus(registerStatus, 'Las contraseñas no coinciden.', true);
+            if (!company || !email) return setStatus(registerStatus, 'Completa empresa y correo.', true);
+            const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+            if (!emailOk) return setStatus(registerStatus, 'Introduce un correo valido (ejemplo: usuario@dominio.com).', true);
+
+            zyronLog('register:start', { email, company, username, phoneLen: phone.length, notesLen: notes.length });
+            const { data: signUpData, error: signUpError } = await safeCall(() => window.insforgeAPI.auth.signUp({
+                email,
+                password,
+                name: fullName || username
+            }));
+            if (signUpError) {
+                zyronLog('register:signUpError', signUpError);
+                return setStatus(registerStatus, signUpError.message || 'No se pudo registrar el usuario.', true);
             }
 
-            if (password.length < 8) {
-                setRegisterStatus('La contraseña debe tener al menos 8 caracteres.', true);
-                return;
+            const authId = signUpData?.user?.id;
+            zyronLog('register:signUpOk', { authId, signUpEmail: signUpData?.user?.email });
+            const isSuperBootstrap = email === 'admin@zyron.com';
+            const appStatus = isSuperBootstrap ? 'active' : 'pending';
+
+            if (authId) {
+                const globalRole = isSuperBootstrap ? 'super_admin' : 'user';
+                zyronLog('register:appUsersInsert', { authId, appStatus, globalRole });
+                const { error: profileError } = await dbInsert({
+                    table: 'app_users',
+                    values: [{
+                        auth_user_id: authId,
+                        email,
+                        full_name: fullName || username,
+                        global_role: globalRole,
+                        status: appStatus
+                    }]
+                });
+                if (profileError) {
+                    zyronLog('register:appUsersInsertError', profileError);
+                    await safeCall(() => window.insforgeAPI.auth.signOut());
+                    return setStatus(registerStatus, profileError.message || 'No se pudo crear tu perfil de usuario.', true);
+                }
+                zyronLog('register:appUsersInsertOk', { authId });
+            } else {
+                zyronLog('register:noAuthIdAfterSignUp', { signUpDataKeys: signUpData ? Object.keys(signUpData) : [] });
             }
 
-            if (password !== passwordConfirm) {
-                setRegisterStatus('Las contraseñas no coinciden.', true);
-                return;
+            if (!isSuperBootstrap && authId) {
+                zyronLog('register:accessRequestRpc', { function: 'submit_my_access_request' });
+                const { error: rpcError } = await dbRpc('submit_my_access_request', {
+                    p_username: username,
+                    p_full_name: fullName || username,
+                    p_company_name: company,
+                    p_phone: phone,
+                    p_notes: notes
+                });
+                let requestError = rpcError;
+                if (requestError) {
+                    zyronLog('register:accessRequestRpcError', requestError);
+                    zyronLog('register:accessRequestFallbackInsert', {});
+                    const fallback = await dbInsert({
+                        table: 'user_access_requests',
+                        values: [{
+                            requested_email: email,
+                            username,
+                            full_name: fullName,
+                            company_name: company,
+                            phone,
+                            notes,
+                            request_status: 'pending'
+                        }]
+                    });
+                    requestError = fallback.error || null;
+                    if (requestError) zyronLog('register:accessRequestFallbackError', requestError);
+                }
+                if (requestError) {
+                    zyronLog('register:rollbackAppUser', { authId });
+                    await dbDelete({
+                        table: 'app_users',
+                        filters: [{ op: 'eq', column: 'auth_user_id', value: authId }]
+                    });
+                    await safeCall(() => window.insforgeAPI.auth.signOut());
+                    const errMsg = String(requestError.message || '').toLowerCase();
+                    const hint = errMsg.includes('submit_my_access_request') || errMsg.includes('pgrst202') || errMsg.includes('could not find')
+                        ? ' Revisa en Insforge que existan las funciones RPC submit_my_access_request y register_insert_app_user.'
+                        : '';
+                    return setStatus(registerStatus, (requestError.message || 'No se pudo crear la solicitud de acceso.') + hint, true);
+                }
+                zyronLog('register:accessRequestOk', {});
             }
 
-            setRegisterStatus('Registro enviado. Tu cuenta sera validada para activar el acceso.');
-            e.currentTarget.reset();
-        });
-
-        document.getElementById('logout-btn').addEventListener('click', () => {
+            await safeCall(() => window.insforgeAPI.auth.signOut());
+            registerForm.reset();
+            clearStatus(registerStatus);
             showLogin();
+            zyronLog('register:complete', { isSuperBootstrap });
+            setStatus(
+                loginStatus,
+                isSuperBootstrap
+                    ? 'Cuenta de super admin lista. Inicia sesion.'
+                    : 'Registro recibido. Tu cuenta queda en estado pendiente hasta que un administrador apruebe la solicitud.',
+                false
+            );
         });
+
+        const performLogout = async () => {
+            await safeCall(() => window.insforgeAPI.auth.signOut());
+            state.sessionUser = null;
+            state.appUser = null;
+            state.membership = null;
+            state.currentTenantId = null;
+            state.isSuperAdmin = false;
+            state.currentModule = 'panel';
+            sidebarNav.classList.remove('hidden');
+            sidebarToggleBtn?.classList.remove('pointer-events-none', 'opacity-40');
+            dashboardAppHeader?.classList.remove('hidden');
+            updateSessionNoticeBanner();
+            clearStatus(loginStatus);
+            showLogin();
+        };
+
+        logoutBtn.addEventListener('click', () => performLogout());
 
         sidebarToggleBtn.addEventListener('click', () => {
             sidebarNav.classList.toggle('hidden');
             updateSidebarToggleState();
         });
-
         updateSidebarToggleState();
 
-        document.querySelectorAll('.nav-module[data-module]').forEach((el) => {
-            el.addEventListener('click', (ev) => {
-                ev.preventDefault();
-                document.querySelectorAll('.nav-module[data-module]').forEach((n) => {
-                    n.classList.remove('is-active');
-                    n.removeAttribute('aria-current');
-                });
-                el.classList.add('is-active');
-                el.setAttribute('aria-current', 'page');
-            });
-        });
+        (async () => {
+            clearStatus(loginStatus);
+            clearStatus(registerStatus);
+            const boot = await bootstrapSession();
+            if (!boot.ok) showLogin();
+        })();
     </script>
 </body>
 </html>
