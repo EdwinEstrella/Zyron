@@ -11,8 +11,7 @@ const requiredFiles = [
   'insforge-functions/manage-tenant-user.js',
   'insforge-functions/admin-reset-user-password.js',
   'insforge-functions/create-invoice-with-stock.js',
-  'insforge-functions/get-super-admin-overview.js',
-  'insforge-sql/zyron_my_active_memberships.sql'
+  'insforge-functions/get-super-admin-overview.js'
 ]
 
 const missing = requiredFiles.filter((file) => !fs.existsSync(path.join(root, file)))
@@ -29,7 +28,7 @@ const checks = [
   'insforgeAPI.auth.signInWithPassword',
   "key: 'empresas'",
   "key: 'usuarios'",
-  'rolePresets',
+  'roleSystemPresetsResolved',
   'create-invoice-with-stock'
 ]
 

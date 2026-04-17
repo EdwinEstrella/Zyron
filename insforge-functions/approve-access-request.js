@@ -179,13 +179,30 @@ module.exports = async function (request) {
     }
 
     const tenant = tenantRows[0]
-    const rolePresets = [
+    const defaultRolePresets = [
       { role_key: 'tenant_admin', label: 'Admin empresa', hierarchy_level: 10 },
       { role_key: 'manager', label: 'Gerente', hierarchy_level: 20 },
       { role_key: 'billing_agent', label: 'Facturacion', hierarchy_level: 30 },
       { role_key: 'inventory_agent', label: 'Inventario', hierarchy_level: 40 },
       { role_key: 'viewer', label: 'Solo lectura', hierarchy_level: 50 }
     ]
+    let rolePresets = defaultRolePresets
+    try {
+      const { data: presetRows, error: presetErr } = await db.database
+        .from('role_system_presets')
+        .select('role_key,label,hierarchy_level,sort_order')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true })
+      if (!presetErr && presetRows?.length) {
+        rolePresets = presetRows.map((r) => ({
+          role_key: r.role_key,
+          label: r.label,
+          hierarchy_level: r.hierarchy_level
+        }))
+      }
+    } catch (_) {
+      rolePresets = defaultRolePresets
+    }
 
     for (const preset of rolePresets) {
       const { error: roleErr } = await db.database.from('role_catalog').insert({

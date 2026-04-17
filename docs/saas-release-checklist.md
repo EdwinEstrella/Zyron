@@ -2,7 +2,7 @@
 
 ## Security and Auth
 - [ ] Login, signup, and password reset run only through `insforgeAPI.auth`.
-- [ ] `admin@zyron.com` is present in `app_users` with `global_role=super_admin`.
+- [ ] At least one row in `app_users` has `global_role = 'super_admin'` and `status` usable for login (set via SQL or consola Insforge; no correo fijo en codigo).
 - [ ] RLS policies are active in tenant-bound tables.
 
 ## Super Admin Operations

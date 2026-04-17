@@ -586,28 +586,7 @@
 
     <div id="view-dashboard" class="hidden flex flex-1 flex-row min-h-0 overflow-hidden bg-surface text-on-surface">
         <nav id="sidebar-nav" class="app-sidebar flex w-56 shrink-0 flex-col gap-1 px-3 py-4 z-20" aria-label="Módulos">
-            <div class="flex flex-1 flex-col gap-1">
-                <a class="nav-module is-active" href="#" data-module="panel" aria-current="page">
-                    <span class="material-symbols-outlined text-[20px] shrink-0">dashboard</span>
-                    <span>Panel principal</span>
-                </a>
-                <a class="nav-module" href="#" data-module="facturas">
-                    <span class="material-symbols-outlined text-[20px] shrink-0">receipt_long</span>
-                    <span>Facturas</span>
-                </a>
-                <a class="nav-module" href="#" data-module="inventario">
-                    <span class="material-symbols-outlined text-[20px] shrink-0">inventory_2</span>
-                    <span>Inventario</span>
-                </a>
-                <a class="nav-module" href="#" data-module="clientes">
-                    <span class="material-symbols-outlined text-[20px] shrink-0">group</span>
-                    <span>Clientes</span>
-                </a>
-                <a class="nav-module" href="#" data-module="config">
-                    <span class="material-symbols-outlined text-[20px] shrink-0">settings</span>
-                    <span>Configuración</span>
-                </a>
-            </div>
+            <div class="flex flex-1 flex-col gap-1" id="sidebar-modules-mount"></div>
             <div class="mt-auto flex flex-col gap-1 border-t border-outline-variant/40 pt-3">
                 <a class="nav-module" href="#">
                     <span class="material-symbols-outlined text-[20px] shrink-0">help</span>
@@ -654,288 +633,9 @@
             <main class="dash-main p-6 lg:p-9">
                 <div id="session-notice-banner" class="mx-auto mb-4 hidden w-full max-w-7xl rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3 text-sm text-on-surface" role="status"></div>
                 <div id="dashboard-content" class="mx-auto flex w-full max-w-7xl flex-col gap-8">
-                    <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
-                        <div>
-                            <h2 class="font-headline text-2xl font-bold tracking-tight text-primary">Resumen operativo</h2>
-                            <p class="mt-1 text-sm text-on-surface-variant">Rendimiento del trimestre y alertas prioritarias</p>
-                        </div>
-                        <div class="flex flex-wrap gap-2">
-                            <button type="button" class="flex items-center gap-2 rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-4 py-2 text-sm font-medium text-primary transition-colors hover:border-outline-variant/70">
-                                <span class="material-symbols-outlined text-[18px]">download</span>
-                                Exportar
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
-                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-surface-container-lowest p-6 ambient-shadow">
-                            <div class="mb-3 flex items-start justify-between">
-                                <span class="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Ventas totales</span>
-                                <div class="flex items-center gap-1 rounded-full bg-tertiary-fixed-dim/25 px-2 py-0.5">
-                                    <span class="material-symbols-outlined text-[14px] text-tertiary">trending_up</span>
-                                    <span class="text-xs font-medium text-tertiary">+12,5&nbsp;%</span>
-                                </div>
-                            </div>
-                            <div class="text-3xl font-bold tracking-tight text-primary">845.290<span class="ml-1 text-lg text-outline">€</span></div>
-                        </div>
-                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-surface-container-lowest p-6 ambient-shadow">
-                            <div class="mb-3 flex items-start justify-between">
-                                <span class="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Cuentas por cobrar</span>
-                                <div class="flex items-center gap-1 rounded-full bg-error-container/60 px-2 py-0.5">
-                                    <span class="material-symbols-outlined text-[14px] text-error">warning</span>
-                                    <span class="text-xs font-medium text-error">Revisar</span>
-                                </div>
-                            </div>
-                            <div class="text-3xl font-bold tracking-tight text-primary">124.500<span class="ml-1 text-lg text-outline">€</span></div>
-                        </div>
-                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-surface-container-lowest p-6 ambient-shadow">
-                            <div class="mb-3 flex items-start justify-between">
-                                <span class="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Cobrado (mes)</span>
-                                <div class="rounded-full bg-surface-container px-2 py-0.5">
-                                    <span class="text-xs font-medium text-on-surface-variant">Mes en curso</span>
-                                </div>
-                            </div>
-                            <div class="text-3xl font-bold tracking-tight text-primary">612.400<span class="ml-1 text-lg text-outline">€</span></div>
-                        </div>
-                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-primary-container p-6 text-on-primary">
-                            <div class="pointer-events-none absolute -right-6 -top-6 opacity-[0.12]">
-                                <span class="material-symbols-outlined text-[120px]">inventory_2</span>
-                            </div>
-                            <div class="relative z-10 mb-3 flex items-start justify-between">
-                                <span class="text-xs font-semibold uppercase tracking-wider text-on-primary-container/90">Stock bajo</span>
-                            </div>
-                            <div class="relative z-10 flex items-end gap-3">
-                                <div class="text-4xl font-bold tracking-tight">14</div>
-                                <span class="mb-1 text-sm text-on-primary-container/90">SKU requieren atención</span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="grid grid-cols-1 gap-8 lg:grid-cols-3">
-                        <div class="rounded-xl bg-surface-container-low p-1 lg:col-span-2">
-                            <div class="rounded-lg bg-surface-container-lowest p-6 ambient-shadow">
-                                <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
-                                    <h3 class="text-base font-bold text-primary">Ingresos vs. gastos</h3>
-                                    <div class="flex gap-2">
-                                        <button type="button" class="rounded-md bg-surface-container px-3 py-1 text-xs font-medium text-on-surface">Mensual</button>
-                                        <button type="button" class="rounded-md px-3 py-1 text-xs font-medium text-on-surface-variant hover:bg-surface-container/60">Trimestral</button>
-                                    </div>
-                                </div>
-                                <div class="relative w-full rounded-lg border border-outline-variant/25 bg-surface px-2 py-3">
-                                    <div class="pointer-events-none absolute left-9 right-2 top-3 bottom-10 flex flex-col justify-between">
-                                        <div class="h-px bg-outline-variant/30"></div>
-                                        <div class="h-px bg-outline-variant/25"></div>
-                                        <div class="h-px bg-outline-variant/20"></div>
-                                        <div class="h-px bg-outline-variant/15"></div>
-                                        <div class="h-px bg-outline-variant/30"></div>
-                                    </div>
-                                    <div class="pointer-events-none absolute left-2 top-3 bottom-10 flex w-6 flex-col justify-between text-[11px] font-semibold text-on-surface-variant">
-                                        <span>1&nbsp;M</span>
-                                        <span>750&nbsp;k</span>
-                                        <span>500&nbsp;k</span>
-                                        <span>250&nbsp;k</span>
-                                        <span>0</span>
-                                    </div>
-                                    <div class="relative ml-8 flex h-56 min-w-0 items-end gap-2">
-                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
-                                                <div class="h-[60%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                                <div class="h-[40%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
-                                            </div>
-                                            <span class="text-[11px] font-semibold text-primary/80">Ene</span>
-                                        </div>
-                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
-                                                <div class="h-[75%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                                <div class="h-[45%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
-                                            </div>
-                                            <span class="text-[11px] font-semibold text-primary/80">Feb</span>
-                                        </div>
-                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
-                                                <div class="h-[65%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                                <div class="h-[50%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
-                                            </div>
-                                            <span class="text-[11px] font-semibold text-primary/80">Mar</span>
-                                        </div>
-                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
-                                                <div class="h-[85%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                                <div class="h-[55%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
-                                            </div>
-                                            <span class="text-[11px] font-semibold text-primary/80">Abr</span>
-                                        </div>
-                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
-                                                <div class="h-[90%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                                <div class="h-[60%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
-                                            </div>
-                                            <span class="text-[11px] font-semibold text-primary/80">May</span>
-                                        </div>
-                                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
-                                            <div class="flex h-44 w-full items-end justify-center gap-1.5">
-                                                <div class="h-[70%] w-full max-w-[1.2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
-                                                <div class="h-[45%] w-full max-w-[1.2rem] rounded-t-sm bg-surface-tint/65 transition-opacity hover:opacity-100"></div>
-                                            </div>
-                                            <span class="text-[11px] font-semibold text-primary/80">Jun</span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="mt-8 flex flex-wrap justify-center gap-6">
-                                    <div class="flex items-center gap-2">
-                                        <div class="h-3 w-3 rounded-sm bg-primary"></div>
-                                        <span class="text-xs font-medium text-on-surface-variant">Ingresos</span>
-                                    </div>
-                                    <div class="flex items-center gap-2">
-                                        <div class="h-3 w-3 rounded-sm bg-surface-tint/60"></div>
-                                        <span class="text-xs font-medium text-on-surface-variant">Gastos</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="flex flex-col gap-6">
-                            <div class="rounded-xl bg-surface-container-low p-1">
-                                <div class="rounded-lg bg-surface-container-lowest p-5">
-                                    <div class="mb-4 flex items-center justify-between">
-                                        <h3 class="text-base font-bold text-primary">Próximos cobros recurrentes</h3>
-                                        <button type="button" class="rounded-md p-1 text-primary hover:bg-surface-container" aria-label="Más opciones">
-                                            <span class="material-symbols-outlined text-[18px]">more_horiz</span>
-                                        </button>
-                                    </div>
-                                    <div class="flex flex-col gap-3">
-                                        <div class="flex cursor-pointer items-center justify-between rounded-lg bg-surface p-3 transition-colors hover:bg-surface-container/50">
-                                            <div class="flex items-center gap-3">
-                                                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary-fixed text-sm font-bold text-on-secondary-fixed">AC</div>
-                                                <div>
-                                                    <p class="text-sm font-medium text-on-surface">Apex Corp</p>
-                                                    <p class="text-xs text-on-surface-variant">Vence mañana</p>
-                                                </div>
-                                            </div>
-                                            <div class="text-right">
-                                                <p class="text-sm font-bold text-primary">12.450&nbsp;€</p>
-                                                <p class="mt-0.5 font-mono text-[10px] uppercase text-on-surface-variant">FAC-2099</p>
-                                            </div>
-                                        </div>
-                                        <div class="flex cursor-pointer items-center justify-between rounded-lg bg-surface p-3 transition-colors hover:bg-surface-container/50">
-                                            <div class="flex items-center gap-3">
-                                                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-container-high text-sm font-bold text-primary">V</div>
-                                                <div>
-                                                    <p class="text-sm font-medium text-on-surface">Vanguardia S.L.</p>
-                                                    <p class="text-xs text-on-surface-variant">Vence en 3 días</p>
-                                                </div>
-                                            </div>
-                                            <div class="text-right">
-                                                <p class="text-sm font-bold text-primary">8.200&nbsp;€</p>
-                                                <p class="mt-0.5 font-mono text-[10px] uppercase text-on-surface-variant">FAC-2104</p>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <button type="button" class="mt-2 w-full text-center text-xs font-medium text-primary hover:underline">Ver calendario completo</button>
-                                </div>
-                            </div>
-
-                            <div class="rounded-xl border border-error-container/50 bg-error-container/25 p-5">
-                                <div class="mb-3 flex items-center gap-2">
-                                    <span class="material-symbols-outlined text-[20px] text-error">warning</span>
-                                    <h3 class="text-sm font-bold text-error">Alertas críticas de stock</h3>
-                                </div>
-                                <ul class="flex flex-col gap-2 text-sm">
-                                    <li class="flex items-center justify-between">
-                                        <span class="font-medium text-on-surface-variant">Rack servidor tipo C</span>
-                                        <span class="font-bold text-error">2 uds.</span>
-                                    </li>
-                                    <li class="flex items-center justify-between border-t border-outline-variant/20 pt-2">
-                                        <span class="font-medium text-on-surface-variant">Switches empresariales</span>
-                                        <span class="font-bold text-error">0 uds.</span>
-                                    </li>
-                                </ul>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="rounded-xl bg-surface-container-low p-1">
-                        <div class="overflow-hidden rounded-lg bg-surface-container-lowest ambient-shadow">
-                            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-outline-variant/20 p-6 pb-4">
-                                <h3 class="text-base font-bold text-primary">Facturas recientes</h3>
-                                <div class="relative">
-                                    <span class="material-symbols-outlined pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[16px] text-outline">filter_list</span>
-                                    <select class="cursor-pointer appearance-none rounded-md border-0 bg-surface-container py-1.5 pl-8 pr-8 text-xs font-medium text-on-surface focus:outline-none focus:ring-1 focus:ring-primary" aria-label="Filtrar por estado">
-                                        <option>Todos los estados</option>
-                                        <option>Pagadas</option>
-                                        <option>Pendientes</option>
-                                        <option>Vencidas</option>
-                                    </select>
-                                </div>
-                            </div>
-                            <div class="w-full overflow-x-auto">
-                                <table class="w-full border-collapse text-left text-sm">
-                                    <thead>
-                                        <tr class="bg-surface-dim/50">
-                                            <th class="w-1/4 px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary">Cliente</th>
-                                            <th class="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary">N.º factura</th>
-                                            <th class="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary">Fecha</th>
-                                            <th class="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-primary">Importe</th>
-                                            <th class="px-6 py-3 text-center text-xs font-semibold uppercase tracking-wider text-primary">Estado</th>
-                                            <th class="px-6 py-3"></th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr class="border-b border-outline-variant/15 transition-colors hover:bg-surface-container-low/50">
-                                            <td class="px-6 py-4 font-medium text-on-surface">Industrias Nexus</td>
-                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8492</td>
-                                            <td class="px-6 py-4 text-on-surface-variant">12 oct 2026</td>
-                                            <td class="px-6 py-4 text-right font-bold text-primary">24.500,00&nbsp;€</td>
-                                            <td class="px-6 py-4 text-center">
-                                                <span class="inline-block rounded-full bg-tertiary-fixed-dim/30 px-3 py-1 text-xs font-medium text-on-tertiary-fixed-variant">Pagada</span>
-                                            </td>
-                                            <td class="px-6 py-4 text-right">
-                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
-                                            </td>
-                                        </tr>
-                                        <tr class="border-b border-outline-variant/15 transition-colors hover:bg-surface-container-low/50">
-                                            <td class="px-6 py-4 font-medium text-on-surface">Logística Global</td>
-                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8493</td>
-                                            <td class="px-6 py-4 text-on-surface-variant">14 oct 2026</td>
-                                            <td class="px-6 py-4 text-right font-bold text-primary">8.920,50&nbsp;€</td>
-                                            <td class="px-6 py-4 text-center">
-                                                <span class="inline-block rounded-full bg-surface-container px-3 py-1 text-xs font-medium text-on-surface">Pendiente</span>
-                                            </td>
-                                            <td class="px-6 py-4 text-right">
-                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
-                                            </td>
-                                        </tr>
-                                        <tr class="border-b border-outline-variant/15 bg-error-container/10 transition-colors hover:bg-surface-container-low/50">
-                                            <td class="px-6 py-4 font-medium text-on-surface">Horizonte Media</td>
-                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8488</td>
-                                            <td class="px-6 py-4 text-on-surface-variant">28 sep 2026</td>
-                                            <td class="px-6 py-4 text-right font-bold text-primary">15.200,00&nbsp;€</td>
-                                            <td class="px-6 py-4 text-center">
-                                                <span class="inline-block rounded-full bg-error-container px-3 py-1 text-xs font-medium text-on-error-container">Vencida</span>
-                                            </td>
-                                            <td class="px-6 py-4 text-right">
-                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
-                                            </td>
-                                        </tr>
-                                        <tr class="transition-colors hover:bg-surface-container-low/50">
-                                            <td class="px-6 py-4 font-medium text-on-surface">Dinámica Estelar</td>
-                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8494</td>
-                                            <td class="px-6 py-4 text-on-surface-variant">15 oct 2026</td>
-                                            <td class="px-6 py-4 text-right font-bold text-primary">42.100,00&nbsp;€</td>
-                                            <td class="px-6 py-4 text-center">
-                                                <span class="inline-block rounded-full bg-surface-container px-3 py-1 text-xs font-medium text-on-surface">Pendiente</span>
-                                            </td>
-                                            <td class="px-6 py-4 text-right">
-                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
-                                            </td>
-                                        </tr>
-                                    </tbody>
-                                </table>
-                            </div>
-                            <div class="border-t border-outline-variant/20 p-4 text-center">
-                                <button type="button" class="text-sm font-medium text-primary hover:underline">Ver libro de facturas</button>
-                            </div>
-                        </div>
+                    <div id="dashboard-panel-mount" class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest/60 p-8 text-center text-sm text-on-surface-variant">
+                        <span class="material-symbols-outlined mb-2 block text-3xl text-primary/40" aria-hidden="true">dashboard</span>
+                        <p>Contenido del panel cargado desde la base de datos al abrir <strong class="text-on-surface">Panel principal</strong>.</p>
                     </div>
                 </div>
             </main>
@@ -984,13 +684,62 @@
         const sidebarNav = document.getElementById('sidebar-nav');
         const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
         const sidebarToggleIcon = document.getElementById('sidebar-toggle-icon');
-        const sidebarModulesContainer = sidebarNav.querySelector('.flex.flex-1.flex-col.gap-1');
+        const sidebarModulesContainer = document.getElementById('sidebar-modules-mount');
         const dashboardContent = document.getElementById('dashboard-content');
         const titlebarTitleEl = document.getElementById('titlebar-title');
         const dashboardAppHeader = document.getElementById('dashboard-app-header');
 
-        const defaultDashboardMarkup = dashboardContent.innerHTML;
         const sessionNoticeBanner = document.getElementById('session-notice-banner');
+
+        const DEFAULT_PERMISSION_UI = Object.freeze([
+            { key: 'users.manage', label: 'Gestion de usuarios' },
+            { key: 'roles.manage', label: 'Gestion de roles' },
+            { key: 'billing.manage', label: 'Facturacion' },
+            { key: 'inventory.manage', label: 'Inventario' },
+            { key: 'reports.view', label: 'Reportes' }
+        ]);
+
+        const DEFAULT_NAV_SUPER = Object.freeze([{ key: 'empresas', label: 'Empresas', icon: 'apartment' }]);
+
+        const DEFAULT_NAV_TENANT = Object.freeze([
+            { key: 'panel', label: 'Panel principal', icon: 'dashboard' },
+            { key: 'usuarios', label: 'Usuarios', icon: 'group' },
+            { key: 'roles', label: 'Roles', icon: 'admin_panel_settings' },
+            { key: 'facturas', label: 'Facturas', icon: 'receipt_long' },
+            { key: 'pagos', label: 'Pagos y cobros', icon: 'payments' },
+            { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
+            { key: 'clientes', label: 'Clientes', icon: 'groups' },
+            { key: 'reportes', label: 'Reportes', icon: 'monitoring' },
+            { key: 'config', label: 'Configuracion', icon: 'settings' }
+        ]);
+
+        const DEFAULT_ROLE_SYSTEM_PRESETS = Object.freeze([
+            {
+                role_key: 'tenant_admin',
+                label: 'Admin empresa',
+                hierarchy_level: 10,
+                permissions: DEFAULT_PERMISSION_UI.map((p) => p.key)
+            },
+            {
+                role_key: 'manager',
+                label: 'Gerente',
+                hierarchy_level: 20,
+                permissions: ['users.manage', 'billing.manage', 'inventory.manage', 'reports.view']
+            },
+            {
+                role_key: 'billing_agent',
+                label: 'Facturacion',
+                hierarchy_level: 30,
+                permissions: ['billing.manage', 'reports.view']
+            },
+            {
+                role_key: 'inventory_agent',
+                label: 'Inventario',
+                hierarchy_level: 40,
+                permissions: ['inventory.manage']
+            },
+            { role_key: 'viewer', label: 'Solo lectura', hierarchy_level: 50, permissions: ['reports.view'] }
+        ]);
 
         const state = {
             sessionUser: null,
@@ -998,7 +747,11 @@
             membership: null,
             currentTenantId: null,
             isSuperAdmin: false,
-            currentModule: 'panel'
+            currentModule: 'panel',
+            navModulesSuper: [...DEFAULT_NAV_SUPER],
+            navModulesTenant: [...DEFAULT_NAV_TENANT],
+            permissionRowsForUi: [...DEFAULT_PERMISSION_UI],
+            roleSystemPresetsResolved: [...DEFAULT_ROLE_SYSTEM_PRESETS]
         };
 
         const isTenantPendingApproval = () =>
@@ -1009,38 +762,6 @@
             sessionNoticeBanner.textContent = '';
             sessionNoticeBanner.classList.add('hidden');
         };
-
-        const superAdminModules = [
-            { key: 'empresas', label: 'Empresas', icon: 'apartment' }
-        ];
-
-        const tenantModules = [
-            { key: 'panel', label: 'Panel principal', icon: 'dashboard' },
-            { key: 'usuarios', label: 'Usuarios', icon: 'group' },
-            { key: 'roles', label: 'Roles', icon: 'admin_panel_settings' },
-            { key: 'facturas', label: 'Facturas', icon: 'receipt_long' },
-            { key: 'pagos', label: 'Pagos y cobros', icon: 'payments' },
-            { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
-            { key: 'clientes', label: 'Clientes', icon: 'groups' },
-            { key: 'reportes', label: 'Reportes', icon: 'monitoring' },
-            { key: 'config', label: 'Configuracion', icon: 'settings' }
-        ];
-
-        const permissionCatalog = [
-            { key: 'users.manage', label: 'Gestion de usuarios' },
-            { key: 'roles.manage', label: 'Gestion de roles' },
-            { key: 'billing.manage', label: 'Facturacion' },
-            { key: 'inventory.manage', label: 'Inventario' },
-            { key: 'reports.view', label: 'Reportes' }
-        ];
-
-        const rolePresets = [
-            { role_key: 'tenant_admin', label: 'Admin empresa', hierarchy_level: 10, permissions: permissionCatalog.map((p) => p.key) },
-            { role_key: 'manager', label: 'Gerente', hierarchy_level: 20, permissions: ['users.manage', 'billing.manage', 'inventory.manage', 'reports.view'] },
-            { role_key: 'billing_agent', label: 'Facturacion', hierarchy_level: 30, permissions: ['billing.manage', 'reports.view'] },
-            { role_key: 'inventory_agent', label: 'Inventario', hierarchy_level: 40, permissions: ['inventory.manage'] },
-            { role_key: 'viewer', label: 'Solo lectura', hierarchy_level: 50, permissions: ['reports.view'] }
-        ];
 
         togglePw.addEventListener('click', () => {
             const show = passwordInput.type === 'password';
@@ -1209,6 +930,56 @@
             safeCall(() => window.insforgeAPI.database.rpc({ functionName, args }), `db.rpc:${functionName}`);
         const invokeFn = (slug, body = {}, method = 'POST') =>
             safeCall(() => window.insforgeAPI.functions.invoke({ slug, body, method }), `fn:${method || 'POST'}:${slug}`);
+
+        const loadUiCatalogsFromDb = async () => {
+            const { data: navRows, error: navErr } = await dbSelect({
+                table: 'app_navigation_modules',
+                filters: [{ op: 'eq', column: 'is_active', value: true }],
+                order: { column: 'sort_order', ascending: true }
+            });
+            if (navErr || !navRows?.length) {
+                zyronLog('loadUiCatalogs:nav:fallback', { err: navErr?.message });
+                state.navModulesSuper = [...DEFAULT_NAV_SUPER];
+                state.navModulesTenant = [...DEFAULT_NAV_TENANT];
+            } else {
+                const toMod = (r) => ({ key: r.module_key, label: r.label, icon: r.icon });
+                const sup = navRows.filter((r) => r.scope === 'super_admin').map(toMod);
+                const ten = navRows.filter((r) => r.scope === 'tenant').map(toMod);
+                state.navModulesSuper = sup.length ? sup : [...DEFAULT_NAV_SUPER];
+                state.navModulesTenant = ten.length ? ten : [...DEFAULT_NAV_TENANT];
+            }
+
+            const { data: permRows, error: permErr } = await dbSelect({
+                table: 'permission_catalog',
+                order: { column: 'permission_key', ascending: true }
+            });
+            if (permErr || !permRows?.length) {
+                zyronLog('loadUiCatalogs:perm:fallback', { err: permErr?.message });
+                state.permissionRowsForUi = [...DEFAULT_PERMISSION_UI];
+            } else {
+                state.permissionRowsForUi = permRows.map((p) => ({
+                    key: p.permission_key,
+                    label: p.label || p.description || p.permission_key
+                }));
+            }
+
+            const { data: presetRows, error: presetErr } = await dbSelect({
+                table: 'role_system_presets',
+                filters: [{ op: 'eq', column: 'is_active', value: true }],
+                order: { column: 'sort_order', ascending: true }
+            });
+            if (presetErr || !presetRows?.length) {
+                zyronLog('loadUiCatalogs:presets:fallback', { err: presetErr?.message });
+                state.roleSystemPresetsResolved = [...DEFAULT_ROLE_SYSTEM_PRESETS];
+            } else {
+                state.roleSystemPresetsResolved = presetRows.map((r) => ({
+                    role_key: r.role_key,
+                    label: r.label,
+                    hierarchy_level: r.hierarchy_level,
+                    permissions: Array.isArray(r.permission_keys) ? r.permission_keys : []
+                }));
+            }
+        };
 
         const normalizeRpcRows = (data) => {
             if (data == null) return [];
@@ -1439,27 +1210,18 @@
             if (existingRows && existingRows.length > 0) {
                 const current = existingRows[0];
                 zyronLog('upsertAppUser:existing', { id: current.id, status: current.status, global_role: current.global_role });
-                if (normalizedEmail === 'admin@zyron.com' && current.global_role !== 'super_admin') {
-                    const { data: updatedRows } = await dbUpdate({
-                        table: 'app_users',
-                        values: { global_role: 'super_admin', status: 'active' },
-                        filters: [{ op: 'eq', column: 'id', value: current.id }]
-                    });
-                    return { appUser: (updatedRows && updatedRows[0]) || { ...current, global_role: 'super_admin' }, error: null };
-                }
                 return { appUser: current, error: null };
             }
 
             zyronLog('upsertAppUser:insertPath', { reason: 'no_row_for_auth_user', authUserId: authUser.id });
-            const isSuperEmail = normalizedEmail === 'admin@zyron.com';
             const { data: insertedRows, error: insertError } = await dbInsert({
                 table: 'app_users',
                 values: [{
                     auth_user_id: authUser.id,
                     email: normalizedEmail,
                     full_name: authUser.profile?.name || normalizedEmail.split('@')[0],
-                    global_role: isSuperEmail ? 'super_admin' : 'user',
-                    status: isSuperEmail ? 'active' : 'pending'
+                    global_role: 'user',
+                    status: 'pending'
                 }]
             });
             if (insertError) zyronLog('upsertAppUser:insertError', insertError);
@@ -1552,14 +1314,16 @@
                 })();
             }
 
+            await loadUiCatalogsFromDb();
             await renderSidebar();
             showDashboard();
             if (pendingGate) {
                 await renderPendingApprovalScreen();
                 zyronLog('bootstrapSession:success', { module: 'pending-gate' });
             } else {
-                void openModule(state.isSuperAdmin ? 'empresas' : 'panel');
-                zyronLog('bootstrapSession:success', { module: state.isSuperAdmin ? 'empresas' : 'panel' });
+                const firstSuper = state.navModulesSuper[0]?.key || 'empresas';
+                void openModule(state.isSuperAdmin ? firstSuper : 'panel');
+                zyronLog('bootstrapSession:success', { module: state.isSuperAdmin ? firstSuper : 'panel' });
             }
             const bootOk = { ok: true, message: null };
             zyronLog('bootstrapSession:return', bootOk);
@@ -1596,12 +1360,13 @@
                 currentModule: state.currentModule,
                 pendingGate: isTenantPendingApproval()
             });
+            if (!sidebarModulesContainer) return;
             sidebarModulesContainer.innerHTML = '';
             if (isTenantPendingApproval()) {
                 refreshSidebarSelection();
                 return;
             }
-            const allowedModules = state.isSuperAdmin ? superAdminModules : tenantModules;
+            const allowedModules = state.isSuperAdmin ? state.navModulesSuper : state.navModulesTenant;
             for (const module of allowedModules) {
                 const link = document.createElement('a');
                 link.className = `nav-module ${module.key === state.currentModule ? 'is-active' : ''}`;
@@ -1646,34 +1411,114 @@
             </div>
         `;
 
+        const fmtMoneyPanel = (n) => {
+            const x = Number(n);
+            if (!Number.isFinite(x)) return '-';
+            return x.toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        };
+
         const renderPanelModule = async () => {
-            zyronLog('render:panel:start', { isSuperAdmin: state.isSuperAdmin });
-            dashboardContent.innerHTML = defaultDashboardMarkup;
-            if (!state.isSuperAdmin) {
-                zyronLog('render:panel:skipNotSuper', {});
+            zyronLog('render:panel:start', { isSuperAdmin: state.isSuperAdmin, tenantId: state.currentTenantId });
+            if (state.isSuperAdmin) {
+                dashboardContent.innerHTML = `<div class="flex flex-col gap-6" id="super-panel-root"></div>`;
+                const root = document.getElementById('super-panel-root');
+                const inv = await invokeFn('get-super-admin-overview', {}, 'GET');
+                zyronLog('render:panel:overviewResponse', summarizeInsforgeResult(inv));
+                const overview = inv.data;
+                if (!overview?.metrics || !root) {
+                    zyronLog('render:panel:noMetrics', { hasOverview: Boolean(overview) });
+                    if (root) {
+                        root.innerHTML = `${renderModuleHeader('Panel', 'Super admin')}<p class="text-sm text-on-surface-variant">No se pudo cargar el resumen global. Comprueba que la funcion get-super-admin-overview este desplegada.</p>`;
+                    }
+                    return;
+                }
+                const m = overview.metrics;
+                root.innerHTML = `
+                    ${renderModuleHeader('Panel', 'Indicadores globales del SaaS')}
+                    <div class="rounded-xl border border-outline-variant/30 bg-surface-container-low p-4">
+                        <h3 class="text-sm font-bold text-primary mb-3">Centro de control super admin</h3>
+                        <div class="grid grid-cols-2 gap-3 md:grid-cols-4 text-sm">
+                            <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Empresas</div><div class="text-xl font-bold text-primary">${m.totalTenants}</div></div>
+                            <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Usuarios</div><div class="text-xl font-bold text-primary">${m.totalUsers}</div></div>
+                            <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Solicitudes</div><div class="text-xl font-bold text-primary">${m.pendingRequests}</div></div>
+                            <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Empresas bloqueadas</div><div class="text-xl font-bold text-primary">${m.blockedTenants}</div></div>
+                        </div>
+                    </div>
+                `;
+                zyronLog('render:panel:done', { metrics: m });
                 return;
             }
-            const inv = await invokeFn('get-super-admin-overview', {}, 'GET');
-            zyronLog('render:panel:overviewResponse', summarizeInsforgeResult(inv));
-            const overview = inv.data;
-            if (!overview?.metrics) {
-                zyronLog('render:panel:noMetrics', { hasOverview: Boolean(overview) });
+
+            if (!state.currentTenantId) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Panel principal', 'Sin empresa activa')}<p class="text-sm text-on-surface-variant mt-2">Cuando tengas una membresia aprobada, aqui veras facturas y stock recientes.</p>`;
                 return;
             }
-            const metrics = overview.metrics;
-            const wrapper = document.createElement('div');
-            wrapper.className = 'rounded-xl border border-outline-variant/30 bg-surface-container-low p-4';
-            wrapper.innerHTML = `
-                <h3 class="text-sm font-bold text-primary mb-3">Centro de control super admin</h3>
-                <div class="grid grid-cols-2 gap-3 md:grid-cols-4 text-sm">
-                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Empresas</div><div class="text-xl font-bold text-primary">${metrics.totalTenants}</div></div>
-                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Usuarios</div><div class="text-xl font-bold text-primary">${metrics.totalUsers}</div></div>
-                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Solicitudes</div><div class="text-xl font-bold text-primary">${metrics.pendingRequests}</div></div>
-                    <div class="rounded-md bg-surface-container-lowest p-3"><div class="text-xs text-on-surface-variant">Empresas bloqueadas</div><div class="text-xl font-bold text-primary">${metrics.blockedTenants}</div></div>
+
+            const [{ data: invSlice }, { data: prodRows }] = await Promise.all([
+                dbSelect({
+                    table: 'invoices',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                    order: { column: 'created_at', ascending: false },
+                    limit: 12
+                }),
+                dbSelect({
+                    table: 'products',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                    limit: 500
+                })
+            ]);
+            const invoices = invSlice || [];
+            const products = prodRows || [];
+            const lowStock = products.filter((p) => {
+                const st = Number(p.stock);
+                const min = Number(p.min_stock != null ? p.min_stock : 0);
+                return Number.isFinite(st) && st <= min;
+            }).length;
+
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Panel principal', 'Datos de tu empresa en tiempo real')}
+                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Facturas (muestra)</div>
+                        <div class="mt-1 text-2xl font-bold text-primary">${invoices.length}</div>
+                        <p class="mt-1 text-xs text-on-surface-variant">Hasta 12 mas recientes en la tabla inferior.</p>
+                    </div>
+                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Productos</div>
+                        <div class="mt-1 text-2xl font-bold text-primary">${products.length}</div>
+                    </div>
+                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Alerta stock bajo</div>
+                        <div class="mt-1 text-2xl font-bold text-primary">${lowStock}</div>
+                        <p class="mt-1 text-xs text-on-surface-variant">SKU con stock &lt;= minimo configurado.</p>
+                    </div>
+                </div>
+                <div class="rounded-xl bg-surface-container-low p-1">
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <h3 class="mb-3 text-sm font-bold text-primary">Facturas recientes</h3>
+                        ${
+                            invoices.length
+                                ? `<div class="w-full overflow-x-auto"><table class="w-full border-collapse text-left text-sm">
+                            <thead><tr class="border-b border-outline-variant/30">
+                                <th class="py-2 pr-4">Numero</th><th class="py-2 pr-4">Estado</th><th class="py-2 pr-4 text-right">Total</th><th class="py-2">Fecha</th>
+                            </tr></thead>
+                            <tbody>${invoices
+                                .map(
+                                    (invoice) => `
+                                <tr class="border-b border-outline-variant/15">
+                                    <td class="py-3 font-mono text-xs">${invoice.series != null && invoice.number != null ? `${invoice.series}-${invoice.number}` : invoice.id || '-'}</td>
+                                    <td class="py-3">${invoice.status ?? '-'}</td>
+                                    <td class="py-3 text-right font-semibold">${fmtMoneyPanel(invoice.total)}</td>
+                                    <td class="py-3 text-on-surface-variant">${toDateString(invoice.created_at)}</td>
+                                </tr>`
+                                )
+                                .join('')}</tbody></table></div>`
+                                : '<p class="text-sm text-on-surface-variant">No hay facturas todavia. Usa el modulo Facturas para crear la primera.</p>'
+                        }
+                    </div>
                 </div>
             `;
-            dashboardContent.prepend(wrapper);
-            zyronLog('render:panel:done', { metrics: overview.metrics });
+            zyronLog('render:panel:tenantDone', { invoices: invoices.length, products: products.length, lowStock });
         };
 
         const renderEmpresasModule = async () => {
@@ -2208,7 +2053,7 @@
             });
             const roleMap = new Map((existingRoles || []).map((role) => [role.role_key, role]));
 
-            for (const preset of rolePresets) {
+            for (const preset of state.roleSystemPresetsResolved) {
                 if (roleMap.has(preset.role_key)) continue;
                 const { data: inserted } = await dbInsert({
                     table: 'role_catalog',
@@ -2226,7 +2071,7 @@
             const { data: permissionRows } = await dbSelect({ table: 'permission_catalog' });
             const permissionMap = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
 
-            for (const preset of rolePresets) {
+            for (const preset of state.roleSystemPresetsResolved) {
                 const role = roleMap.get(preset.role_key);
                 if (!role) continue;
                 const { data: assignedRows } = await dbSelect({
@@ -2281,7 +2126,7 @@
                                         <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white" data-role-save="${role.id}">Guardar permisos</button>
                                     </div>
                                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                        ${permissionCatalog.map((permission) => `
+                                        ${state.permissionRowsForUi.map((permission) => `
                                             <label class="flex items-center gap-2 text-sm">
                                                 <input type="checkbox" class="h-4 w-4" data-role-perm-role="${role.id}" data-role-perm-key="${permission.key}" />
                                                 <span>${permission.label}</span>
@@ -2448,9 +2293,13 @@
                 await renderPendingApprovalScreen();
                 return;
             }
-            if (state.isSuperAdmin && moduleKey !== 'empresas') {
-                zyronLog('openModule:superAdminRedirect', { from: moduleKey, to: 'empresas' });
-                moduleKey = 'empresas';
+            if (state.isSuperAdmin) {
+                const allow = new Set(state.navModulesSuper.map((m) => m.key));
+                if (!allow.has(moduleKey)) {
+                    const fallback = state.navModulesSuper[0]?.key || 'empresas';
+                    zyronLog('openModule:superAdminRedirect', { from: moduleKey, to: fallback });
+                    moduleKey = fallback;
+                }
             }
             state.currentModule = moduleKey;
             refreshSidebarSelection();
@@ -2531,13 +2380,10 @@
             const boot = await bootstrapSession();
             if (!boot.ok) {
                 zyronLog('login:bootstrapFailed', { email, message: boot.message });
-                const isSuperAdminEmail = email === 'admin@zyron.com';
                 setStatus(
                     loginStatus,
-                    boot.message
-                        || (isSuperAdminEmail
-                            ? 'No fue posible cargar el perfil super admin. Intenta de nuevo en unos segundos.'
-                            : 'No fue posible cargar tu perfil. Verifica tu aprobacion.'),
+                    boot.message ||
+                        'No fue posible cargar tu perfil de aplicacion. Si tu cuenta es nueva, espera la aprobacion o revisa con un administrador.',
                     true
                 );
             }
@@ -2593,20 +2439,17 @@
 
             const authId = signUpData?.user?.id;
             zyronLog('register:signUpOk', { authId, signUpEmail: signUpData?.user?.email });
-            const isSuperBootstrap = email === 'admin@zyron.com';
-            const appStatus = isSuperBootstrap ? 'active' : 'pending';
 
             if (authId) {
-                const globalRole = isSuperBootstrap ? 'super_admin' : 'user';
-                zyronLog('register:appUsersInsert', { authId, appStatus, globalRole });
+                zyronLog('register:appUsersInsert', { authId, appStatus: 'pending', globalRole: 'user' });
                 const { error: profileError } = await dbInsert({
                     table: 'app_users',
                     values: [{
                         auth_user_id: authId,
                         email,
                         full_name: fullName || username,
-                        global_role: globalRole,
-                        status: appStatus
+                        global_role: 'user',
+                        status: 'pending'
                     }]
                 });
                 if (profileError) {
@@ -2619,7 +2462,7 @@
                 zyronLog('register:noAuthIdAfterSignUp', { signUpDataKeys: signUpData ? Object.keys(signUpData) : [] });
             }
 
-            if (!isSuperBootstrap && authId) {
+            if (authId) {
                 zyronLog('register:accessRequestRpc', { function: 'submit_my_access_request' });
                 const { error: rpcError } = await dbRpc('submit_my_access_request', {
                     p_username: username,
@@ -2667,12 +2510,10 @@
             registerForm.reset();
             clearStatus(registerStatus);
             showLogin();
-            zyronLog('register:complete', { isSuperBootstrap });
+            zyronLog('register:complete', { authId });
             setStatus(
                 loginStatus,
-                isSuperBootstrap
-                    ? 'Cuenta de super admin lista. Inicia sesion.'
-                    : 'Registro recibido. Tu cuenta queda en estado pendiente hasta que un administrador apruebe la solicitud.',
+                'Registro recibido. Tu cuenta queda en estado pendiente hasta que un administrador apruebe la solicitud. Inicia sesion cuando te confirmen.',
                 false
             );
         });
@@ -2686,6 +2527,10 @@
             state.currentTenantId = null;
             state.isSuperAdmin = false;
             state.currentModule = 'panel';
+            state.navModulesSuper = [...DEFAULT_NAV_SUPER];
+            state.navModulesTenant = [...DEFAULT_NAV_TENANT];
+            state.permissionRowsForUi = [...DEFAULT_PERMISSION_UI];
+            state.roleSystemPresetsResolved = [...DEFAULT_ROLE_SYSTEM_PRESETS];
             sidebarNav.classList.remove('hidden');
             sidebarToggleBtn?.classList.remove('pointer-events-none', 'opacity-40');
             dashboardAppHeader?.classList.remove('hidden');

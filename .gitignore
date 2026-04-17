@@ -26,6 +26,9 @@ Thumbs.db
 .env
 .env.local
 
+# Insforge credenciales locales (Electron): copia insforge.config.example.json
+insforge.local.json
+
 # Electron specific
 *.asar
 

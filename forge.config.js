@@ -6,6 +6,7 @@ module.exports = {
   packagerConfig: {
     asar: true,
     icon: path.join(__dirname, 'logo.ico'),
+    // Insforge: en runtime `main.js` busca `insforge.json` en userData, junto al .exe (portable) y en resources.
   },
   rebuildConfig: {},
   makers: [

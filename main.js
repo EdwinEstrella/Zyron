@@ -63,8 +63,115 @@ const applyAuthSessionFromPayload = (client, raw) => {
   }
 }
 
-const INSFORGE_BASE_URL = 'https://zyron.azokia.com'
-const INSFORGE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3OC0xMjM0LTU2NzgtOTBhYi1jZGVmMTIzNDU2NzgiLCJlbWFpbCI6ImFub25AaW5zZm9yZ2UuY29tIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzY0Mzk5NjB9.ZP6__Mf_PM_4UbIgtZ4eICrcsaLpoWOVOyLkv-yLuPg'
+/** @type {{ baseUrl: string, anonKey: string, configPath: string } | null | undefined} */
+let insforgeResolvedConfig = undefined
+
+/** Sube desde `startDir` hasta encontrar `package.json` (raiz del repo con Electron Forge / .vite/build). */
+const findProjectRootByPackageJson = (startDir) => {
+  let dir = path.resolve(startDir)
+  for (let i = 0; i < 28; i++) {
+    const pkg = path.join(dir, 'package.json')
+    if (fs.existsSync(pkg)) return dir
+    const parent = path.dirname(dir)
+    if (parent === dir) return null
+    dir = parent
+  }
+  return null
+}
+
+const readInsforgeJsonFile = (filePath) => {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) return null
+    const raw = fs.readFileSync(filePath, 'utf8')
+    const j = JSON.parse(raw)
+    const baseUrl = typeof j.baseUrl === 'string' ? j.baseUrl.trim() : ''
+    const anonKey =
+      typeof j.anonKey === 'string'
+        ? j.anonKey.trim()
+        : typeof j.anon_key === 'string'
+          ? j.anon_key.trim()
+          : ''
+    if (!baseUrl || !anonKey) return null
+    const looksPlaceholder =
+      /tu-instancia\.insforge\.app/i.test(baseUrl) ||
+      /Pega_aqui|reemplaza_con_tu_jwt/i.test(anonKey)
+    if (looksPlaceholder) {
+      zyronLog('insforge:config:placeholder', {
+        filePath,
+        hint: 'Edita baseUrl y anonKey con los valores reales de tu proyecto Insforge.'
+      })
+      return null
+    }
+    return { baseUrl, anonKey, configPath: filePath }
+  } catch (e) {
+    zyronLog('insforge:config:readError', { filePath, message: e?.message || String(e) })
+    return null
+  }
+}
+
+const resolveInsforgeDiskConfig = () => {
+  if (insforgeResolvedConfig !== undefined) return insforgeResolvedConfig
+
+  const seen = new Set()
+  const candidates = []
+  const push = (p) => {
+    if (!p || typeof p !== 'string') return
+    const norm = path.normalize(p)
+    if (seen.has(norm)) return
+    seen.add(norm)
+    candidates.push(norm)
+  }
+
+  // Raiz del repo: subiendo desde __dirname (p. ej. .vite/build) hasta package.json — mas fiable que cwd.
+  const pkgRootFromMain = findProjectRootByPackageJson(__dirname)
+  if (pkgRootFromMain) push(path.join(pkgRootFromMain, 'insforge.local.json'))
+
+  push(path.join(process.cwd(), 'insforge.local.json'))
+  push(path.join(__dirname, 'insforge.local.json'))
+  try {
+    push(path.join(app.getAppPath(), 'insforge.local.json'))
+    const pkgFromApp = findProjectRootByPackageJson(app.getAppPath())
+    if (pkgFromApp && pkgFromApp !== pkgRootFromMain) {
+      push(path.join(pkgFromApp, 'insforge.local.json'))
+    }
+  } catch (_) {
+    /* getAppPath antes de ready */
+  }
+
+  try {
+    push(path.join(app.getPath('userData'), 'insforge.json'))
+  } catch (_) {
+    /* app.getPath puede fallar antes de ready */
+  }
+  try {
+    push(path.join(path.dirname(process.execPath), 'insforge.json'))
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    if (app.isPackaged && process.resourcesPath) {
+      push(path.join(process.resourcesPath, 'insforge.json'))
+    }
+  } catch (_) {
+    /* ignore */
+  }
+
+  for (const p of candidates) {
+    const hit = readInsforgeJsonFile(p)
+    if (hit) {
+      insforgeResolvedConfig = hit
+      zyronLog('insforge:config:loaded', { configPath: hit.configPath })
+      return hit
+    }
+  }
+
+  insforgeResolvedConfig = null
+  zyronLog('insforge:config:missing', {
+    hint: 'Copia insforge.config.example.json a insforge.local.json en la RAIZ del proyecto (mismo sitio que package.json) o en datos de usuario.',
+    tried: candidates
+  })
+  return null
+}
 
 const normalizeResult = (result, error = null) => {
   if (error) return { data: null, error: { message: error.message || String(error) } }
@@ -74,13 +181,24 @@ const normalizeResult = (result, error = null) => {
 
 const getInsforgeClient = async () => {
   if (insforgeClientPromise) return insforgeClientPromise
-  insforgeClientPromise = (async () => {
+  const attempt = (async () => {
+    const cfg = resolveInsforgeDiskConfig()
+    if (!cfg?.baseUrl || !cfg?.anonKey) {
+      const msg =
+        'Insforge no esta configurado: falta insforge.local.json con URL y JWT anon reales, o solo tiene valores de plantilla. Coloca el archivo en la raiz del repo (junto a package.json) o usa userData/exe/resources con insforge.json. Plantilla: insforge.config.example.json'
+      zyronLog('insforge:client:abort', { msg })
+      throw new Error(msg)
+    }
     const { createClient } = await import('@insforge/sdk')
     return createClient({
-      baseUrl: INSFORGE_BASE_URL,
-      anonKey: INSFORGE_ANON_KEY
+      baseUrl: cfg.baseUrl,
+      anonKey: cfg.anonKey
     })
   })()
+  insforgeClientPromise = attempt.catch((err) => {
+    insforgeClientPromise = null
+    throw err
+  })
   return insforgeClientPromise
 }
 
@@ -192,7 +310,15 @@ ipcMain.on('window-close', () => {
   if (mainWindow) mainWindow.close()
 })
 
-ipcMain.handle('insforge:config', async () => ({ baseUrl: INSFORGE_BASE_URL }))
+ipcMain.handle('insforge:config', async () => {
+  const cfg = resolveInsforgeDiskConfig()
+  return {
+    baseUrl: cfg?.baseUrl ?? null,
+    hasAnonKey: Boolean(cfg?.anonKey),
+    configured: Boolean(cfg?.baseUrl && cfg?.anonKey),
+    configPath: cfg?.configPath ?? null
+  }
+})
 
 ipcMain.handle('insforge:auth:signUp', async (_event, payload) => {
   try {

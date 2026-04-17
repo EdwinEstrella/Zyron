@@ -1,0 +1,4 @@
+{
+  "baseUrl": "https://tu-instancia.insforge.app",
+  "anonKey": "Pega_aqui_el_JWT_anon_de_Insforge_sin_commitear_este_archivo_real"
+}
