@@ -605,6 +605,10 @@
                     <button id="sidebar-toggle-btn" type="button" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-black/[0.04]" aria-label="Ocultar barra lateral" title="Ocultar barra lateral">
                         <span id="sidebar-toggle-icon" class="material-symbols-outlined text-[22px]">menu_open</span>
                     </button>
+                    <div id="session-role-chip-wrap" class="hidden min-w-0 max-w-[220px] flex-col sm:flex md:max-w-xs" title="">
+                        <span id="session-role-chip-primary" class="truncate text-xs font-semibold leading-tight text-on-surface"></span>
+                        <span id="session-role-chip-secondary" class="truncate text-[10px] leading-tight text-on-surface-variant"></span>
+                    </div>
                     <div class="relative hidden max-w-xs flex-1 lg:block">
                         <span class="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant">search</span>
                         <input class="w-full rounded-full border-0 bg-surface-container-lowest py-2 pl-10 pr-4 text-sm text-on-surface shadow-sm ring-1 ring-outline-variant/30 placeholder:text-outline/70 focus:outline-none focus:ring-2 focus:ring-primary/25" type="search" placeholder="Buscar facturas, clientes, SKU…" />
@@ -699,12 +703,15 @@
             { key: 'reports.view', label: 'Reportes' }
         ]);
 
-        const DEFAULT_NAV_SUPER = Object.freeze([{ key: 'empresas', label: 'Empresas', icon: 'apartment' }]);
+        const DEFAULT_NAV_SUPER = Object.freeze([
+            { key: 'empresas', label: 'Empresas', icon: 'apartment' },
+            { key: 'solicitudes', label: 'Solicitudes', icon: 'inbox' },
+            { key: 'usuarios', label: 'Usuarios', icon: 'group' },
+            { key: 'roles', label: 'Roles', icon: 'admin_panel_settings' }
+        ]);
 
         const DEFAULT_NAV_TENANT = Object.freeze([
             { key: 'panel', label: 'Panel principal', icon: 'dashboard' },
-            { key: 'usuarios', label: 'Usuarios', icon: 'group' },
-            { key: 'roles', label: 'Roles', icon: 'admin_panel_settings' },
             { key: 'facturas', label: 'Facturas', icon: 'receipt_long' },
             { key: 'pagos', label: 'Pagos y cobros', icon: 'payments' },
             { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
@@ -751,11 +758,89 @@
             navModulesSuper: [...DEFAULT_NAV_SUPER],
             navModulesTenant: [...DEFAULT_NAV_TENANT],
             permissionRowsForUi: [...DEFAULT_PERMISSION_UI],
-            roleSystemPresetsResolved: [...DEFAULT_ROLE_SYSTEM_PRESETS]
+            roleSystemPresetsResolved: [...DEFAULT_ROLE_SYSTEM_PRESETS],
+            facturasUi: { tab: 'list' },
+            /** Solo superadmin: tenant elegido en modulo Roles (no muta currentTenantId del panel tenant). */
+            rolesContextTenantId: null
         };
 
         const isTenantPendingApproval = () =>
             Boolean(state.appUser && !state.isSuperAdmin && String(state.appUser.status || '').toLowerCase() === 'pending');
+
+        /** Claves `tenant_memberships.role_key` → etiqueta humana (no confundir con `app_users.global_role`). */
+        const TENANT_ROLE_LABELS = Object.freeze({
+            tenant_admin: 'Administrador de empresa',
+            manager: 'Gerente',
+            billing_agent: 'Facturación / cobros',
+            inventory_agent: 'Inventario',
+            viewer: 'Solo lectura'
+        });
+
+        const formatGlobalRoleForUi = (globalRole) => {
+            const g = String(globalRole || 'user').toLowerCase();
+            if (g === 'super_admin') return 'Superadmin de plataforma';
+            return 'Usuario de plataforma';
+        };
+
+        const formatTenantRolePrimary = (membership) => {
+            if (!membership) return '';
+            const key = String(membership.role_key || '').toLowerCase();
+            const label = TENANT_ROLE_LABELS[key] || membership.role_key || 'Miembro del equipo';
+            const owner = Boolean(membership.is_owner);
+            if (key === 'tenant_admin' && owner) return `${label} · dueño`;
+            return label;
+        };
+
+        /** Texto para chip de cabecera y badge de módulos: separa rol en empresa vs tipo de cuenta. */
+        const getSessionRolePresentation = () => {
+            if (state.isSuperAdmin) {
+                return {
+                    primary: 'Superadmin',
+                    secondary: 'Operación global (no es un rol dentro de una empresa)',
+                    title: 'global_role: super_admin'
+                };
+            }
+            const tenantLine = formatTenantRolePrimary(state.membership);
+            const plat = formatGlobalRoleForUi(state.appUser?.global_role);
+            if (!tenantLine) {
+                return {
+                    primary: 'Sin empresa activa',
+                    secondary: `${plat}: aún no tienes membresía a un tenant, o no se cargó.`,
+                    title: `global_role: ${state.appUser?.global_role || 'user'} · sin tenant_memberships activa`
+                };
+            }
+            return {
+                primary: tenantLine,
+                secondary: `${plat} — el rol de arriba es el de tu empresa.`,
+                title: `global_role: ${state.appUser?.global_role || 'user'} · empresa: ${state.membership?.role_key || ''}${state.membership?.is_owner ? ' (dueño)' : ''}`
+            };
+        };
+
+        const refreshSessionRoleUi = () => {
+            const wrap = document.getElementById('session-role-chip-wrap');
+            const elP = document.getElementById('session-role-chip-primary');
+            const elS = document.getElementById('session-role-chip-secondary');
+            if (!wrap || !elP || !elS) return;
+            if (isTenantPendingApproval() || !state.appUser) {
+                wrap.classList.add('hidden');
+                wrap.removeAttribute('title');
+                elP.textContent = '';
+                elS.textContent = '';
+                return;
+            }
+            const pr = getSessionRolePresentation();
+            wrap.classList.remove('hidden');
+            elP.textContent = pr.primary;
+            elS.textContent = pr.secondary;
+            wrap.setAttribute('title', pr.title || '');
+        };
+
+        /** Usuarios y Roles solo existen en navegacion superadmin; nunca en menu tenant (ni por BD). */
+        const filterTenantNavForRole = (modules) => {
+            if (!Array.isArray(modules)) return [];
+            const superOnly = new Set(['usuarios', 'roles', 'solicitudes', 'empresas']);
+            return modules.filter((m) => !superOnly.has(m.key));
+        };
 
         const updateSessionNoticeBanner = () => {
             if (!sessionNoticeBanner) return;
@@ -806,10 +891,12 @@
             if (!titlebarTitleEl) return;
             if (!state.appUser) {
                 titlebarTitleEl.textContent = 'Zyron';
+                refreshSessionRoleUi();
                 return;
             }
             const who = sessionDisplayName();
             titlebarTitleEl.textContent = `Zyron — ${who}`;
+            refreshSessionRoleUi();
         };
 
         const showLogin = () => {
@@ -817,6 +904,7 @@
             viewLogin.classList.remove('hidden');
             document.title = 'Zyron | Acceder';
             if (titlebarTitleEl) titlebarTitleEl.textContent = 'Zyron';
+            refreshSessionRoleUi();
             sidebarNav?.classList.remove('hidden');
             sidebarToggleBtn?.classList.remove('pointer-events-none', 'opacity-40');
             dashboardAppHeader?.classList.remove('hidden');
@@ -930,6 +1018,27 @@
             safeCall(() => window.insforgeAPI.database.rpc({ functionName, args }), `db.rpc:${functionName}`);
         const invokeFn = (slug, body = {}, method = 'POST') =>
             safeCall(() => window.insforgeAPI.functions.invoke({ slug, body, method }), `fn:${method || 'POST'}:${slug}`);
+
+        const escapeHtml = (value) =>
+            String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+
+        const unwrapFnInvoke = (result) => {
+            if (result?.error) return { err: result.error.message || String(result.error), data: null };
+            let d = result?.data;
+            if (d == null) return { err: null, data: null };
+            if (typeof d === 'string') {
+                try {
+                    d = JSON.parse(d);
+                } catch (_) {
+                    return { err: 'Respuesta de funcion no es JSON valido', data: null };
+                }
+            }
+            return { err: d?.error ? String(d.error) : null, data: d };
+        };
 
         const loadUiCatalogsFromDb = async () => {
             const { data: navRows, error: navErr } = await dbSelect({
@@ -1344,6 +1453,13 @@
                         <p class="mt-3 text-sm text-on-surface-variant leading-relaxed">
                             Tu registro fue recibido. Un administrador debe aprobar tu solicitud antes de que puedas ver el panel y los modulos de la aplicacion.
                         </p>
+                        <p class="mt-3 text-left text-xs text-on-surface-variant leading-relaxed border-t border-outline-variant/30 pt-4">
+                            <strong class="text-on-surface">Roles, para que no se mezclen:</strong>
+                            Ahora tu cuenta es <strong>usuario de plataforma</strong> (<code class="rounded bg-surface-container px-1">global_role: user</code>) con estado pendiente; eso no es tu puesto dentro de una empresa.
+                            Cuando un superadmin apruebe tu solicitud, en tu empresa quedarás como <strong>administrador de empresa y dueño</strong>
+                            (<code class="rounded bg-surface-container px-1">tenant_admin</code> + <code class="rounded bg-surface-container px-1">is_owner</code>).
+                            Tu equipo en la empresa se gestiona con roles (gerente, facturación, etc.); la invitación de usuarios la coordina la operación de plataforma según la política activa.
+                        </p>
                     </div>
                     <button type="button" id="pending-gate-logout" class="rounded-lg border border-outline-variant/50 bg-surface-container px-5 py-2.5 text-sm font-semibold text-primary hover:bg-surface-container-high">
                         Cerrar sesion
@@ -1366,7 +1482,7 @@
                 refreshSidebarSelection();
                 return;
             }
-            const allowedModules = state.isSuperAdmin ? state.navModulesSuper : state.navModulesTenant;
+            const allowedModules = state.isSuperAdmin ? state.navModulesSuper : filterTenantNavForRole(state.navModulesTenant);
             for (const module of allowedModules) {
                 const link = document.createElement('a');
                 link.className = `nav-module ${module.key === state.currentModule ? 'is-active' : ''}`;
@@ -1399,17 +1515,21 @@
             });
         };
 
-        const renderModuleHeader = (title, subtitle) => `
+        const renderModuleHeader = (title, subtitle) => {
+            const rp = getSessionRolePresentation();
+            return `
             <div class="flex flex-col justify-between gap-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-5 sm:flex-row sm:items-center">
                 <div>
                     <h2 class="text-2xl font-bold tracking-tight text-primary">${title}</h2>
                     <p class="mt-1 text-sm text-on-surface-variant">${subtitle}</p>
                 </div>
-                <span class="inline-flex items-center rounded-full bg-surface-container px-3 py-1 text-xs font-semibold text-on-surface-variant">
-                    ${state.isSuperAdmin ? 'Super Admin' : (state.membership?.role_key || 'Usuario')}
+                <span class="inline-flex max-w-full flex-col items-end gap-0.5 rounded-lg bg-surface-container px-3 py-2 text-right" title="${escapeHtml(rp.title || '')}">
+                    <span class="text-xs font-semibold text-on-surface">${escapeHtml(rp.primary)}</span>
+                    <span class="max-w-[18rem] text-[10px] font-normal leading-snug text-on-surface-variant">${escapeHtml(rp.secondary)}</span>
                 </span>
             </div>
         `;
+        };
 
         const fmtMoneyPanel = (n) => {
             const x = Number(n);
@@ -1634,12 +1754,12 @@
                 <div class="rounded-xl bg-surface-container-low p-1 mt-6">
                     <div class="rounded-lg bg-surface-container-lowest p-5">
                         <h3 class="mb-1 text-sm font-bold text-primary">Usuarios del sistema</h3>
-                        <p class="mb-3 text-xs text-on-surface-variant">Estados: <strong>Pendiente</strong> (falta aprobar la solicitud), <strong>Aprobado</strong> (solicitud OK), <strong>Activo</strong> (servicio en uso), <strong>Inactivo</strong> (bloqueo por pago). Los botones de suspender / reactivar solo aparecen cuando el usuario ya esta <strong>Aprobado</strong>, <strong>Activo</strong> o <strong>Inactivo</strong>.</p>
+                        <p class="mb-3 text-xs text-on-surface-variant">La columna «Tipo cuenta» es <code class="rounded bg-surface-container px-1">global_role</code> (plataforma), no el rol dentro de una empresa. Estados: <strong>Pendiente</strong> (falta aprobar la solicitud), <strong>Aprobado</strong> (solicitud OK), <strong>Activo</strong> (servicio en uso), <strong>Inactivo</strong> (bloqueo por pago). Los botones de suspender / reactivar solo aparecen cuando el usuario ya esta <strong>Aprobado</strong>, <strong>Activo</strong> o <strong>Inactivo</strong>.</p>
                         <table class="w-full text-left text-sm">
                             <thead>
                                 <tr class="border-b border-outline-variant/30">
                                     <th class="py-2">Correo</th>
-                                    <th class="py-2">Rol global</th>
+                                    <th class="py-2">Tipo cuenta (plataforma)</th>
                                     <th class="py-2">Estado</th>
                                     <th class="py-2 text-right">Acciones</th>
                                 </tr>
@@ -1648,7 +1768,7 @@
                                 ${usersPanel.map((user) => `
                                     <tr class="border-b border-outline-variant/20">
                                         <td class="py-3">${user.email}</td>
-                                        <td class="py-3">${user.global_role}</td>
+                                        <td class="py-3"><span class="font-medium">${escapeHtml(formatGlobalRoleForUi(user.global_role))}</span><span class="mt-0.5 block text-[10px] text-on-surface-variant">clave: ${escapeHtml(user.global_role || '')}</span></td>
                                         <td class="py-3">${formatAppUserStatus(user.status)}</td>
                                         <td class="py-3 text-right">
                                             <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-1" data-reset-password="${user.email}">Restablecer clave</button>
@@ -1676,7 +1796,7 @@
                                 <tr class="border-b border-outline-variant/30">
                                     <th class="py-2">Correo</th>
                                     <th class="py-2">Empresa</th>
-                                    <th class="py-2">Usuario</th>
+                                    <th class="py-2">Nombre de usuario</th>
                                     <th class="py-2">Estado</th>
                                     <th class="py-2 text-right">Acciones</th>
                                 </tr>
@@ -1855,18 +1975,17 @@
 
         const renderSolicitudesModule = async () => {
             zyronLog('render:solicitudes:start', { isSuperAdmin: state.isSuperAdmin });
-            let requests = [];
-            if (state.isSuperAdmin) {
-                const all = await loadAccessRequestsSuperOrFallback();
-                requests = (all || []).filter((r) => String(r.request_status || '').toLowerCase() === 'pending');
-            } else {
-                const { data } = await dbSelect({
-                    table: 'user_access_requests',
-                    filters: [{ op: 'eq', column: 'request_status', value: 'pending' }],
-                    order: { column: 'created_at', ascending: false }
-                });
-                requests = data || [];
+            if (!state.isSuperAdmin) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Solicitudes', 'Acceso restringido')}
+                    <div class="rounded-xl bg-surface-container-low p-1">
+                        <div class="rounded-lg bg-surface-container-lowest p-6 text-sm text-on-surface-variant">
+                            Solo un <strong class="text-on-surface">superadministrador</strong> puede revisar solicitudes de alta de empresas.
+                        </div>
+                    </div>`;
+                return;
             }
+            const all = await loadAccessRequestsSuperOrFallback();
+            const requests = (all || []).filter((r) => String(r.request_status || '').toLowerCase() === 'pending');
             dashboardContent.innerHTML = `
                 ${renderModuleHeader('Solicitudes', 'Solo solicitudes pendientes de revision')}
                 <div class="rounded-xl bg-surface-container-low p-1">
@@ -1876,7 +1995,7 @@
                                 <tr class="border-b border-outline-variant/30">
                                     <th class="py-2">Correo</th>
                                     <th class="py-2">Empresa</th>
-                                    <th class="py-2">Usuario</th>
+                                    <th class="py-2">Nombre de usuario</th>
                                     <th class="py-2">Estado</th>
                                     <th class="py-2 text-right">Acciones</th>
                                 </tr>
@@ -1893,10 +2012,8 @@
                                         <td class="py-3">${item.username}</td>
                                         <td class="py-3">${formatRequestStatus(item.request_status)}</td>
                                         <td class="py-3 text-right">
-                                            ${state.isSuperAdmin ? `
-                                                <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}" data-requested-email="${String(item.requested_email || '').trim().toLowerCase()}">Aprobar</button>
-                                                <button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-request-action="reject" data-request-id="${item.id}">Rechazar</button>
-                                            ` : '<span class="text-xs text-on-surface-variant">Solo el super admin puede aprobar.</span>'}
+                                            <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}" data-requested-email="${String(item.requested_email || '').trim().toLowerCase()}">Aprobar</button>
+                                            <button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-request-action="reject" data-request-id="${item.id}">Rechazar</button>
                                         </td>
                                     </tr>
                                 `
@@ -1908,7 +2025,6 @@
                 </div>
             `;
             zyronLog('render:solicitudes:rendered', { count: (requests || []).length });
-            if (!state.isSuperAdmin) return;
             dashboardContent.querySelectorAll('[data-request-action]').forEach((button) => {
                 button.addEventListener('click', async () => {
                     const requestId = button.getAttribute('data-request-id');
@@ -1922,39 +2038,34 @@
         };
 
         const renderUsuariosModule = async () => {
-            zyronLog('render:usuarios:start', { tenantId: state.currentTenantId, isSuperAdmin: state.isSuperAdmin });
-            let users = [];
-            if (state.isSuperAdmin) {
-                const raw = await loadAppUsersSuperOrFallback();
-                users = (raw || []).filter((u) => u.global_role !== 'super_admin');
-            } else if (state.currentTenantId) {
-                const { data: memberships } = await dbSelect({
-                    table: 'tenant_memberships',
-                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }]
-                });
-                const appUserIds = (memberships || []).map((row) => row.app_user_id);
-                if (appUserIds.length > 0) {
-                    const { data } = await dbSelect({
-                        table: 'app_users',
-                        filters: [{ op: 'in', column: 'id', value: appUserIds }]
-                    });
-                    users = data || [];
-                }
+            zyronLog('render:usuarios:start', { isSuperAdmin: state.isSuperAdmin });
+            if (!state.isSuperAdmin) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Usuarios', 'Acceso restringido')}
+                    <div class="rounded-xl bg-surface-container-low p-1">
+                        <div class="rounded-lg bg-surface-container-lowest p-6 text-sm text-on-surface-variant">
+                            Solo un <strong class="text-on-surface">superadministrador de plataforma</strong> puede abrir este modulo (usuarios globales del sistema). La gestion de equipo por empresa no esta aqui.
+                        </div>
+                    </div>`;
+                zyronLog('render:usuarios:forbidden', { role: state.membership?.role_key });
+                return;
             }
+            const raw = await loadAppUsersSuperOrFallback();
+            const users = (raw || []).filter((u) => u.global_role !== 'super_admin');
             dashboardContent.innerHTML = `
-                ${renderModuleHeader('Usuarios', 'Gestion de usuarios, bloqueo y restablecimiento')}
+                ${renderModuleHeader('Usuarios', 'Listado global de cuentas (app_users). Invitaciones por tenant: usa la API o flujos dedicados; la invitacion masiva por empresa no esta en esta pantalla.')}
                 <div class="rounded-xl bg-surface-container-low p-1">
                     <div class="rounded-lg bg-surface-container-lowest p-5">
-                        <div class="mb-4 flex gap-2">
-                            <input id="new-user-email" class="w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="correo@empresa.com" />
-                            <input id="new-user-role" class="w-44 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="staff" />
-                            <button id="add-user-btn" type="button" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Agregar</button>
+                        <p class="mb-4 text-xs text-on-surface-variant">La invitacion por correo + <code class="rounded bg-surface-container px-1">role_key</code> requiere <code class="rounded bg-surface-container px-1">tenantId</code>; este panel es supervision global.</p>
+                        <div class="mb-4 flex gap-2 opacity-50 pointer-events-none" title="No disponible en vista global sin tenant">
+                            <input class="w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="correo@empresa.com" disabled />
+                            <input class="w-52 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="role_key" disabled />
+                            <button type="button" class="rounded-md bg-primary px-3 py-2 text-sm text-white" disabled>Agregar</button>
                         </div>
                         <table class="w-full text-left text-sm">
                             <thead>
                                 <tr class="border-b border-outline-variant/30">
                                     <th class="py-2">Correo</th>
-                                    <th class="py-2">Rol global</th>
+                                    <th class="py-2">Tipo cuenta (plataforma)</th>
                                     <th class="py-2">Estado</th>
                                     <th class="py-2 text-right">Acciones</th>
                                 </tr>
@@ -1963,11 +2074,10 @@
                                 ${users.map((user) => `
                                     <tr class="border-b border-outline-variant/20">
                                         <td class="py-3">${user.email}</td>
-                                        <td class="py-3">${user.global_role}</td>
+                                        <td class="py-3"><span class="font-medium">${escapeHtml(formatGlobalRoleForUi(user.global_role))}</span><span class="mt-0.5 block text-[10px] text-on-surface-variant">clave: ${escapeHtml(user.global_role || '')}</span></td>
                                         <td class="py-3">${formatAppUserStatus(user.status)}</td>
                                         <td class="py-3 text-right">
                                             <button type="button" class="rounded-md bg-surface-container px-2 py-1 text-xs mr-2" data-reset-email="${user.email}">Reset pass</button>
-                                            ${state.currentTenantId ? `<button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white mr-2" data-suspend-email="${user.email}">Suspender</button>` : ''}
                                             ${user.global_role === 'super_admin'
                                                 ? '<span class="text-xs font-semibold text-on-surface-variant">Protegido</span>'
                                                 : `<button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-delete-user="${user.id}">Eliminar</button>`}
@@ -1980,37 +2090,12 @@
                 </div>
             `;
 
-            const addUserBtn = document.getElementById('add-user-btn');
-            if (addUserBtn && state.currentTenantId) {
-                addUserBtn.addEventListener('click', async () => {
-                    const targetEmail = document.getElementById('new-user-email').value.trim();
-                    const roleKey = document.getElementById('new-user-role').value.trim() || 'staff';
-                    if (!targetEmail) return;
-                    await invokeFn('manage-tenant-user', { tenantId: state.currentTenantId, targetEmail, roleKey, action: 'upsert' });
-                    await renderUsuariosModule();
-                });
-            } else if (addUserBtn) {
-                addUserBtn.disabled = true;
-                addUserBtn.classList.add('opacity-50');
-            }
-
             dashboardContent.querySelectorAll('[data-reset-email]').forEach((button) => {
                 button.addEventListener('click', async () => {
                     await invokeFn('admin-reset-user-password', {
-                        tenantId: state.currentTenantId,
+                        tenantId: state.currentTenantId || null,
                         targetEmail: button.getAttribute('data-reset-email')
                     });
-                });
-            });
-
-            dashboardContent.querySelectorAll('[data-suspend-email]').forEach((button) => {
-                button.addEventListener('click', async () => {
-                    await invokeFn('manage-tenant-user', {
-                        tenantId: state.currentTenantId,
-                        targetEmail: button.getAttribute('data-suspend-email'),
-                        action: 'suspend'
-                    });
-                    await renderUsuariosModule();
                 });
             });
 
@@ -2019,24 +2104,14 @@
                     const userId = button.getAttribute('data-delete-user');
                     const user = (users || []).find((item) => item.id === userId);
                     if (user?.global_role === 'super_admin') return;
-                    if (state.isSuperAdmin) {
-                        await dbDelete({
-                            table: 'tenant_memberships',
-                            filters: [{ op: 'eq', column: 'app_user_id', value: userId }]
-                        });
-                        await dbDelete({
-                            table: 'app_users',
-                            filters: [{ op: 'eq', column: 'id', value: userId }]
-                        });
-                    } else if (state.currentTenantId) {
-                        await dbDelete({
-                            table: 'tenant_memberships',
-                            filters: [
-                                { op: 'eq', column: 'tenant_id', value: state.currentTenantId },
-                                { op: 'eq', column: 'app_user_id', value: userId }
-                            ]
-                        });
-                    }
+                    await dbDelete({
+                        table: 'tenant_memberships',
+                        filters: [{ op: 'eq', column: 'app_user_id', value: userId }]
+                    });
+                    await dbDelete({
+                        table: 'app_users',
+                        filters: [{ op: 'eq', column: 'id', value: userId }]
+                    });
                     await renderUsuariosModule();
                 });
             });
@@ -2091,19 +2166,71 @@
         };
 
         const renderRolesModule = async () => {
-            zyronLog('render:roles:start', { tenantId: state.currentTenantId });
-            if (!state.currentTenantId) {
-                dashboardContent.innerHTML = `${renderModuleHeader('Roles', 'Los roles predefinidos se gestionan por empresa activa')}`;
-                zyronLog('render:roles:noTenant', {});
+            zyronLog('render:roles:start', { rolesContextTenantId: state.rolesContextTenantId, currentTenantId: state.currentTenantId });
+            if (!state.isSuperAdmin) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Roles', 'Acceso restringido')}
+                    <div class="rounded-xl bg-surface-container-low p-1">
+                        <div class="rounded-lg bg-surface-container-lowest p-6 text-sm text-on-surface-variant">
+                            Solo un <strong class="text-on-surface">superadministrador de plataforma</strong> puede abrir este modulo.
+                        </div>
+                    </div>`;
+                zyronLog('render:roles:forbidden', { role: state.membership?.role_key });
                 return;
             }
 
-            await ensureRolePresetsForTenant(state.currentTenantId);
+            const effectiveTenantId = state.rolesContextTenantId || state.currentTenantId;
+            if (!effectiveTenantId) {
+                const { data: tenants } = await dbSelect({
+                    table: 'tenants',
+                    order: { column: 'display_name', ascending: true },
+                    limit: 300
+                });
+                const opts = (tenants || [])
+                    .map(
+                        (t) =>
+                            `<option value="${t.id}">${escapeHtml(String(t.display_name || t.legal_name || t.slug || t.id))}</option>`
+                    )
+                    .join('');
+                dashboardContent.innerHTML = `
+                    ${renderModuleHeader('Roles', 'Elige una empresa: los roles y permisos son por tenant (role_catalog).')}
+                    <div class="rounded-xl bg-surface-container-low p-1">
+                        <div class="rounded-lg bg-surface-container-lowest p-6 space-y-4">
+                            <label class="block text-sm">
+                                <span class="font-medium text-on-surface">Empresa</span>
+                                <select id="roles-tenant-select" class="mt-2 w-full max-w-lg rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm">
+                                    <option value="">— Seleccionar —</option>
+                                    ${opts}
+                                </select>
+                            </label>
+                            <button type="button" id="roles-tenant-open" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Abrir roles</button>
+                        </div>
+                    </div>`;
+                document.getElementById('roles-tenant-open')?.addEventListener('click', async () => {
+                    const v = document.getElementById('roles-tenant-select')?.value?.trim();
+                    if (!v) {
+                        window.alert('Selecciona una empresa.');
+                        return;
+                    }
+                    state.rolesContextTenantId = v;
+                    await renderRolesModule();
+                });
+                zyronLog('render:roles:picker', { tenantOptions: (tenants || []).length });
+                return;
+            }
+
+            const { data: tenantRow } = await dbSelect({
+                table: 'tenants',
+                filters: [{ op: 'eq', column: 'id', value: effectiveTenantId }],
+                limit: 1
+            });
+            const tenantLabel = escapeHtml((tenantRow && tenantRow[0] && (tenantRow[0].display_name || tenantRow[0].legal_name)) || effectiveTenantId);
+
+            await ensureRolePresetsForTenant(effectiveTenantId);
 
             const [{ data: roles }, { data: permissionRows }] = await Promise.all([
                 dbSelect({
                     table: 'role_catalog',
-                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                    filters: [{ op: 'eq', column: 'tenant_id', value: effectiveTenantId }],
                     order: { column: 'hierarchy_level', ascending: true }
                 }),
                 dbSelect({ table: 'permission_catalog' })
@@ -2111,10 +2238,14 @@
             const permissionMap = new Map((permissionRows || []).map((perm) => [perm.id, perm.permission_key]));
 
             dashboardContent.innerHTML = `
-                ${renderModuleHeader('Roles', 'Roles predefinidos con permisos en cascada y ajustes especificos')}
+                ${renderModuleHeader('Roles', 'Roles de la empresa (role_catalog / role_key). Distintos del tipo de cuenta en plataforma: superadmin o usuario.')}
                 <div class="rounded-xl bg-surface-container-low p-1">
                     <div class="rounded-lg bg-surface-container-lowest p-5">
-                        <p class="mb-4 text-sm text-on-surface-variant">No se crean roles manuales. Usa presets y ajusta permisos especificos.</p>
+                        <div class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-outline-variant/30 bg-surface-container px-4 py-2 text-sm">
+                            <span class="text-on-surface">Empresa: <strong>${tenantLabel}</strong></span>
+                            <button type="button" id="roles-change-tenant" class="rounded-md border border-outline-variant/50 px-3 py-1 text-xs font-semibold text-primary">Cambiar empresa</button>
+                        </div>
+                        <p class="mb-4 text-sm text-on-surface-variant">No se crean roles manuales. Usa presets y ajusta permisos especificos. El administrador de empresa suele ser <code class="rounded bg-surface-container px-1 text-xs">tenant_admin</code>; el dueño lleva ademas <code class="rounded bg-surface-container px-1 text-xs">is_owner</code> en la membresia.</p>
                         <div class="space-y-4">
                             ${(roles || []).map((role) => `
                                 <div class="rounded-lg border border-outline-variant/30 p-4">
@@ -2139,6 +2270,11 @@
                     </div>
                 </div>
             `;
+
+            document.getElementById('roles-change-tenant')?.addEventListener('click', async () => {
+                state.rolesContextTenantId = null;
+                await renderRolesModule();
+            });
 
             for (const role of roles || []) {
                 const { data: assignedRows } = await dbSelect({
@@ -2194,58 +2330,755 @@
                 zyronLog('render:facturas:noTenant', {});
                 return;
             }
-            const { data: invoices } = await dbSelect({
-                table: 'invoices',
-                filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
-                order: { column: 'created_at', ascending: false }
-            });
+            const tid = state.currentTenantId;
+            const tab = state.facturasUi?.tab || 'list';
+
+            const [{ data: invoices }, { data: customers }, { data: products }] = await Promise.all([
+                dbSelect({
+                    table: 'invoices',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+                    order: { column: 'created_at', ascending: false },
+                    limit: 80
+                }),
+                dbSelect({
+                    table: 'customers',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+                    order: { column: 'name', ascending: true },
+                    limit: 200
+                }),
+                dbSelect({
+                    table: 'products',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+                    order: { column: 'name', ascending: true },
+                    limit: 200
+                })
+            ]);
+
+            const seriesListRes = await invokeFn('manage-invoice-series', { tenantId: tid, action: 'list' });
+            const seriesUnwrapped = unwrapFnInvoke(seriesListRes);
+            const seriesRows = seriesUnwrapped.err ? [] : seriesUnwrapped.data?.rows || [];
+
+            const recRes = await invokeFn('manage-invoice-recurrence', { tenantId: tid, action: 'list' });
+            const recUnwrapped = unwrapFnInvoke(recRes);
+            const recurrenceRows = recUnwrapped.err ? [] : recUnwrapped.data?.rows || [];
+
+            const customerById = new Map((customers || []).map((c) => [c.id, c]));
+            const typeLabel = (t) =>
+                ({
+                    standard: 'Factura',
+                    proforma: 'Proforma',
+                    credit_note: 'N. credito',
+                    debit_note: 'N. debito'
+                }[String(t || 'standard')] || t);
+
+            const seriesCodes = new Set(['FAC', 'PRO', 'NCC', 'NDD', ...seriesRows.map((r) => r.code).filter(Boolean)]);
+
+            const lineRowTemplate = (line = {}) => {
+                const kind = line.lineKind || (line.productId ? 'product' : 'service');
+                const opts = (products || [])
+                    .map(
+                        (p) =>
+                            `<option value="${p.id}" data-price="${Number(p.price || 0)}" data-label="${escapeHtml(
+                                p.name || p.sku || ''
+                            )}">${escapeHtml(p.name || p.sku || p.id)} · stock ${p.stock ?? 0}</option>`
+                    )
+                    .join('');
+                return `<tr data-inv-line class="border-b border-outline-variant/15 align-top">
+                    <td class="py-2 pr-2">
+                        <select data-fld="kind" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs">
+                            <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
+                            <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
+                        </select>
+                    </td>
+                    <td class="py-2 pr-2 hidden" data-product-cell>
+                        <select data-fld="product" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs"><option value="">—</option>${opts}</select>
+                    </td>
+                    <td class="py-2 pr-2"><input data-fld="desc" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${escapeHtml(
+                        line.description || ''
+                    )}" placeholder="Descripcion" /></td>
+                    <td class="py-2 pr-2 w-20"><input data-fld="qty" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.quantity ?? 1
+                    )}" /></td>
+                    <td class="py-2 pr-2 w-24"><input data-fld="price" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.unitPrice ?? 0
+                    )}" /></td>
+                    <td class="py-2 pr-2 w-20"><input data-fld="tax" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.taxRate ?? 18
+                    )}" /></td>
+                    <td class="py-2 pr-2 w-20"><input data-fld="disc" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.discount ?? 0
+                    )}" /></td>
+                    <td class="py-2"><button type="button" data-remove-line class="text-xs text-error">Quitar</button></td>
+                </tr>`;
+            };
+
+            const tabBtn = (key, label) => {
+                const on = tab === key;
+                return `<button type="button" data-fact-tab="${key}" class="rounded-md px-3 py-1.5 text-sm ${
+                    on ? 'bg-primary text-white' : 'bg-surface-container-highest text-on-surface'
+                }">${label}</button>`;
+            };
+
+            const invoiceListRows = (invoices || [])
+                .map((invoice) => {
+                    const cust = invoice.customer_id ? customerById.get(invoice.customer_id) : null;
+                    const custLabel = cust ? escapeHtml(cust.name || cust.email || '') : '—';
+                    const doc = `${escapeHtml(invoice.series || '')}-${escapeHtml(invoice.number || '')}`;
+                    const st = String(invoice.status || '').toLowerCase();
+                    return `<tr class="border-b border-outline-variant/20" data-invoice-row="${invoice.id}">
+                        <td class="py-3 font-medium">${doc}</td>
+                        <td class="py-3">${escapeHtml(typeLabel(invoice.invoice_type))}</td>
+                        <td class="py-3">${escapeHtml(invoice.status || '')}</td>
+                        <td class="py-3">${escapeHtml(String(invoice.total ?? ''))}</td>
+                        <td class="py-3 text-xs">${custLabel}</td>
+                        <td class="py-3 text-xs">${escapeHtml(toDateString(invoice.created_at))}</td>
+                        <td class="py-3 text-right space-x-1 whitespace-nowrap">
+                            <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="history" data-id="${
+                                invoice.id
+                            }">Historial</button>
+                            ${
+                                st === 'draft'
+                                    ? `<button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="edit" data-id="${invoice.id}">Editar</button>
+                            <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-inv-action="issue" data-id="${invoice.id}">Emitir</button>`
+                                    : ''
+                            }
+                            <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="dup" data-id="${
+                                invoice.id
+                            }">Duplicar</button>
+                            ${
+                                st === 'draft' || st === 'pending'
+                                    ? `<button type="button" class="rounded border border-error/40 px-2 py-1 text-xs text-error" data-inv-action="del" data-id="${invoice.id}">Eliminar</button>`
+                                    : ''
+                            }
+                        </td>
+                    </tr>`;
+                })
+                .join('');
+
+            const seriesTableRows = (seriesRows || [])
+                .map(
+                    (r) => `<tr class="border-b border-outline-variant/20">
+                    <td class="py-2">${escapeHtml(r.code)}</td>
+                    <td class="py-2">${escapeHtml(r.label || '')}</td>
+                    <td class="py-2">${r.next_number}</td>
+                    <td class="py-2">${r.padding}</td>
+                    <td class="py-2">${r.is_default ? 'Si' : ''}</td>
+                    <td class="py-2 text-right"><button type="button" class="text-xs text-error" data-series-del="${r.id}">Eliminar</button></td>
+                </tr>`
+                )
+                .join('');
+
+            const recTableRows = (recurrenceRows || [])
+                .map(
+                    (r) => `<tr class="border-b border-outline-variant/20">
+                    <td class="py-2">${escapeHtml(r.name)}</td>
+                    <td class="py-2 text-xs">${escapeHtml(r.frequency)} / ${escapeHtml(r.series)}</td>
+                    <td class="py-2 text-xs">${r.is_active ? 'Activa' : 'Pausada'}</td>
+                    <td class="py-2 text-right space-x-1">
+                        <button type="button" class="text-xs" data-rec-toggle="${r.id}" data-active="${r.is_active ? '1' : '0'}">${
+                        r.is_active ? 'Pausar' : 'Activar'
+                    }</button>
+                        <button type="button" class="text-xs text-error" data-rec-del="${r.id}">Eliminar</button>
+                    </td>
+                </tr>`
+                )
+                .join('');
+
+            const listPanel = `
+                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <button type="button" id="factura-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Nueva factura (borrador)</button>
+                    <p class="text-xs text-on-surface-variant">Borradores usan serie BOR. Al emitir se asigna numeracion atomica por serie.</p>
+                </div>
+                <div id="facturas-table-wrap" class="overflow-x-auto">
+                    <table class="w-full min-w-[720px] text-left text-sm">
+                        <thead>
+                            <tr class="border-b border-outline-variant/30">
+                                <th class="py-2">Documento</th>
+                                <th class="py-2">Tipo</th>
+                                <th class="py-2">Estado</th>
+                                <th class="py-2">Total</th>
+                                <th class="py-2">Cliente</th>
+                                <th class="py-2">Fecha</th>
+                                <th class="py-2 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>${invoiceListRows || `<tr><td colspan="7" class="py-6 text-center text-on-surface-variant">Sin facturas</td></tr>`}</tbody>
+                    </table>
+                </div>`;
+
+            const seriesPanel = `
+                <p class="mb-3 text-xs text-on-surface-variant">Define codigos de serie (FAC, PRO, etc.). La numeracion la incrementa la funcion zyron_next_invoice_number en base de datos.</p>
+                <div class="mb-4 grid max-w-xl grid-cols-2 gap-2 sm:grid-cols-4">
+                    <input id="series-code" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="Codigo (FAC)" />
+                    <input id="series-label" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="Etiqueta" />
+                    <input id="series-padding" type="number" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="Padding" value="6" />
+                    <label class="flex items-center gap-2 text-xs"><input type="checkbox" id="series-default" /> Predeterminada</label>
+                </div>
+                <button type="button" id="series-save-btn" class="mb-4 rounded-md bg-primary px-3 py-2 text-sm text-white">Guardar serie</button>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead>
+                            <tr class="border-b border-outline-variant/30">
+                                <th class="py-2">Codigo</th>
+                                <th class="py-2">Etiqueta</th>
+                                <th class="py-2">Siguiente</th>
+                                <th class="py-2">Padding</th>
+                                <th class="py-2">Defecto</th>
+                                <th class="py-2"></th>
+                            </tr>
+                        </thead>
+                        <tbody>${seriesTableRows || `<tr><td colspan="6" class="py-4 text-on-surface-variant">Sin series (se crean al emitir o aqui).</td></tr>`}</tbody>
+                    </table>
+                </div>`;
+
+            const recurrencePanel = `
+                <p class="mb-3 text-xs text-on-surface-variant">Plantillas para facturas recurrentes. La ejecucion programada (cron) debe conectarse a estas filas en un despliegue posterior.</p>
+                <div class="mb-4 grid max-w-2xl grid-cols-1 gap-2 sm:grid-cols-2">
+                    <input id="rec-name" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="Nombre plantilla" />
+                    <select id="rec-frequency" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                        <option value="weekly">Semanal</option>
+                        <option value="monthly" selected>Mensual</option>
+                        <option value="yearly">Anual</option>
+                    </select>
+                    <input id="rec-series" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="Serie (FAC)" value="FAC" />
+                    <input id="rec-day" type="number" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="Dia del mes (1-28)" min="1" max="28" />
+                    <textarea id="rec-payload" class="sm:col-span-2 rounded-md border border-outline-variant/40 px-2 py-2 font-mono text-xs" rows="3" placeholder='Payload JSON p.ej. {"items":[{"description":"Mantenimiento","quantity":1,"unitPrice":100,"taxRate":18}]}'></textarea>
+                </div>
+                <button type="button" id="rec-save-btn" class="mb-4 rounded-md bg-primary px-3 py-2 text-sm text-white">Crear plantilla</button>
+                <div class="overflow-x-auto">
+                    <table class="w-full text-left text-sm">
+                        <thead>
+                            <tr class="border-b border-outline-variant/30">
+                                <th class="py-2">Nombre</th>
+                                <th class="py-2">Frecuencia / serie</th>
+                                <th class="py-2">Estado</th>
+                                <th class="py-2 text-right">Acciones</th>
+                            </tr>
+                        </thead>
+                        <tbody>${recTableRows || `<tr><td colspan="4" class="py-4 text-on-surface-variant">Sin plantillas</td></tr>`}</tbody>
+                    </table>
+                </div>`;
+
+            const mainBody = tab === 'list' ? listPanel : tab === 'series' ? seriesPanel : recurrencePanel;
+
             dashboardContent.innerHTML = `
-                ${renderModuleHeader('Facturas', 'Creacion y seguimiento de facturas')}
-                <div class="rounded-xl bg-surface-container-low p-1">
+                ${renderModuleHeader('Facturas', 'Facturacion avanzada: borradores, tipos, NC/ND, series, plantillas recurrentes e historial')}
+                <div class="rounded-xl bg-surface-container-low p-1" data-facturas-root>
                     <div class="rounded-lg bg-surface-container-lowest p-5">
-                        <div class="mb-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
-                            <input id="invoice-customer-id" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Customer ID (opcional)" />
-                            <input id="invoice-desc" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Descripcion" />
-                            <input id="invoice-qty" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Cantidad" type="number" value="1" />
-                            <input id="invoice-price" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Precio" type="number" value="100" />
-                        </div>
-                        <button id="create-invoice-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white mb-4" type="button">Crear factura</button>
-                        <table class="w-full text-left text-sm">
-                            <thead>
-                                <tr class="border-b border-outline-variant/30">
-                                    <th class="py-2">Numero</th>
-                                    <th class="py-2">Estado</th>
-                                    <th class="py-2">Total</th>
-                                    <th class="py-2">Fecha</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                ${(invoices || []).map((invoice) => `
-                                    <tr class="border-b border-outline-variant/20">
-                                        <td class="py-3">${invoice.series || 'FAC'}-${invoice.number}</td>
-                                        <td class="py-3">${invoice.status}</td>
-                                        <td class="py-3">${invoice.total}</td>
-                                        <td class="py-3">${toDateString(invoice.created_at)}</td>
-                                    </tr>
-                                `).join('')}
-                            </tbody>
-                        </table>
+                        <div class="mb-4 flex flex-wrap gap-2">${tabBtn('list', 'Facturas')}${tabBtn('series', 'Series')}${tabBtn(
+                'recurrence',
+                'Recurrencia'
+            )}</div>
+                        ${mainBody}
                     </div>
                 </div>
-            `;
-            document.getElementById('create-invoice-btn').addEventListener('click', async () => {
-                const customerId = document.getElementById('invoice-customer-id').value.trim();
-                const description = document.getElementById('invoice-desc').value.trim() || 'Servicio';
-                const quantity = Number(document.getElementById('invoice-qty').value || 1);
-                const unitPrice = Number(document.getElementById('invoice-price').value || 0);
-                await invokeFn('create-invoice-with-stock', {
-                    tenantId: state.currentTenantId,
-                    customerId: customerId || null,
-                    items: [{ description, quantity, unitPrice, taxRate: 18 }]
+                <div id="factura-sheet" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
+                    <div class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-surface-container-lowest p-5 shadow-lg">
+                        <div class="mb-4 flex items-start justify-between gap-2">
+                            <div>
+                                <h3 id="factura-sheet-title" class="text-lg font-semibold">Factura</h3>
+                                <p class="text-xs text-on-surface-variant" id="factura-sheet-sub"></p>
+                            </div>
+                            <button type="button" id="factura-sheet-close" class="rounded-md border border-outline-variant/40 px-2 py-1 text-sm">Cerrar</button>
+                        </div>
+                        <input type="hidden" id="factura-sheet-invoice-id" value="" />
+                        <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <label class="text-xs">Tipo
+                                <select id="factura-inv-type" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                    <option value="standard">Factura</option>
+                                    <option value="proforma">Proforma</option>
+                                    <option value="credit_note">Nota de credito</option>
+                                    <option value="debit_note">Nota de debito</option>
+                                </select>
+                            </label>
+                            <label class="text-xs hidden" id="factura-parent-wrap">Documento padre (NC/ND)
+                                <select id="factura-parent-id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                    <option value="">—</option>
+                                    ${(invoices || [])
+                                        .filter((inv) => {
+                                            const s = String(inv.status || '').toLowerCase();
+                                            const t = String(inv.invoice_type || 'standard');
+                                            return (s === 'pending' || s === 'paid') && t !== 'credit_note' && t !== 'debit_note';
+                                        })
+                                        .map(
+                                            (inv) =>
+                                                `<option value="${inv.id}">${escapeHtml(inv.series)}-${escapeHtml(inv.number)} (${escapeHtml(
+                                                    inv.status
+                                                )})</option>`
+                                        )
+                                        .join('')}
+                                </select>
+                            </label>
+                            <label class="text-xs">Serie al emitir
+                                <select id="factura-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                    ${[...seriesCodes]
+                                        .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
+                                        .join('')}
+                                </select>
+                            </label>
+                            <label class="text-xs">Cliente
+                                <select id="factura-customer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                    <option value="">—</option>
+                                    ${(customers || [])
+                                        .map((c) => `<option value="${c.id}">${escapeHtml(c.name || c.email || c.id)}</option>`)
+                                        .join('')}
+                                </select>
+                            </label>
+                            <label class="text-xs sm:col-span-2">Notas
+                                <textarea id="factura-notes" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="2"></textarea>
+                            </label>
+                        </div>
+                        <div class="mb-2 flex items-center justify-between">
+                            <span class="text-sm font-medium">Lineas</span>
+                            <button type="button" id="factura-add-line" class="rounded border border-outline-variant/40 px-2 py-1 text-xs">Anadir linea</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[640px] text-left text-xs">
+                                <thead>
+                                    <tr class="border-b border-outline-variant/30">
+                                        <th class="py-1">Tipo linea</th>
+                                        <th class="py-1">Producto</th>
+                                        <th class="py-1">Descripcion</th>
+                                        <th class="py-1">Cant</th>
+                                        <th class="py-1">P.U.</th>
+                                        <th class="py-1">IVA%</th>
+                                        <th class="py-1">Dto</th>
+                                        <th class="py-1"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="facturas-lines-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="mt-4 flex flex-wrap gap-2">
+                            <button type="button" id="factura-save-draft" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">Guardar borrador</button>
+                            <button type="button" id="factura-issue-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Emitir documento</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="factura-history-backdrop" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
+                    <div class="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-xl bg-surface-container-lowest p-5 shadow-lg">
+                        <div class="mb-3 flex justify-between">
+                            <h3 class="text-lg font-semibold">Historial</h3>
+                            <button type="button" id="factura-history-close" class="text-sm">Cerrar</button>
+                        </div>
+                        <div id="factura-history-body" class="space-y-2 text-xs font-mono"></div>
+                    </div>
+                </div>`;
+
+            const syncLineRowUi = (tr) => {
+                if (!tr) return;
+                const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
+                const cell = tr.querySelector('[data-product-cell]');
+                if (cell) cell.classList.toggle('hidden', kind !== 'product');
+            };
+
+            const collectLines = () => {
+                const rows = [...document.querySelectorAll('[data-inv-line]')];
+                const out = [];
+                for (const tr of rows) {
+                    const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
+                    const productId = tr.querySelector('[data-fld="product"]')?.value || null;
+                    const description = tr.querySelector('[data-fld="desc"]')?.value?.trim() || '';
+                    const quantity = Number(tr.querySelector('[data-fld="qty"]')?.value || 0);
+                    const unitPrice = Number(tr.querySelector('[data-fld="price"]')?.value || 0);
+                    const taxRate = Number(tr.querySelector('[data-fld="tax"]')?.value || 0);
+                    const discount = Number(tr.querySelector('[data-fld="disc"]')?.value || 0);
+                    if (!description && !productId) continue;
+                    if (quantity <= 0) continue;
+                    const item = { description, quantity, unitPrice, taxRate, discount, lineKind: kind };
+                    if (kind === 'product' && productId) {
+                        item.productId = productId;
+                        const selEl = tr.querySelector('[data-fld="product"]');
+                        const opt = selEl?.selectedOptions?.[0];
+                        if (opt && !description) item.description = opt.getAttribute('data-label') || 'Producto';
+                    }
+                    out.push(item);
+                }
+                return out;
+            };
+
+            const openSheet = (opts) => {
+                const { mode, invoiceId, lines, invoiceType, parentId, customerId, notes } = opts;
+                const sheet = document.getElementById('factura-sheet');
+                const sub = document.getElementById('factura-sheet-sub');
+                const title = document.getElementById('factura-sheet-title');
+                document.getElementById('factura-sheet-invoice-id').value = invoiceId || '';
+                title.textContent = mode === 'create' ? 'Nueva factura' : 'Editar borrador';
+                sub.textContent = invoiceId ? `ID interno: ${invoiceId}` : 'Se creara como borrador (serie BOR).';
+                document.getElementById('factura-inv-type').value = invoiceType || 'standard';
+                document.getElementById('factura-parent-id').value = parentId || '';
+                document.getElementById('factura-customer').value = customerId || '';
+                document.getElementById('factura-notes').value = notes || '';
+                const tbody = document.getElementById('facturas-lines-tbody');
+                const seed = lines?.length ? lines : [{ lineKind: 'service', description: 'Servicio', quantity: 1, unitPrice: 0, taxRate: 18, discount: 0 }];
+                tbody.innerHTML = seed.map((l) => lineRowTemplate(l)).join('');
+                const fixProductSelect = (tr, pid) => {
+                    if (!pid || !tr) return;
+                    const sel = tr.querySelector('[data-fld="product"]');
+                    if (sel) sel.value = pid;
+                };
+                [...tbody.querySelectorAll('[data-inv-line]')].forEach((tr, i) => {
+                    syncLineRowUi(tr);
+                    const p = seed[i];
+                    if (p?.productId) fixProductSelect(tr, p.productId);
                 });
+                const invTypeEl = document.getElementById('factura-inv-type');
+                const parentWrap = document.getElementById('factura-parent-wrap');
+                const toggleParent = () => {
+                    const t = invTypeEl.value;
+                    parentWrap.classList.toggle('hidden', t !== 'credit_note' && t !== 'debit_note');
+                };
+                invTypeEl.onchange = toggleParent;
+                toggleParent();
+                sheet.classList.remove('hidden');
+                sheet.classList.add('flex');
+            };
+
+            const closeSheet = () => {
+                const sheet = document.getElementById('factura-sheet');
+                sheet.classList.add('hidden');
+                sheet.classList.remove('flex');
+            };
+
+            document.querySelectorAll('[data-fact-tab]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    state.facturasUi = { tab: btn.getAttribute('data-fact-tab') };
+                    renderFacturasModule();
+                });
+            });
+
+            document.getElementById('factura-new-btn')?.addEventListener('click', () => {
+                openSheet({ mode: 'create', invoiceId: null, lines: [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: 18 }] });
+            });
+
+            document.getElementById('factura-sheet-close')?.addEventListener('click', closeSheet);
+            document.getElementById('factura-add-line')?.addEventListener('click', () => {
+                const tbody = document.getElementById('facturas-lines-tbody');
+                tbody.insertAdjacentHTML('beforeend', lineRowTemplate({}));
+                const tr = tbody.lastElementChild;
+                syncLineRowUi(tr);
+            });
+
+            document.getElementById('facturas-lines-tbody')?.addEventListener('change', (e) => {
+                const t = e.target;
+                const tr = t.closest('[data-inv-line]');
+                if (t.matches('[data-fld="kind"]')) syncLineRowUi(tr);
+                if (t.matches('[data-fld="product"]')) {
+                    const opt = t.selectedOptions[0];
+                    const price = Number(opt?.getAttribute('data-price') || 0);
+                    const label = opt?.getAttribute('data-label') || '';
+                    const desc = tr.querySelector('[data-fld="desc"]');
+                    if (desc && !desc.value.trim()) desc.value = label;
+                    const pr = tr.querySelector('[data-fld="price"]');
+                    if (pr && !Number(pr.value)) pr.value = String(price);
+                }
+            });
+
+            document.getElementById('facturas-lines-tbody')?.addEventListener('click', (e) => {
+                if (e.target.matches('[data-remove-line]')) {
+                    const tr = e.target.closest('[data-inv-line]');
+                    const tbody = document.getElementById('facturas-lines-tbody');
+                    if (tbody && tbody.querySelectorAll('[data-inv-line]').length > 1) tr.remove();
+                }
+            });
+
+            const readSheetMeta = () => ({
+                invoiceType: document.getElementById('factura-inv-type').value,
+                parentInvoiceId: document.getElementById('factura-parent-id').value || null,
+                customerId: document.getElementById('factura-customer').value || null,
+                notes: document.getElementById('factura-notes').value || '',
+                series: document.getElementById('factura-issue-series').value || 'FAC'
+            });
+
+            document.getElementById('factura-save-draft')?.addEventListener('click', async () => {
+                const items = collectLines();
+                if (!items.length) {
+                    window.alert('Anade al menos una linea valida (cantidad > 0).');
+                    return;
+                }
+                const meta = readSheetMeta();
+                if ((meta.invoiceType === 'credit_note' || meta.invoiceType === 'debit_note') && !meta.parentInvoiceId) {
+                    window.alert('Selecciona el documento padre para NC/ND.');
+                    return;
+                }
+                const iid = document.getElementById('factura-sheet-invoice-id').value.trim();
+                if (!iid) {
+                    const res = await invokeFn('create-invoice-with-stock', {
+                        tenantId: tid,
+                        customerId: meta.customerId,
+                        items,
+                        notes: meta.notes,
+                        isDraft: true,
+                        invoiceType: meta.invoiceType,
+                        parentInvoiceId: meta.parentInvoiceId
+                    });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) {
+                        window.alert(u.err || u.data?.error || 'No se pudo crear el borrador.');
+                        return;
+                    }
+                    document.getElementById('factura-sheet-invoice-id').value = u.data.invoice?.id || '';
+                    window.alert('Borrador guardado.');
+                } else {
+                    const res = await invokeFn('update-invoice', {
+                        tenantId: tid,
+                        invoiceId: iid,
+                        action: 'save_draft',
+                        items,
+                        notes: meta.notes,
+                        customerId: meta.customerId,
+                        invoiceType: meta.invoiceType,
+                        parentInvoiceId: meta.parentInvoiceId
+                    });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) {
+                        window.alert(u.err || u.data?.error || 'No se pudo actualizar.');
+                        return;
+                    }
+                    window.alert('Borrador actualizado.');
+                }
                 await renderFacturasModule();
             });
-            zyronLog('render:facturas:done', { invoiceCount: (invoices || []).length });
+
+            document.getElementById('factura-issue-btn')?.addEventListener('click', async () => {
+                const items = collectLines();
+                if (!items.length) {
+                    window.alert('Anade al menos una linea valida.');
+                    return;
+                }
+                const meta = readSheetMeta();
+                if ((meta.invoiceType === 'credit_note' || meta.invoiceType === 'debit_note') && !meta.parentInvoiceId) {
+                    window.alert('Selecciona el documento padre para NC/ND.');
+                    return;
+                }
+                const iid = document.getElementById('factura-sheet-invoice-id').value.trim();
+                if (!iid) {
+                    const res = await invokeFn('create-invoice-with-stock', {
+                        tenantId: tid,
+                        customerId: meta.customerId,
+                        items,
+                        notes: meta.notes,
+                        isDraft: false,
+                        series: meta.series,
+                        invoiceType: meta.invoiceType,
+                        parentInvoiceId: meta.parentInvoiceId
+                    });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) {
+                        window.alert(u.err || u.data?.error || 'No se pudo emitir.');
+                        return;
+                    }
+                    closeSheet();
+                    await renderFacturasModule();
+                    return;
+                }
+                const res = await invokeFn('update-invoice', {
+                    tenantId: tid,
+                    invoiceId: iid,
+                    action: 'issue',
+                    items,
+                    series: meta.series,
+                    notes: meta.notes,
+                    customerId: meta.customerId,
+                    invoiceType: meta.invoiceType,
+                    parentInvoiceId: meta.parentInvoiceId
+                });
+                const u = unwrapFnInvoke(res);
+                if (u.err || !u.data?.ok) {
+                    window.alert(u.err || u.data?.error || 'No se pudo emitir.');
+                    return;
+                }
+                closeSheet();
+                await renderFacturasModule();
+            });
+
+            document.getElementById('facturas-table-wrap')?.addEventListener('click', async (e) => {
+                const btn = e.target.closest('[data-inv-action]');
+                if (!btn) return;
+                const id = btn.getAttribute('data-id');
+                const act = btn.getAttribute('data-inv-action');
+                if (act === 'history') {
+                    const { data: logs } = await dbSelect({
+                        table: 'audit_logs',
+                        filters: [
+                            { op: 'eq', column: 'tenant_id', value: tid },
+                            { op: 'eq', column: 'target_type', value: 'invoices' },
+                            { op: 'eq', column: 'target_id', value: id }
+                        ],
+                        order: { column: 'created_at', ascending: false },
+                        limit: 40
+                    });
+                    const body = document.getElementById('factura-history-body');
+                    body.innerHTML = (logs || [])
+                        .map(
+                            (l) =>
+                                `<div class="rounded border border-outline-variant/30 p-2"><div class="font-semibold">${escapeHtml(
+                                    l.action || ''
+                                )}</div><div class="text-on-surface-variant">${escapeHtml(toDateString(l.created_at))}</div><pre class="mt-1 whitespace-pre-wrap break-all">${escapeHtml(
+                                    JSON.stringify(l.details || {}, null, 0)
+                                )}</pre></div>`
+                        )
+                        .join('') || '<p class="text-on-surface-variant">Sin registros.</p>';
+                    const bd = document.getElementById('factura-history-backdrop');
+                    bd.classList.remove('hidden');
+                    bd.classList.add('flex');
+                }
+                if (act === 'edit') {
+                    const inv = (invoices || []).find((x) => x.id === id);
+                    const { data: lineRows } = await dbSelect({
+                        table: 'invoice_items',
+                        filters: [{ op: 'eq', column: 'invoice_id', value: id }]
+                    });
+                    const lines = (lineRows || []).map((r) => ({
+                        lineKind: r.line_kind || (r.product_id ? 'product' : 'service'),
+                        productId: r.product_id,
+                        description: r.description,
+                        quantity: Number(r.quantity),
+                        unitPrice: Number(r.unit_price),
+                        taxRate: Number(r.tax_rate),
+                        discount: Number(r.discount || 0)
+                    }));
+                    openSheet({
+                        mode: 'edit',
+                        invoiceId: id,
+                        lines,
+                        invoiceType: inv?.invoice_type || 'standard',
+                        parentId: inv?.parent_invoice_id,
+                        customerId: inv?.customer_id,
+                        notes: inv?.notes || ''
+                    });
+                }
+                if (act === 'issue') {
+                    const inv = (invoices || []).find((x) => x.id === id);
+                    const { data: lineRows } = await dbSelect({
+                        table: 'invoice_items',
+                        filters: [{ op: 'eq', column: 'invoice_id', value: id }]
+                    });
+                    const lines = (lineRows || []).map((r) => ({
+                        lineKind: r.line_kind || (r.product_id ? 'product' : 'service'),
+                        productId: r.product_id,
+                        description: r.description,
+                        quantity: Number(r.quantity),
+                        unitPrice: Number(r.unit_price),
+                        taxRate: Number(r.tax_rate),
+                        discount: Number(r.discount || 0)
+                    }));
+                    openSheet({
+                        mode: 'edit',
+                        invoiceId: id,
+                        lines,
+                        invoiceType: inv?.invoice_type || 'standard',
+                        parentId: inv?.parent_invoice_id,
+                        customerId: inv?.customer_id,
+                        notes: inv?.notes || ''
+                    });
+                }
+                if (act === 'dup') {
+                    const res = await invokeFn('duplicate-invoice', { tenantId: tid, invoiceId: id });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Duplicar fallo.');
+                    await renderFacturasModule();
+                }
+                if (act === 'del') {
+                    if (!window.confirm('Eliminar esta factura?')) return;
+                    const res = await invokeFn('delete-invoice', { tenantId: tid, invoiceId: id });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Eliminar fallo.');
+                    await renderFacturasModule();
+                }
+            });
+
+            document.getElementById('factura-history-close')?.addEventListener('click', () => {
+                const bd = document.getElementById('factura-history-backdrop');
+                bd.classList.add('hidden');
+                bd.classList.remove('flex');
+            });
+
+            document.getElementById('series-save-btn')?.addEventListener('click', async () => {
+                const code = document.getElementById('series-code')?.value?.trim();
+                const label = document.getElementById('series-label')?.value?.trim();
+                const padding = Number(document.getElementById('series-padding')?.value || 6);
+                const isDefault = Boolean(document.getElementById('series-default')?.checked);
+                const res = await invokeFn('manage-invoice-series', {
+                    tenantId: tid,
+                    action: 'upsert',
+                    code,
+                    label: label || code,
+                    padding,
+                    isDefault
+                });
+                const u = unwrapFnInvoke(res);
+                if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo guardar la serie.');
+                await renderFacturasModule();
+            });
+
+            document.querySelectorAll('[data-series-del]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const sid = btn.getAttribute('data-series-del');
+                    if (!window.confirm('Eliminar esta serie?')) return;
+                    const res = await invokeFn('manage-invoice-series', { tenantId: tid, action: 'delete', id: sid });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo eliminar.');
+                    await renderFacturasModule();
+                });
+            });
+
+            document.getElementById('rec-save-btn')?.addEventListener('click', async () => {
+                const name = document.getElementById('rec-name')?.value?.trim();
+                let templatePayload = {};
+                const raw = document.getElementById('rec-payload')?.value?.trim();
+                if (raw) {
+                    try {
+                        templatePayload = JSON.parse(raw);
+                    } catch (_) {
+                        window.alert('Payload JSON invalido.');
+                        return;
+                    }
+                }
+                const res = await invokeFn('manage-invoice-recurrence', {
+                    tenantId: tid,
+                    action: 'create',
+                    name,
+                    frequency: document.getElementById('rec-frequency')?.value || 'monthly',
+                    series: document.getElementById('rec-series')?.value || 'FAC',
+                    dayOfMonth: document.getElementById('rec-day')?.value
+                        ? Number(document.getElementById('rec-day').value)
+                        : null,
+                    templatePayload
+                });
+                const u = unwrapFnInvoke(res);
+                if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo crear la plantilla.');
+                await renderFacturasModule();
+            });
+
+            document.querySelectorAll('[data-rec-del]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const rid = btn.getAttribute('data-rec-del');
+                    if (!window.confirm('Eliminar plantilla?')) return;
+                    const res = await invokeFn('manage-invoice-recurrence', { tenantId: tid, action: 'delete', id: rid });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo eliminar.');
+                    await renderFacturasModule();
+                });
+            });
+
+            document.querySelectorAll('[data-rec-toggle]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const rid = btn.getAttribute('data-rec-toggle');
+                    const active = btn.getAttribute('data-active') === '1';
+                    const res = await invokeFn('manage-invoice-recurrence', {
+                        tenantId: tid,
+                        action: 'update',
+                        id: rid,
+                        isActive: !active
+                    });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo actualizar.');
+                    await renderFacturasModule();
+                });
+            });
+
+            zyronLog('render:facturas:done', { invoiceCount: (invoices || []).length, tab });
         };
 
         const renderSimpleCrudModule = async (key, table, title, subtitle, columns) => {
@@ -2300,6 +3133,12 @@
                     zyronLog('openModule:superAdminRedirect', { from: moduleKey, to: fallback });
                     moduleKey = fallback;
                 }
+            } else if (
+                !state.isSuperAdmin &&
+                (moduleKey === 'usuarios' || moduleKey === 'roles' || moduleKey === 'solicitudes' || moduleKey === 'empresas')
+            ) {
+                zyronLog('openModule:superOnlyModule', { from: moduleKey });
+                moduleKey = 'panel';
             }
             state.currentModule = moduleKey;
             refreshSidebarSelection();
@@ -2531,6 +3370,7 @@
             state.navModulesTenant = [...DEFAULT_NAV_TENANT];
             state.permissionRowsForUi = [...DEFAULT_PERMISSION_UI];
             state.roleSystemPresetsResolved = [...DEFAULT_ROLE_SYSTEM_PRESETS];
+            state.rolesContextTenantId = null;
             sidebarNav.classList.remove('hidden');
             sidebarToggleBtn?.classList.remove('pointer-events-none', 'opacity-40');
             dashboardAppHeader?.classList.remove('hidden');

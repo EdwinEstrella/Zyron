@@ -11,6 +11,11 @@ const requiredFiles = [
   'insforge-functions/manage-tenant-user.js',
   'insforge-functions/admin-reset-user-password.js',
   'insforge-functions/create-invoice-with-stock.js',
+  'insforge-functions/update-invoice.js',
+  'insforge-functions/delete-invoice.js',
+  'insforge-functions/duplicate-invoice.js',
+  'insforge-functions/manage-invoice-series.js',
+  'insforge-functions/manage-invoice-recurrence.js',
   'insforge-functions/get-super-admin-overview.js'
 ]
 
@@ -29,7 +34,12 @@ const checks = [
   "key: 'empresas'",
   "key: 'usuarios'",
   'roleSystemPresetsResolved',
-  'create-invoice-with-stock'
+  'create-invoice-with-stock',
+  'update-invoice',
+  'delete-invoice',
+  'duplicate-invoice',
+  'manage-invoice-series',
+  'manage-invoice-recurrence'
 ]
 
 const failedChecks = checks.filter((check) => !indexContent.includes(check))

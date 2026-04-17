@@ -25,6 +25,7 @@
     "rcedit": "^5.0.2"
   },
   "dependencies": {
-    "@insforge/sdk": "^1.2.5"
+    "@insforge/sdk": "^1.2.5",
+    "dotenv": "^16.6.1"
   }
 }

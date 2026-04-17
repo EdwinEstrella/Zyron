@@ -125,13 +125,18 @@ Leyenda: **Estado** = `Hecho` | `Parcial` | `Pendiente`. **Código** = módulo o
 
 ## Configuración app (Electron)
 
-Credenciales **no van en el repo**. Usa un archivo JSON local (no `.env`):
+Credenciales **no van en el repo**. Orden de resolución en `main.js`:
 
-| Archivo | Cuándo |
-|---------|--------|
-| `insforge.local.json` | Desarrollo: en la **raíz del repo** (junto a `package.json`). Con Electron Forge `main.js` corre desde `.vite/build`; la app también busca por `process.cwd()` al iniciar con `npm start`. Gitignored |
-| `insforge.json` | `app.getPath('userData')`, o **junto al ejecutable** (misma carpeta que el `.exe` en Windows, portable), o `resources/insforge.json` si lo incluyes al empaquetar |
+1. Archivos JSON (prioridad si existen y son válidos): `insforge.local.json` / `insforge.json`.
+2. Si no hay JSON válido: variables de entorno `INSFORGE_BASE_URL` e `INSFORGE_ANON_KEY` (también se aceptan `VITE_INSFORGE_*`).
 
-Campos: `baseUrl`, `anonKey` (ver plantilla `insforge.config.example.json`). Asi la configuracion viaja con el instalador o con el usuario sin depender de variables de entorno.
+| Fuente | Cuándo |
+|--------|--------|
+| `insforge.local.json` | Raíz del repo (junto a `package.json`), gitignored |
+| `insforge.json` | `userData`, junto al `.exe`, o `resources` al empaquetar |
+| `.env` | Opcional en la raíz del proyecto: `main.js` carga con **dotenv** al arrancar (gitignored). Ver `.env.example` |
+| Variables de sistema / lanzador | Mismo nombre `INSFORGE_BASE_URL` / `INSFORGE_ANON_KEY` sin archivo |
+
+Campos equivalentes al JSON: URL base y JWT anon (plantillas: `insforge.config.example.json` y `.env.example`).
 
 Esquema y seeds de menu (`app_navigation_modules`) y presets de rol (`role_system_presets`): aplicarlos con **MCP Insforge** (`run-raw-sql` u operaciones equivalentes), no con archivos `.sql` versionados en este repo.
