@@ -31,7 +31,6 @@ module.exports = async function (request) {
     const userToken = authHeader ? authHeader.replace('Bearer ', '') : null
 
     const baseUrl = Deno.env.get('INSFORGE_BASE_URL')
-    const dataApiBase = Deno.env.get('INSFORGE_INTERNAL_URL') || baseUrl
     const serviceKey =
       Deno.env.get('INSFORGE_SERVICE_ROLE_KEY') ||
       Deno.env.get('INSFORGE_SERVICE_KEY') ||
@@ -56,7 +55,7 @@ module.exports = async function (request) {
       edgeFunctionToken: userToken
     })
     const db = sdkMod.createClient({
-      baseUrl: dataApiBase,
+      baseUrl,
       anonKey: serviceKey
     })
 

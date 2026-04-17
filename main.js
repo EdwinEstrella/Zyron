@@ -20,13 +20,14 @@ process.emitWarning = (...args) => {
 let mainWindow = null
 let insforgeClientPromise = null
 
-/** Depuración Insforge: terminal del proceso principal (DevTools no lo muestra). */
+/** Depuración Insforge: proceso principal (terminal). El renderer usa DevTools en index.html. */
 const zyronLog = (scope, detail) => {
   try {
     const line = typeof detail === 'string' ? detail : JSON.stringify(detail, null, 0)
-    console.log(`[Zyron:${scope}]`, line.length > 4000 ? `${line.slice(0, 4000)}…` : line)
+    const clipped = line.length > 4000 ? `${line.slice(0, 4000)}…` : line
+    console.log(`[Zyron:main:${scope}]`, clipped)
   } catch (_) {
-    console.log(`[Zyron:${scope}]`, detail)
+    console.log(`[Zyron:main:${scope}]`, detail)
   }
 }
 
@@ -307,6 +308,7 @@ ipcMain.handle('insforge:db:select', async (_event, payload) => {
       maybeSingle = false,
       count
     } = payload || {}
+    zyronLog('db:select:req', { table, filters: filters.length, limit, single })
     let query = client.database.from(table).select(columns, count ? { count } : undefined)
     query = applyFilters(query, filters)
     if (order && order.column) {
@@ -321,8 +323,14 @@ ipcMain.handle('insforge:db:select', async (_event, payload) => {
     if (single) query = query.single()
     else if (maybeSingle) query = query.maybeSingle()
     const result = await query
+    if (result?.error) zyronLog('db:select:err', { table, error: result.error })
+    else {
+      const n = Array.isArray(result?.data) ? result.data.length : result?.data ? 1 : 0
+      zyronLog('db:select:ok', { table, rows: n })
+    }
     return normalizeResult(result)
   } catch (error) {
+    zyronLog('db:select:exception', { message: error?.message || String(error) })
     return normalizeResult(null, error)
   }
 })
@@ -353,11 +361,15 @@ ipcMain.handle('insforge:db:update', async (_event, payload) => {
   try {
     const client = await getInsforgeClient()
     const { table, values, filters = [], selectColumns = '*' } = payload || {}
+    zyronLog('db:update:req', { table, filters: filters.length, valueKeys: values ? Object.keys(values) : [] })
     let query = client.database.from(table).update(values)
     query = applyFilters(query, filters)
     const result = await query.select(selectColumns)
+    if (result?.error) zyronLog('db:update:err', { table, error: result.error })
+    else zyronLog('db:update:ok', { table })
     return normalizeResult(result)
   } catch (error) {
+    zyronLog('db:update:exception', { message: error?.message || String(error) })
     return normalizeResult(null, error)
   }
 })
@@ -366,11 +378,15 @@ ipcMain.handle('insforge:db:delete', async (_event, payload) => {
   try {
     const client = await getInsforgeClient()
     const { table, filters = [] } = payload || {}
+    zyronLog('db:delete:req', { table, filters: filters.length })
     let query = client.database.from(table).delete()
     query = applyFilters(query, filters)
     const result = await query
+    if (result?.error) zyronLog('db:delete:err', { table, error: result.error })
+    else zyronLog('db:delete:ok', { table })
     return normalizeResult(result)
   } catch (error) {
+    zyronLog('db:delete:exception', { message: error?.message || String(error) })
     return normalizeResult(null, error)
   }
 })
@@ -397,6 +413,14 @@ ipcMain.handle('insforge:functions:invoke', async (_event, payload) => {
     zyronLog('fn:invoke', { slug, method: method || 'POST', body: redactPayload(body) })
     const result = await client.functions.invoke(slug, { body, headers, method })
     if (result?.error) zyronLog('fn:invoke:error', { slug, error: result.error })
+    else {
+      const d = result?.data
+      const summary =
+        d && typeof d === 'object' && !Array.isArray(d)
+          ? { keys: Object.keys(d).slice(0, 12) }
+          : { type: typeof d }
+      zyronLog('fn:invoke:ok', { slug, ...summary })
+    }
     return normalizeResult(result)
   } catch (error) {
     zyronLog('fn:invoke:exception', { slug: payload?.slug, message: error?.message || String(error) })

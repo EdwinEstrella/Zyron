@@ -1150,31 +1150,65 @@
             }
         };
 
+        /** Consola DevTools: localStorage zyron_quiet=1 silencia estos logs. */
         const zyronLog = (tag, detail) => {
             try {
-                if (typeof localStorage !== 'undefined' && localStorage.getItem('zyron_debug') === '0') return;
+                if (typeof localStorage !== 'undefined' && localStorage.getItem('zyron_quiet') === '1') return;
             } catch (_) {
                 /* ignore */
             }
-            console.log(`[Zyron:${tag}]`, detail);
+            try {
+                console.log(`[Zyron:${tag}]`, detail);
+            } catch (_) {
+                console.log(`[Zyron:${tag}]`, String(detail));
+            }
         };
 
-        const safeCall = async (handler) => {
+        const summarizeInsforgeResult = (result) => {
+            if (result == null) return { result: 'null' };
+            if (result.error) return { error: result.error?.message || result.error };
+            const d = result.data;
+            if (d == null) return { data: null };
+            if (Array.isArray(d)) return { dataRows: d.length, sample: d[0] ? Object.keys(d[0]).slice(0, 8) : [] };
+            if (typeof d === 'object') return { dataKeys: Object.keys(d).slice(0, 15) };
+            return { dataType: typeof d, preview: String(d).slice(0, 120) };
+        };
+
+        const safeCall = async (handler, debugLabel = 'ipc') => {
+            const t0 = typeof performance !== 'undefined' ? performance.now() : 0;
+            console.log(`[Zyron:ipc:>>] ${debugLabel}`);
             try {
-                return await handler();
+                const result = await handler();
+                const ms = typeof performance !== 'undefined' ? Math.round(performance.now() - t0) : 0;
+                if (result && typeof result === 'object' && result.error) {
+                    console.warn(`[Zyron:ipc:!!] ${debugLabel} (${ms}ms)`, result.error, summarizeInsforgeResult(result));
+                } else {
+                    console.log(`[Zyron:ipc:<<] ${debugLabel} (${ms}ms)`, summarizeInsforgeResult(result));
+                }
+                return result;
             } catch (error) {
-                zyronLog('safeCall:exception', { message: error.message || String(error) });
+                const ms = typeof performance !== 'undefined' ? Math.round(performance.now() - t0) : 0;
+                console.error(`[Zyron:ipc:XX] ${debugLabel} (${ms}ms)`, error);
+                zyronLog('safeCall:exception', { label: debugLabel, message: error.message || String(error) });
                 return { data: null, error: { message: error.message || String(error) } };
             }
         };
 
-        const dbSelect = (payload) => safeCall(() => window.insforgeAPI.database.select(payload));
-        const dbInsert = (payload) => safeCall(() => window.insforgeAPI.database.insert(payload));
-        const dbUpdate = (payload) => safeCall(() => window.insforgeAPI.database.update(payload));
-        const dbDelete = (payload) => safeCall(() => window.insforgeAPI.database.delete(payload));
-        const dbRpc = (functionName, args = {}) => safeCall(() => window.insforgeAPI.database.rpc({ functionName, args }));
+        const dbSelect = (payload) =>
+            safeCall(
+                () => window.insforgeAPI.database.select(payload),
+                `db.select:${payload?.table || '?'}${payload?.filters?.length ? `:f${payload.filters.length}` : ''}`
+            );
+        const dbInsert = (payload) =>
+            safeCall(() => window.insforgeAPI.database.insert(payload), `db.insert:${payload?.table || '?'}`);
+        const dbUpdate = (payload) =>
+            safeCall(() => window.insforgeAPI.database.update(payload), `db.update:${payload?.table || '?'}`);
+        const dbDelete = (payload) =>
+            safeCall(() => window.insforgeAPI.database.delete(payload), `db.delete:${payload?.table || '?'}`);
+        const dbRpc = (functionName, args = {}) =>
+            safeCall(() => window.insforgeAPI.database.rpc({ functionName, args }), `db.rpc:${functionName}`);
         const invokeFn = (slug, body = {}, method = 'POST') =>
-            safeCall(() => window.insforgeAPI.functions.invoke({ slug, body, method }));
+            safeCall(() => window.insforgeAPI.functions.invoke({ slug, body, method }), `fn:${method || 'POST'}:${slug}`);
 
         const normalizeRpcRows = (data) => {
             if (data == null) return [];
@@ -1199,38 +1233,86 @@
         const formatRequestStatus = (status) => REQUEST_STATUS_LABEL[String(status || '').toLowerCase()] || status || '-';
 
         const loadAppUsersSuperOrFallback = async () => {
-            const { data, error } = await dbRpc('super_admin_list_app_users', {});
-            if (!error && data != null) {
-                const rows = normalizeRpcRows(data);
-                zyronLog('loadAppUsersSuperOrFallback:rpc', { count: rows.length });
-                return rows;
+            console.log('[Zyron:loadAppUsersSuperOrFallback] start');
+            const [{ data: rpcData, error: rpcError }, { data: tableRows, error: tableError }] = await Promise.all([
+                dbRpc('super_admin_list_app_users', {}),
+                dbSelect({ table: 'app_users', order: { column: 'created_at', ascending: false } })
+            ]);
+            const direct = Array.isArray(tableRows) ? tableRows : [];
+            const byId = new Map(direct.map((u) => [String(u.id), u]));
+            const byEmail = new Map(direct.map((u) => [String(u.email || '').trim().toLowerCase(), u]));
+            const rpcOk = !rpcError && rpcData != null;
+            const rpcRows = rpcOk ? normalizeRpcRows(rpcData) : [];
+            if (rpcRows.length > 0 && direct.length > 0) {
+                const merged = rpcRows.map((u) => {
+                    const live =
+                        byId.get(String(u.id)) || byEmail.get(String(u.email || '').trim().toLowerCase());
+                    if (!live) {
+                        zyronLog('loadAppUsersSuperOrFallback:noLiveRow', {
+                            rpcId: u.id,
+                            rpcEmail: u.email
+                        });
+                        return u;
+                    }
+                    const rpcSt = String(u.status || '').toLowerCase();
+                    const liveSt = String(live.status || '').toLowerCase();
+                    if (rpcSt !== liveSt) {
+                        zyronLog('loadAppUsersSuperOrFallback:statusMismatch', {
+                            id: u.id,
+                            idRpc: String(u.id),
+                            idLive: String(live.id),
+                            email: u.email,
+                            rpcStatus: u.status,
+                            tableStatus: live.status
+                        });
+                    }
+                    return { ...u, ...live, status: live.status };
+                });
+                zyronLog('loadAppUsersSuperOrFallback:merged', { rpc: rpcRows.length, table: direct.length });
+                console.log('[Zyron:loadAppUsersSuperOrFallback] end', { count: merged.length, source: 'merged' });
+                return merged;
             }
-            zyronLog('loadAppUsersSuperOrFallback:fallback', { error: error?.message || error });
-            const { data: rows } = await dbSelect({ table: 'app_users', order: { column: 'created_at', ascending: false } });
-            return rows || [];
+            if (rpcRows.length > 0) {
+                zyronLog('loadAppUsersSuperOrFallback:rpcOnly', { count: rpcRows.length, tableError: tableError?.message });
+                console.log('[Zyron:loadAppUsersSuperOrFallback] end', { count: rpcRows.length, source: 'rpcOnly' });
+                return rpcRows;
+            }
+            zyronLog('loadAppUsersSuperOrFallback:tableOnly', {
+                count: direct.length,
+                rpcError: rpcError?.message || rpcError
+            });
+            const out = direct;
+            console.log('[Zyron:loadAppUsersSuperOrFallback] end', { count: out.length });
+            return out;
         };
 
         const loadAccessRequestsSuperOrFallback = async () => {
+            console.log('[Zyron:loadAccessRequestsSuperOrFallback] start');
             const { data, error } = await dbRpc('super_admin_list_user_access_requests', {});
             if (!error && data != null) {
                 const rows = normalizeRpcRows(data);
                 zyronLog('loadAccessRequestsSuperOrFallback:rpc', { count: rows.length });
+                console.log('[Zyron:loadAccessRequestsSuperOrFallback] end', { count: rows.length, source: 'rpc' });
                 return rows;
             }
             zyronLog('loadAccessRequestsSuperOrFallback:fallback', { error: error?.message || error });
             const { data: rows } = await dbSelect({ table: 'user_access_requests', order: { column: 'created_at', ascending: false } });
-            return rows || [];
+            const out = rows || [];
+            console.log('[Zyron:loadAccessRequestsSuperOrFallback] end', { count: out.length, source: 'table' });
+            return out;
         };
 
         const loadMyActiveMembershipsOrFallback = async (appUserId) => {
+            console.log('[Zyron:loadMyActiveMembershipsOrFallback] start', { appUserId });
             const { data, error } = await dbRpc('zyron_my_active_memberships', {});
             if (!error && data != null) {
                 const rows = normalizeRpcRows(data);
                 zyronLog('loadMyActiveMembershipsOrFallback:rpc', { count: rows.length });
+                console.log('[Zyron:loadMyActiveMembershipsOrFallback] end', { count: rows.length, source: 'rpc' });
                 return { data: rows, error: null };
             }
             zyronLog('loadMyActiveMembershipsOrFallback:fallback', { error: error?.message || error });
-            return dbSelect({
+            const fb = await dbSelect({
                 table: 'tenant_memberships',
                 filters: [
                     { op: 'eq', column: 'app_user_id', value: appUserId },
@@ -1238,19 +1320,81 @@
                 ],
                 limit: 1
             });
+            const n = Array.isArray(fb?.data) ? fb.data.length : fb?.data ? 1 : 0;
+            console.log('[Zyron:loadMyActiveMembershipsOrFallback] end', { count: n, source: 'table', error: fb?.error });
+            return fb;
         };
 
-        const runApproveAccessRequest = async (requestId, action) => {
+        const patchAppUserStatusAfterApprove = async (requestedEmail) => {
+            const emailNorm = String(requestedEmail || '').trim().toLowerCase();
+            if (!emailNorm) {
+                zyronLog('patchAppUserAfterApprove:skipNoEmail', {});
+                return { ok: false };
+            }
+            const { data: rows, error: selErr } = await dbSelect({
+                table: 'app_users',
+                filters: [{ op: 'eq', column: 'email', value: emailNorm }],
+                limit: 1
+            });
+            if (selErr || !rows?.length) {
+                zyronLog('patchAppUserAfterApprove:selectFailed', { emailNorm, selErr });
+                return { ok: false, error: selErr };
+            }
+            const row = rows[0];
+            const st = String(row.status || '').toLowerCase();
+            if (st === 'approved' || st === 'active') {
+                zyronLog('patchAppUserAfterApprove:already', { id: row.id, status: row.status });
+                return { ok: true };
+            }
+            let { data: updated, error: upErr } = await dbUpdate({
+                table: 'app_users',
+                values: { status: 'approved' },
+                filters: [{ op: 'eq', column: 'id', value: row.id }]
+            });
+            if (upErr || !updated?.length) {
+                zyronLog('patchAppUserAfterApprove:retryActive', { emailNorm, upErr });
+                const second = await dbUpdate({
+                    table: 'app_users',
+                    values: { status: 'active' },
+                    filters: [{ op: 'eq', column: 'id', value: row.id }]
+                });
+                updated = second.data;
+                upErr = second.error;
+            }
+            zyronLog('patchAppUserAfterApprove:done', {
+                id: row.id,
+                error: upErr?.message || upErr,
+                returned: updated?.length
+            });
+            return { ok: Boolean(updated?.length), error: upErr };
+        };
+
+        const runApproveAccessRequest = async (requestId, action, requestedEmail = null) => {
             if (!requestId) {
                 window.alert('Solicitud invalida.');
                 return { error: { message: 'Missing requestId' } };
             }
-            zyronLog('approveAccessRequest', { requestId, action });
+            zyronLog('approveAccessRequest', { requestId, action, requestedEmail });
             const res = await invokeFn('approve-access-request', { requestId, action });
+            console.log('[Zyron:approveAccessRequest:raw]', summarizeInsforgeResult(res));
             if (res.error) {
                 zyronLog('approveAccessRequest:error', res.error);
                 window.alert(res.error.message || 'No se pudo completar la accion. Revisa que la funcion approve-access-request este desplegada.');
                 return res;
+            }
+            const body = res.data;
+            if (body && typeof body === 'object' && body.ok !== true && body.error) {
+                const msg = typeof body.error === 'string' ? body.error : body.error?.message || String(body.error);
+                zyronLog('approveAccessRequest:bodyError', body);
+                window.alert(msg || 'La funcion respondio con error.');
+                return { data: null, error: { message: msg } };
+            }
+            console.log('[Zyron:approveAccessRequest:okBody]', body);
+            if (action === 'approve' && requestedEmail) {
+                const patch = await patchAppUserStatusAfterApprove(requestedEmail);
+                if (!patch.ok) {
+                    console.warn('[Zyron:approveAccessRequest] app_users no se pudo actualizar desde el cliente; revisa RLS.', patch);
+                }
             }
             window.alert(
                 action === 'approve'
@@ -1325,19 +1469,26 @@
 
         const bootstrapSession = async () => {
             zyronLog('bootstrapSession:start', {});
-            const { data: currentUserData, error: userError } = await safeCall(() => window.insforgeAPI.auth.getCurrentUser());
+            const { data: currentUserData, error: userError } = await safeCall(
+                () => window.insforgeAPI.auth.getCurrentUser(),
+                'auth.getCurrentUser'
+            );
             if (userError || !currentUserData?.user) {
                 zyronLog('bootstrapSession:noAuthUser', { userError: userError?.message });
-                return { ok: false, message: null };
+                const out = { ok: false, message: null };
+                console.warn('[Zyron:bootstrapSession:return]', out);
+                return out;
             }
 
             const { appUser, error: appUserError } = await upsertAppUser(currentUserData.user);
             if (appUserError || !appUser) {
                 zyronLog('bootstrapSession:appUserFailed', { appUserError: appUserError?.message || appUserError, hasAppUser: Boolean(appUser) });
-                return {
+                const out = {
                     ok: false,
                     message: 'No se pudo cargar tu perfil de aplicacion. Si acabas de registrarte, espera un momento e intenta de nuevo.'
                 };
+                console.warn('[Zyron:bootstrapSession:return]', out);
+                return out;
             }
 
             state.sessionUser = currentUserData.user;
@@ -1352,12 +1503,14 @@
                 const blockedAccountStatuses = ['suspended', 'inactive', 'blocked'];
                 if (blockedAccountStatuses.includes(accountStatus)) {
                     zyronLog('bootstrapSession:accountBlocked', { status: appUser.status });
-                    await safeCall(() => window.insforgeAPI.auth.signOut());
-                    return {
+                    await safeCall(() => window.insforgeAPI.auth.signOut(), 'auth.signOut:blockedAccount');
+                    const out = {
                         ok: false,
                         message:
                             'Tu cuenta no esta disponible para usar la aplicacion (servicio suspendido o inactivo). Si crees que es un error, contacta al administrador.'
                     };
+                    console.warn('[Zyron:bootstrapSession:return]', out);
+                    return out;
                 }
 
                 if (pendingGate) {
@@ -1387,11 +1540,14 @@
 
             if (!pendingGate) {
                 void (async () => {
-                    await safeCall(() => window.insforgeAPI.realtime.connect());
+                    await safeCall(() => window.insforgeAPI.realtime.connect(), 'realtime.connect');
                     if (state.isSuperAdmin) {
-                        await safeCall(() => window.insforgeAPI.realtime.subscribe('super-admin:alerts'));
+                        await safeCall(() => window.insforgeAPI.realtime.subscribe('super-admin:alerts'), 'realtime.subscribe:super-admin');
                     } else if (state.currentTenantId) {
-                        await safeCall(() => window.insforgeAPI.realtime.subscribe(`tenant:${state.currentTenantId}:alerts`));
+                        await safeCall(
+                            () => window.insforgeAPI.realtime.subscribe(`tenant:${state.currentTenantId}:alerts`),
+                            `realtime.subscribe:tenant:${state.currentTenantId}`
+                        );
                     }
                 })();
             }
@@ -1405,10 +1561,14 @@
                 void openModule(state.isSuperAdmin ? 'empresas' : 'panel');
                 zyronLog('bootstrapSession:success', { module: state.isSuperAdmin ? 'empresas' : 'panel' });
             }
-            return { ok: true, message: null };
+            const bootOk = { ok: true, message: null };
+            zyronLog('bootstrapSession:return', bootOk);
+            console.log('[Zyron:bootstrapSession:return]', bootOk);
+            return bootOk;
         };
 
         const renderPendingApprovalScreen = async () => {
+            zyronLog('render:pendingGate', { appUserId: state.appUser?.id });
             state.currentModule = 'pending-gate';
             sidebarToggleBtn?.classList.add('pointer-events-none', 'opacity-40');
             refreshSidebarSelection();
@@ -1431,6 +1591,11 @@
         };
 
         const renderSidebar = async () => {
+            zyronLog('render:sidebar', {
+                isSuperAdmin: state.isSuperAdmin,
+                currentModule: state.currentModule,
+                pendingGate: isTenantPendingApproval()
+            });
             sidebarModulesContainer.innerHTML = '';
             if (isTenantPendingApproval()) {
                 refreshSidebarSelection();
@@ -1482,10 +1647,19 @@
         `;
 
         const renderPanelModule = async () => {
+            zyronLog('render:panel:start', { isSuperAdmin: state.isSuperAdmin });
             dashboardContent.innerHTML = defaultDashboardMarkup;
-            if (!state.isSuperAdmin) return;
-            const { data: overview } = await invokeFn('get-super-admin-overview', {}, 'GET');
-            if (!overview?.metrics) return;
+            if (!state.isSuperAdmin) {
+                zyronLog('render:panel:skipNotSuper', {});
+                return;
+            }
+            const inv = await invokeFn('get-super-admin-overview', {}, 'GET');
+            zyronLog('render:panel:overviewResponse', summarizeInsforgeResult(inv));
+            const overview = inv.data;
+            if (!overview?.metrics) {
+                zyronLog('render:panel:noMetrics', { hasOverview: Boolean(overview) });
+                return;
+            }
             const metrics = overview.metrics;
             const wrapper = document.createElement('div');
             wrapper.className = 'rounded-xl border border-outline-variant/30 bg-surface-container-low p-4';
@@ -1499,11 +1673,14 @@
                 </div>
             `;
             dashboardContent.prepend(wrapper);
+            zyronLog('render:panel:done', { metrics: overview.metrics });
         };
 
         const renderEmpresasModule = async () => {
+            zyronLog('render:empresas:start', {});
             if (!state.isSuperAdmin) {
                 dashboardContent.innerHTML = `${renderModuleHeader('Empresas', 'Solo disponible para super admin')}<div class="rounded-lg bg-error-container/20 p-4 text-sm text-error">No tienes acceso a este modulo.</div>`;
+                zyronLog('render:empresas:forbidden', {});
                 return;
             }
             const [{ data: tenants }, users, requests] = await Promise.all([
@@ -1516,6 +1693,13 @@
             const tenantList = tenants || [];
             const registrationRequests = (requests || []).filter((r) => String(r.request_status || '').toLowerCase() === 'pending');
             const firstTenantId = tenantList[0]?.id || '';
+            zyronLog('render:empresas:data', {
+                tenants: tenantList.length,
+                usersAll: usersAll.length,
+                usersPanel: usersPanel.length,
+                pendingRequests: registrationRequests.length,
+                userStatuses: usersPanel.map((u) => ({ id: u.id, email: u.email, status: u.status }))
+            });
             dashboardContent.innerHTML = `
                 ${renderModuleHeader('Empresas', 'Gestion global de empresas del SaaS')}
                 <div class="rounded-xl bg-surface-container-low p-1">
@@ -1664,7 +1848,7 @@
                                         <td class="py-3">${item.username}</td>
                                         <td class="py-3">${formatRequestStatus(item.request_status)}</td>
                                         <td class="py-3 text-right">
-                                            <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}">Aprobar</button>
+                                            <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}" data-requested-email="${String(item.requested_email || '').trim().toLowerCase()}">Aprobar</button>
                                             <button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-request-action="reject" data-request-id="${item.id}">Rechazar</button>
                                         </td>
                                     </tr>
@@ -1814,13 +1998,18 @@
                 button.addEventListener('click', async () => {
                     const requestId = button.getAttribute('data-request-id');
                     const action = button.getAttribute('data-request-action');
-                    const { error } = await runApproveAccessRequest(requestId, action);
+                    const requestedEmail = button.getAttribute('data-requested-email');
+                    const { error } = await runApproveAccessRequest(requestId, action, requestedEmail);
                     if (!error) await renderEmpresasModule();
                 });
+            });
+            zyronLog('render:empresas:done', {
+                approveButtons: dashboardContent.querySelectorAll('[data-request-action]').length
             });
         };
 
         const renderSolicitudesModule = async () => {
+            zyronLog('render:solicitudes:start', { isSuperAdmin: state.isSuperAdmin });
             let requests = [];
             if (state.isSuperAdmin) {
                 const all = await loadAccessRequestsSuperOrFallback();
@@ -1860,7 +2049,7 @@
                                         <td class="py-3">${formatRequestStatus(item.request_status)}</td>
                                         <td class="py-3 text-right">
                                             ${state.isSuperAdmin ? `
-                                                <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}">Aprobar</button>
+                                                <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-2" data-request-action="approve" data-request-id="${item.id}" data-requested-email="${String(item.requested_email || '').trim().toLowerCase()}">Aprobar</button>
                                                 <button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-request-action="reject" data-request-id="${item.id}">Rechazar</button>
                                             ` : '<span class="text-xs text-on-surface-variant">Solo el super admin puede aprobar.</span>'}
                                         </td>
@@ -1873,18 +2062,22 @@
                     </div>
                 </div>
             `;
+            zyronLog('render:solicitudes:rendered', { count: (requests || []).length });
             if (!state.isSuperAdmin) return;
             dashboardContent.querySelectorAll('[data-request-action]').forEach((button) => {
                 button.addEventListener('click', async () => {
                     const requestId = button.getAttribute('data-request-id');
                     const action = button.getAttribute('data-request-action');
-                    const { error } = await runApproveAccessRequest(requestId, action);
+                    const requestedEmail = button.getAttribute('data-requested-email');
+                    const { error } = await runApproveAccessRequest(requestId, action, requestedEmail);
                     if (!error) await renderSolicitudesModule();
                 });
             });
+            zyronLog('render:solicitudes:done', {});
         };
 
         const renderUsuariosModule = async () => {
+            zyronLog('render:usuarios:start', { tenantId: state.currentTenantId, isSuperAdmin: state.isSuperAdmin });
             let users = [];
             if (state.isSuperAdmin) {
                 const raw = await loadAppUsersSuperOrFallback();
@@ -2002,9 +2195,11 @@
                     await renderUsuariosModule();
                 });
             });
+            zyronLog('render:usuarios:done', { count: (users || []).length });
         };
 
         const ensureRolePresetsForTenant = async (tenantId) => {
+            zyronLog('ensureRolePresetsForTenant', { tenantId });
             if (!tenantId) return;
 
             const { data: existingRoles } = await dbSelect({
@@ -2051,8 +2246,10 @@
         };
 
         const renderRolesModule = async () => {
+            zyronLog('render:roles:start', { tenantId: state.currentTenantId });
             if (!state.currentTenantId) {
                 dashboardContent.innerHTML = `${renderModuleHeader('Roles', 'Los roles predefinidos se gestionan por empresa activa')}`;
+                zyronLog('render:roles:noTenant', {});
                 return;
             }
 
@@ -2142,11 +2339,14 @@
                     }
                 });
             });
+            zyronLog('render:roles:done', { roleCount: (roles || []).length });
         };
 
         const renderFacturasModule = async () => {
+            zyronLog('render:facturas:start', { tenantId: state.currentTenantId });
             if (!state.currentTenantId) {
                 dashboardContent.innerHTML = `${renderModuleHeader('Facturas', 'Necesitas seleccionar una empresa')}`;
+                zyronLog('render:facturas:noTenant', {});
                 return;
             }
             const { data: invoices } = await dbSelect({
@@ -2200,11 +2400,14 @@
                 });
                 await renderFacturasModule();
             });
+            zyronLog('render:facturas:done', { invoiceCount: (invoices || []).length });
         };
 
         const renderSimpleCrudModule = async (key, table, title, subtitle, columns) => {
+            zyronLog('render:simpleCrud:start', { key, table, tenantId: state.currentTenantId });
             if (!state.currentTenantId) {
                 dashboardContent.innerHTML = `${renderModuleHeader(title, 'Necesitas una empresa activa para este modulo')}`;
+                zyronLog('render:simpleCrud:noTenant', { key, table });
                 return;
             }
             const { data: rows } = await dbSelect({
@@ -2234,18 +2437,24 @@
                     </div>
                 </div>
             `;
+            zyronLog('render:simpleCrud:done', { key, table, rowCount: (rows || []).length });
         };
 
         const openModule = async (moduleKey) => {
+            const requested = moduleKey;
+            console.log('[Zyron:openModule]', { requested, isSuperAdmin: state.isSuperAdmin, pending: isTenantPendingApproval() });
             if (isTenantPendingApproval()) {
+                zyronLog('openModule:blockedPendingGate', { requested });
                 await renderPendingApprovalScreen();
                 return;
             }
             if (state.isSuperAdmin && moduleKey !== 'empresas') {
+                zyronLog('openModule:superAdminRedirect', { from: moduleKey, to: 'empresas' });
                 moduleKey = 'empresas';
             }
             state.currentModule = moduleKey;
             refreshSidebarSelection();
+            zyronLog('openModule:route', { moduleKey });
             if (moduleKey === 'panel') return renderPanelModule();
             if (moduleKey === 'empresas') return renderEmpresasModule();
             if (moduleKey === 'solicitudes') return renderSolicitudesModule();
@@ -2280,6 +2489,7 @@
                 { key: 'setting_value', label: 'Valor' },
                 { key: 'updated_at', label: 'Actualizado' }
             ]);
+            console.warn('[Zyron:openModule:unknown]', { moduleKey });
         };
 
         loginForm.addEventListener('submit', async (event) => {
@@ -2294,7 +2504,10 @@
             }
 
             zyronLog('login:submit', { email });
-            const { data, error } = await safeCall(() => window.insforgeAPI.auth.signInWithPassword({ email, password }));
+            const { data, error } = await safeCall(
+                () => window.insforgeAPI.auth.signInWithPassword({ email, password }),
+                'auth.signInWithPassword'
+            );
             if (error || !data?.user) {
                 zyronLog('login:signInError', { message: error?.message, hasUser: Boolean(data?.user) });
                 setStatus(loginStatus, error?.message || 'No fue posible iniciar sesion.', true);
@@ -2364,11 +2577,15 @@
             if (!emailOk) return setStatus(registerStatus, 'Introduce un correo valido (ejemplo: usuario@dominio.com).', true);
 
             zyronLog('register:start', { email, company, username, phoneLen: phone.length, notesLen: notes.length });
-            const { data: signUpData, error: signUpError } = await safeCall(() => window.insforgeAPI.auth.signUp({
-                email,
-                password,
-                name: fullName || username
-            }));
+            const { data: signUpData, error: signUpError } = await safeCall(
+                () =>
+                    window.insforgeAPI.auth.signUp({
+                        email,
+                        password,
+                        name: fullName || username
+                    }),
+                'auth.signUp'
+            );
             if (signUpError) {
                 zyronLog('register:signUpError', signUpError);
                 return setStatus(registerStatus, signUpError.message || 'No se pudo registrar el usuario.', true);
@@ -2394,7 +2611,7 @@
                 });
                 if (profileError) {
                     zyronLog('register:appUsersInsertError', profileError);
-                    await safeCall(() => window.insforgeAPI.auth.signOut());
+                    await safeCall(() => window.insforgeAPI.auth.signOut(), 'auth.signOut:registerRollbackProfile');
                     return setStatus(registerStatus, profileError.message || 'No se pudo crear tu perfil de usuario.', true);
                 }
                 zyronLog('register:appUsersInsertOk', { authId });
@@ -2436,7 +2653,7 @@
                         table: 'app_users',
                         filters: [{ op: 'eq', column: 'auth_user_id', value: authId }]
                     });
-                    await safeCall(() => window.insforgeAPI.auth.signOut());
+                    await safeCall(() => window.insforgeAPI.auth.signOut(), 'auth.signOut:registerRollbackRequest');
                     const errMsg = String(requestError.message || '').toLowerCase();
                     const hint = errMsg.includes('submit_my_access_request') || errMsg.includes('pgrst202') || errMsg.includes('could not find')
                         ? ' Revisa en Insforge que existan las funciones RPC submit_my_access_request y register_insert_app_user.'
@@ -2446,7 +2663,7 @@
                 zyronLog('register:accessRequestOk', {});
             }
 
-            await safeCall(() => window.insforgeAPI.auth.signOut());
+            await safeCall(() => window.insforgeAPI.auth.signOut(), 'auth.signOut:registerComplete');
             registerForm.reset();
             clearStatus(registerStatus);
             showLogin();
@@ -2461,7 +2678,8 @@
         });
 
         const performLogout = async () => {
-            await safeCall(() => window.insforgeAPI.auth.signOut());
+            zyronLog('logout:start', {});
+            await safeCall(() => window.insforgeAPI.auth.signOut(), 'auth.signOut:logout');
             state.sessionUser = null;
             state.appUser = null;
             state.membership = null;
@@ -2474,6 +2692,7 @@
             updateSessionNoticeBanner();
             clearStatus(loginStatus);
             showLogin();
+            zyronLog('logout:done', {});
         };
 
         logoutBtn.addEventListener('click', () => performLogout());
@@ -2485,9 +2704,11 @@
         updateSidebarToggleState();
 
         (async () => {
+            console.log('[Zyron:startup] DOM script init');
             clearStatus(loginStatus);
             clearStatus(registerStatus);
             const boot = await bootstrapSession();
+            console.log('[Zyron:startup] bootstrapSession', boot);
             if (!boot.ok) showLogin();
         })();
     </script>
