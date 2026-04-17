@@ -16,7 +16,8 @@ const requiredFiles = [
   'insforge-functions/duplicate-invoice.js',
   'insforge-functions/manage-invoice-series.js',
   'insforge-functions/manage-invoice-recurrence.js',
-  'insforge-functions/get-super-admin-overview.js'
+  'insforge-functions/get-super-admin-overview.js',
+  'insforge-functions/manage-payments.js'
 ]
 
 const missing = requiredFiles.filter((file) => !fs.existsSync(path.join(root, file)))
@@ -39,7 +40,9 @@ const checks = [
   'delete-invoice',
   'duplicate-invoice',
   'manage-invoice-series',
-  'manage-invoice-recurrence'
+  'manage-invoice-recurrence',
+  'manage-payments',
+  'renderPagosModule'
 ]
 
 const failedChecks = checks.filter((check) => !indexContent.includes(check))
