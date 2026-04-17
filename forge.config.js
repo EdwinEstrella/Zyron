@@ -1,9 +1,11 @@
 const { FusesPlugin } = require('@electron-forge/plugin-fuses');
 const { FuseV1Options, FuseVersion } = require('@electron/fuses');
+const path = require('node:path');
 
 module.exports = {
   packagerConfig: {
     asar: true,
+    icon: path.join(__dirname, 'logo.ico'),
   },
   rebuildConfig: {},
   makers: [
@@ -12,6 +14,7 @@ module.exports = {
       config: {
         name: 'MiApp',
         manufacturer: 'Edwin',
+        icon: path.join(__dirname, 'logo.ico'),
         language: 3082, // Español
         ui: {
           chooseDirectory: true // Activa el wizard con selección de directorio

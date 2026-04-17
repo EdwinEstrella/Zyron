@@ -1,7 +1,29 @@
-const { app, BrowserWindow, ipcMain } = require('electron/main')
+const { app, BrowserWindow, ipcMain, nativeImage } = require('electron/main')
+const fs = require('node:fs')
 const path = require('node:path')
 
 let mainWindow = null
+
+function resolveWindowIcon () {
+  const pngPath = path.join(__dirname, 'logo.png')
+  const icoPath = path.join(__dirname, 'logo.ico')
+
+  try {
+    if (fs.existsSync(pngPath)) {
+      const image = nativeImage.createFromPath(pngPath)
+      if (!image.isEmpty()) return image
+    }
+  } catch (_) {}
+
+  try {
+    if (fs.existsSync(icoPath)) {
+      const image = nativeImage.createFromPath(icoPath)
+      if (!image.isEmpty()) return image
+    }
+  } catch (_) {}
+
+  return undefined
+}
 
 function createWindow () {
   mainWindow = new BrowserWindow({
@@ -11,6 +33,7 @@ function createWindow () {
     minHeight: 560,
     frame: false,
     titleBarStyle: 'hidden',
+    icon: resolveWindowIcon(),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js')
     }

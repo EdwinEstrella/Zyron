@@ -137,6 +137,22 @@
             overflow: auto;
         }
 
+        .form-status {
+            border: 1px solid rgba(15, 39, 68, 0.2);
+            background: rgba(30, 73, 118, 0.08);
+            color: #0f2744;
+            border-radius: 0.75rem;
+            padding: 0.75rem 0.9rem;
+            font-size: 0.875rem;
+            line-height: 1.35rem;
+        }
+
+        .form-status.form-status--error {
+            border-color: rgba(185, 28, 28, 0.3);
+            background: rgba(254, 202, 202, 0.5);
+            color: #7f1d1d;
+        }
+
         /* Campos de login: texto no invade la franja del icono */
         .field-shell {
             position: relative;
@@ -234,6 +250,7 @@
             background: rgba(255, 255, 255, 0.92);
             border-right: 1px solid rgba(148, 163, 184, 0.35);
             box-shadow: 4px 0 24px rgba(15, 39, 68, 0.04);
+            transition: transform 0.2s ease, opacity 0.2s ease;
         }
 
         .nav-module {
@@ -426,7 +443,134 @@
                     <div class="text-center pt-6 border-t border-outline-variant/20">
                         <p class="text-sm text-on-surface-variant">
                             ¿Nuevo en la plataforma?
-                            <a class="font-bold text-primary hover:underline underline-offset-4 ml-1" href="#">Solicitar acceso</a>
+                            <a id="open-register-link" class="font-bold text-primary hover:underline underline-offset-4 ml-1" href="#">Solicitar acceso</a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <div id="view-register" class="hidden login-scroll flex-1 min-h-0 overflow-auto">
+        <main class="flex min-h-full">
+            <div class="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary-container">
+                <div class="absolute inset-0 bg-gradient-to-br from-primary via-primary-container to-tertiary opacity-95"></div>
+                <div class="absolute inset-0 opacity-[0.12] bg-[radial-gradient(circle_at_20%_20%,white,transparent_45%),radial-gradient(circle_at_80%_0%,white,transparent_40%)]"></div>
+                <div class="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 bg-white/95 flex items-center justify-center rounded-xl editorial-shadow p-1.5">
+                            <img src="./logo.png" alt="" class="w-full h-full object-contain" width="40" height="40" />
+                        </div>
+                        <span class="text-2xl font-extrabold tracking-tight text-white">Zyron</span>
+                    </div>
+                    <div class="max-w-md">
+                        <h2 class="text-white text-3xl xl:text-4xl font-bold tracking-tight mb-4">Solicita tu acceso en minutos.</h2>
+                        <p class="text-on-primary-container text-base leading-relaxed">
+                            Cuéntanos sobre tu empresa y te habilitamos una cuenta para empezar a facturar y gestionar inventario.
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-4 text-on-primary-container/90 text-xs font-semibold tracking-widest uppercase">
+                        <span>Alta de nuevas cuentas</span>
+                        <div class="h-px flex-1 bg-white/25"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12 lg:p-14 bg-surface">
+                <div class="w-full max-w-md space-y-7">
+                    <div class="text-left">
+                        <h2 class="text-3xl font-bold tracking-tight text-primary font-headline">Registrarse</h2>
+                        <p class="text-on-surface-variant mt-2 text-sm">Crea tu usuario con una contraseña segura y activa tu acceso.</p>
+                    </div>
+
+                    <form id="register-form" class="space-y-5">
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-name">Nombre completo</label>
+                            <div class="field-shell">
+                                <input class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0" id="register-name" name="fullName" placeholder="Tu nombre y apellido" type="text" autocomplete="name" />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">person</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-company">Empresa</label>
+                            <div class="field-shell">
+                                <input class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0" id="register-company" name="company" placeholder="Nombre de tu empresa" type="text" autocomplete="organization" />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">apartment</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-email">Correo</label>
+                            <div class="field-shell">
+                                <input class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0" id="register-email" name="email" placeholder="correo@empresa.com" type="email" autocomplete="email" spellcheck="false" required />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">mail</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-username">Usuario</label>
+                            <div class="field-shell">
+                                <input class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0" id="register-username" name="username" placeholder="Tu nombre de usuario" type="text" autocomplete="username" minlength="4" required />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">badge</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-password">Contraseña</label>
+                            <div class="field-shell">
+                                <input class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0" id="register-password" name="password" placeholder="Minimo 8 caracteres" type="password" autocomplete="new-password" minlength="8" required />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">lock</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-password-confirm">Confirmar contraseña</label>
+                            <div class="field-shell">
+                                <input class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0" id="register-password-confirm" name="passwordConfirm" placeholder="Repite tu contraseña" type="password" autocomplete="new-password" minlength="8" required />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">verified_user</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-phone">Teléfono</label>
+                            <div class="field-shell">
+                                <input class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0" id="register-phone" name="phone" placeholder="+1 (809) 000-0000" type="tel" autocomplete="tel" />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">call</span>
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="register-notes">¿Qué necesitas gestionar?</label>
+                            <textarea id="register-notes" name="notes" rows="3" class="w-full rounded-xl border border-outline/35 bg-white px-3.5 py-2.5 text-sm text-on-surface shadow-none ring-0 placeholder:text-on-surface-variant/60 focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/15" placeholder="Ejemplo: facturación con NCF, inventario y cuentas por cobrar."></textarea>
+                        </div>
+
+                        <button class="w-full bg-gradient-to-r from-primary to-primary-container text-white font-bold tracking-wide py-3.5 px-6 rounded-lg editorial-shadow hover:opacity-95 transition-all active:scale-[0.99] flex items-center justify-center gap-2" type="submit">
+                            Crear cuenta
+                            <span class="material-symbols-outlined text-[18px]">send</span>
+                        </button>
+                    </form>
+
+                    <p id="register-status" class="hidden form-status" role="status" aria-live="polite"></p>
+
+                    <div class="text-center pt-4 border-t border-outline-variant/20">
+                        <p class="text-sm text-on-surface-variant">
+                            ¿Ya tienes una cuenta?
+                            <a id="back-to-login-link" class="font-bold text-primary hover:underline underline-offset-4 ml-1" href="#">Volver a iniciar sesión</a>
                         </p>
                     </div>
                 </div>
@@ -435,7 +579,7 @@
     </div>
 
     <div id="view-dashboard" class="hidden flex flex-1 flex-row min-h-0 overflow-hidden bg-surface text-on-surface">
-        <nav class="app-sidebar flex w-56 shrink-0 flex-col gap-1 px-3 py-4 z-20" aria-label="Módulos">
+        <nav id="sidebar-nav" class="app-sidebar flex w-56 shrink-0 flex-col gap-1 px-3 py-4 z-20" aria-label="Módulos">
             <div class="flex flex-1 flex-col gap-1">
                 <a class="nav-module is-active" href="#" data-module="panel" aria-current="page">
                     <span class="material-symbols-outlined text-[20px] shrink-0">dashboard</span>
@@ -473,6 +617,9 @@
         <div class="flex min-w-0 min-h-0 flex-1 flex-col">
             <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-outline-variant/50 bg-surface-container-low px-5 lg:px-8">
                 <div class="flex min-w-0 flex-1 items-center gap-5">
+                    <button id="sidebar-toggle-btn" type="button" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-black/[0.04]" aria-label="Ocultar barra lateral" title="Ocultar barra lateral">
+                        <span id="sidebar-toggle-icon" class="material-symbols-outlined text-[22px]">menu_open</span>
+                    </button>
                     <div class="relative hidden max-w-xs flex-1 lg:block">
                         <span class="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant">search</span>
                         <input class="w-full rounded-full border-0 bg-surface-container-lowest py-2 pl-10 pr-4 text-sm text-on-surface shadow-sm ring-1 ring-outline-variant/30 placeholder:text-outline/70 focus:outline-none focus:ring-2 focus:ring-primary/25" type="search" placeholder="Buscar facturas, clientes, SKU…" />
@@ -802,18 +949,49 @@
         });
 
         const viewLogin = document.getElementById('view-login');
+        const viewRegister = document.getElementById('view-register');
         const viewDashboard = document.getElementById('view-dashboard');
+        const registerStatus = document.getElementById('register-status');
+        const sidebarNav = document.getElementById('sidebar-nav');
+        const sidebarToggleBtn = document.getElementById('sidebar-toggle-btn');
+        const sidebarToggleIcon = document.getElementById('sidebar-toggle-icon');
+
+        const setRegisterStatus = (message, isError = false) => {
+            registerStatus.textContent = message;
+            registerStatus.classList.remove('hidden');
+            registerStatus.classList.toggle('form-status--error', isError);
+        };
+
+        const updateSidebarToggleState = () => {
+            const isCollapsed = sidebarNav.classList.contains('hidden');
+            sidebarToggleIcon.textContent = isCollapsed ? 'menu' : 'menu_open';
+            const label = isCollapsed ? 'Mostrar barra lateral' : 'Ocultar barra lateral';
+            sidebarToggleBtn.setAttribute('aria-label', label);
+            sidebarToggleBtn.setAttribute('title', label);
+        };
+
+        const hideAllViews = () => {
+            viewLogin.classList.add('hidden');
+            viewRegister.classList.add('hidden');
+            viewDashboard.classList.add('hidden');
+        };
 
         const showDashboard = () => {
-            viewLogin.classList.add('hidden');
+            hideAllViews();
             viewDashboard.classList.remove('hidden');
             document.title = 'Zyron | Panel principal';
         };
 
         const showLogin = () => {
-            viewDashboard.classList.add('hidden');
+            hideAllViews();
             viewLogin.classList.remove('hidden');
             document.title = 'Zyron | Acceder';
+        };
+
+        const showRegister = () => {
+            hideAllViews();
+            viewRegister.classList.remove('hidden');
+            document.title = 'Zyron | Solicitar acceso';
         };
 
         document.getElementById('login-form').addEventListener('submit', (e) => {
@@ -821,9 +999,55 @@
             showDashboard();
         });
 
+        document.getElementById('open-register-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            registerStatus.classList.add('hidden');
+            registerStatus.textContent = '';
+            registerStatus.classList.remove('form-status--error');
+            showRegister();
+        });
+
+        document.getElementById('back-to-login-link').addEventListener('click', (e) => {
+            e.preventDefault();
+            showLogin();
+        });
+
+        document.getElementById('register-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            const formData = new FormData(e.currentTarget);
+            const username = String(formData.get('username') || '').trim();
+            const password = String(formData.get('password') || '');
+            const passwordConfirm = String(formData.get('passwordConfirm') || '');
+
+            if (username.length < 4) {
+                setRegisterStatus('El usuario debe tener al menos 4 caracteres.', true);
+                return;
+            }
+
+            if (password.length < 8) {
+                setRegisterStatus('La contraseña debe tener al menos 8 caracteres.', true);
+                return;
+            }
+
+            if (password !== passwordConfirm) {
+                setRegisterStatus('Las contraseñas no coinciden.', true);
+                return;
+            }
+
+            setRegisterStatus('Registro enviado. Tu cuenta sera validada para activar el acceso.');
+            e.currentTarget.reset();
+        });
+
         document.getElementById('logout-btn').addEventListener('click', () => {
             showLogin();
         });
+
+        sidebarToggleBtn.addEventListener('click', () => {
+            sidebarNav.classList.toggle('hidden');
+            updateSidebarToggleState();
+        });
+
+        updateSidebarToggleState();
 
         document.querySelectorAll('.nav-module[data-module]').forEach((el) => {
             el.addEventListener('click', (ev) => {
