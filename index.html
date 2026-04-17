@@ -1,55 +1,104 @@
 <!DOCTYPE html>
-<html>
+<html class="light" lang="es">
 <head>
     <meta charset="UTF-8">
-    <title>Hello World!</title>
-    <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-inline';" />
+    <title>Zyron | Acceder</title>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.tailwindcss.com" />
+    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        surface: '#f4f7fb',
+                        'on-surface': '#0f172a',
+                        'on-surface-variant': '#475569',
+                        primary: '#0f2744',
+                        'primary-container': '#1e4976',
+                        'on-primary-container': '#bfdbfe',
+                        outline: '#64748b',
+                        'outline-variant': '#cbd5e1',
+                        'surface-container': '#e8eef6',
+                        'surface-container-low': '#f1f5f9',
+                        'surface-container-lowest': '#ffffff',
+                        'surface-container-high': '#dce7f4',
+                        tertiary: '#0f766e',
+                        'tertiary-container': '#115e59',
+                        'tertiary-fixed': '#ccfbf1',
+                        'tertiary-fixed-dim': '#5eead4',
+                        'on-tertiary-fixed-variant': '#134e4a',
+                        error: '#b91c1c',
+                        'error-container': '#fecaca',
+                        'on-error-container': '#7f1d1d',
+                        'surface-tint': '#3d5e80',
+                        'surface-dim': '#e2e8f0',
+                        'on-primary-fixed-variant': '#1e3a5f',
+                        'on-primary-fixed': '#0f172a',
+                        'secondary-fixed': '#bfdbfe',
+                        'on-secondary-fixed': '#1e3a8a',
+                    },
+                    fontFamily: {
+                        headline: ['Inter', 'system-ui', 'sans-serif'],
+                        body: ['Inter', 'system-ui', 'sans-serif'],
+                    },
+                },
+            },
+        };
+    </script>
     <style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .editorial-shadow {
+            box-shadow: 0 12px 40px rgba(15, 39, 68, 0.08);
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            outline: none;
-            border: none;
         }
 
         body {
             overflow: hidden;
-            user-select: none;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--background);
-            color: var(--foreground);
-        }
-
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: rgba(255,255,255,0.2);
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
-
-        :root {
-            --background: #1e1e1e;
-            --foreground: #d4d4d4;
-            --accent: #007acc;
+            font-family: Inter, system-ui, sans-serif;
         }
 
         .titlebar {
             -webkit-app-region: drag;
             height: 32px;
-            background: var(--background);
+            flex-shrink: 0;
+            background: #f4f7fb;
             display: flex;
             align-items: center;
-            padding: 0 12px 0 12px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            padding: 0 12px;
+            border-bottom: 1px solid #000000;
+            color: #0f2744;
         }
 
-        .titlebar span {
-            padding-left: 0;
+        .titlebar-brand {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .titlebar-logo {
+            height: 18px;
+            width: 18px;
+            object-fit: contain;
+            flex-shrink: 0;
+            display: block;
+        }
+
+        .titlebar .app-name {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            white-space: nowrap;
         }
 
         .titlebar .window-controls {
@@ -69,12 +118,12 @@
             align-items: center;
             justify-content: center;
             font-size: 16px;
-            color: var(--foreground);
+            color: #0f2744;
             transition: background 0.1s;
         }
 
         .titlebar button:hover {
-            background: rgba(255,255,255,0.1);
+            background: rgba(15, 39, 68, 0.06);
         }
 
         .titlebar button.close:hover {
@@ -82,89 +131,711 @@
             color: white;
         }
 
-        .titlebar .window-controls {
-            margin-left: auto;
+        .login-scroll {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+        }
+
+        /* Campos de login: texto no invade la franja del icono */
+        .field-shell {
+            position: relative;
             display: flex;
+            align-items: stretch;
+            border-radius: 0.75rem;
+            border: 1px solid rgba(100, 116, 139, 0.35);
+            background: #ffffff;
+            overflow: hidden;
+            transition: border-color 0.15s ease, box-shadow 0.15s ease;
         }
 
-        .window-controls span {
-            width: 12px;
-            height: 12px;
-            display: inline-block;
+        .field-shell:focus-within {
+            border-color: #0f2744;
+            box-shadow: 0 0 0 3px rgba(15, 39, 68, 0.12);
         }
 
-        .content {
-            padding: 20px;
-            cursor: default;
+        .field-input {
+            min-width: 0;
+            width: 100%;
+            line-height: 1.375rem;
+        }
+
+        .field-input::placeholder {
+            color: rgba(71, 85, 105, 0.55);
+            opacity: 1;
+        }
+
+        .field-icon-slot {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            right: 0;
+            width: 2.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+            color: rgba(71, 85, 105, 0.55);
+        }
+
+        .field-icon-slot .material-symbols-outlined {
+            font-size: 1.125rem;
+            width: 1.125rem;
+            height: 1.125rem;
+            line-height: 1.125rem;
+            overflow: hidden;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .field-toggle {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            right: 0;
+            width: 2.75rem;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            background: transparent;
+            border-radius: 0;
+            color: rgba(71, 85, 105, 0.7);
+            cursor: pointer;
+            transition: color 0.15s ease, background 0.15s ease;
+        }
+
+        .field-toggle:hover {
+            color: #0f2744;
+            background: rgba(15, 39, 68, 0.06);
+        }
+
+        .field-toggle .material-symbols-outlined {
+            font-size: 1.125rem;
+            width: 1.125rem;
+            height: 1.125rem;
+            line-height: 1.125rem;
+            overflow: hidden;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .ambient-shadow {
+            box-shadow: 0 12px 40px rgba(15, 39, 68, 0.08);
+        }
+
+        .gradient-primary {
+            background: linear-gradient(135deg, #0f2744 0%, #1e4976 100%);
+        }
+
+        .app-sidebar {
+            background: rgba(255, 255, 255, 0.92);
+            border-right: 1px solid rgba(148, 163, 184, 0.35);
+            box-shadow: 4px 0 24px rgba(15, 39, 68, 0.04);
+        }
+
+        .nav-module {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.65rem 0.85rem;
+            border-radius: 0.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #64748b;
+            border: 1px solid transparent;
+            transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+        }
+
+        .nav-module:hover {
+            background: #1e4976;
+            color: #bfdbfe;
+        }
+
+        .nav-module.is-active {
+            background: #fff;
+            color: #0f2744;
+            font-weight: 600;
+            box-shadow: 0 1px 3px rgba(15, 39, 68, 0.08);
+            border-color: #000000;
+        }
+
+        .nav-module.is-active:hover {
+            background: #1e4976;
+            color: #bfdbfe;
+            box-shadow: 0 2px 8px rgba(15, 39, 68, 0.2);
+            border-color: #000000;
+        }
+
+        .dash-main {
+            flex: 1;
+            min-width: 0;
+            min-height: 0;
+            overflow-y: auto;
+        }
+
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            white-space: nowrap;
+            border-width: 0;
         }
     </style>
 </head>
-<body>
+<body class="bg-surface text-on-surface antialiased flex flex-col h-screen">
     <div class="titlebar">
-        <span>Hello World!</span>
+        <div class="titlebar-brand">
+            <img src="./logo.png" alt="" class="titlebar-logo" width="18" height="18" />
+            <span class="app-name">Zyron</span>
+        </div>
         <div class="window-controls">
-            <button id="min-btn" aria-label="Minimize">
-                <svg width="12" height="12" viewBox="0 0 12 12">
-                    <rect x="1" y="5" width="10" height="1" fill="currentColor"/>
+            <button id="min-btn" type="button" aria-label="Minimizar">
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                    <rect x="1" y="5" width="10" height="1" fill="currentColor" />
                 </svg>
             </button>
-            <button id="max-btn" aria-label="Maximize">
-                <svg id="max-icon" width="12" height="12" viewBox="0 0 12 12" style="display: block;">
-                    <rect x="1" y="1" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1"/>
+            <button id="max-btn" type="button" aria-label="Maximizar">
+                <svg id="max-icon" width="12" height="12" viewBox="0 0 12 12" style="display: block;" aria-hidden="true">
+                    <rect x="1" y="1" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1" />
                 </svg>
-                <svg id="restore-icon" width="12" height="12" viewBox="0 0 12 12" style="display: none;">
-                    <rect x="1" y="3" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1"/>
-                    <polyline points="3 3 3 1 11 1 11 9" fill="none" stroke="currentColor" stroke-width="1"/>
+                <svg id="restore-icon" width="12" height="12" viewBox="0 0 12 12" style="display: none;" aria-hidden="true">
+                    <rect x="1" y="3" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1" />
+                    <polyline points="3 3 3 1 11 1 11 9" fill="none" stroke="currentColor" stroke-width="1" />
                 </svg>
             </button>
-            <button id="close-btn" class="close" aria-label="Close">
-                <svg width="12" height="12" viewBox="0 0 12 12">
-                    <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="1"/>
+            <button id="close-btn" type="button" class="close" aria-label="Cerrar">
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+                    <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="1" />
                 </svg>
             </button>
         </div>
     </div>
-    <div class="content">
-        <h1>Hello World!</h1>
-        <p>
-            We are using Node.js <span id="node-version"></span>,
-            Chromium <span id="chrome-version"></span>,
-            and Electron <span id="electron-version"></span>.
-        </p>
-        <script>
-            // Update maximize/restore icon
-            const updateMaximizeIcon = (isMaximized) => {
-                const maxIcon = document.getElementById('max-icon')
-                const restoreIcon = document.getElementById('restore-icon')
-                const maxBtn = document.getElementById('max-btn')
 
-                if (isMaximized) {
-                    maxIcon.style.display = 'none'
-                    restoreIcon.style.display = 'block'
-                    maxBtn.setAttribute('aria-label', 'Restore')
-                } else {
-                    maxIcon.style.display = 'block'
-                    restoreIcon.style.display = 'none'
-                    maxBtn.setAttribute('aria-label', 'Maximize')
-                }
-            }
+    <div class="flex flex-1 flex-col min-h-0 overflow-hidden">
+    <div id="view-login" class="login-scroll flex-1 min-h-0 overflow-auto">
+        <main class="flex min-h-full">
+            <div class="hidden lg:flex lg:w-1/2 relative overflow-hidden bg-primary-container">
+                <div class="absolute inset-0 bg-gradient-to-br from-primary via-primary-container to-tertiary opacity-95"></div>
+                <div class="absolute inset-0 opacity-[0.12] bg-[radial-gradient(circle_at_20%_20%,white,transparent_45%),radial-gradient(circle_at_80%_0%,white,transparent_40%)]"></div>
+                <div class="relative z-10 flex flex-col justify-between p-12 xl:p-16 w-full">
+                    <div class="flex items-center gap-3">
+                        <div class="w-11 h-11 bg-white/95 flex items-center justify-center rounded-xl editorial-shadow p-1.5">
+                            <img src="./logo.png" alt="" class="w-full h-full object-contain" width="40" height="40" />
+                        </div>
+                        <span class="text-2xl font-extrabold tracking-tight text-white">Zyron</span>
+                    </div>
+                    <div class="max-w-md">
+                        <h2 class="text-white text-3xl xl:text-4xl font-bold tracking-tight mb-4">Control claro de tu operación.</h2>
+                        <p class="text-on-primary-container text-base leading-relaxed">
+                            Accede al panel de facturación e inventario con una experiencia pensada para equipos que necesitan precisión y rapidez.
+                        </p>
+                    </div>
+                    <div class="flex items-center gap-4 text-on-primary-container/90 text-xs font-semibold tracking-widest uppercase">
+                        <span>Facturación e inventario</span>
+                        <div class="h-px flex-1 bg-white/25"></div>
+                    </div>
+                </div>
+            </div>
 
-            // Listen for window state changes
-            window.electronAPI.onWindowMaximized(updateMaximizeIcon)
-
-            // Window controls
-            document.getElementById('min-btn').addEventListener('click', () => {
-                window.electronAPI.minimize()
-            })
-
-            document.getElementById('max-btn').addEventListener('click', () => {
-                window.electronAPI.maximize()
-            })
-
-            document.getElementById('close-btn').addEventListener('click', () => {
-                window.electronAPI.close()
-            })
-        </script>
+            <div class="w-full lg:w-1/2 flex items-center justify-center p-8 sm:p-12 lg:p-14 bg-surface">
+                <div class="w-full max-w-md space-y-9">
+                    <div class="lg:hidden flex flex-col items-center gap-3 mb-2">
+                        <div class="w-12 h-12 bg-white border border-outline-variant/30 flex items-center justify-center rounded-xl editorial-shadow p-2">
+                            <img src="./logo.png" alt="" class="w-full h-full object-contain" width="40" height="40" />
+                        </div>
+                        <h1 class="text-2xl font-extrabold tracking-tight text-primary">Zyron</h1>
+                    </div>
+                    <div class="text-left">
+                        <h2 class="text-3xl font-bold tracking-tight text-primary font-headline">Acceder al sistema</h2>
+                        <p class="text-on-surface-variant mt-2 text-sm">Bienvenido de nuevo. Ingresa tus credenciales para continuar.</p>
+                    </div>
+                    <form id="login-form" class="space-y-6">
+                        <div class="space-y-1.5">
+                            <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="email">Correo</label>
+                            <div class="field-shell">
+                                <input
+                                    class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0"
+                                    id="email"
+                                    name="email"
+                                    placeholder="correo@ejemplo.com"
+                                    type="email"
+                                    autocomplete="username"
+                                    spellcheck="false"
+                                />
+                                <span class="field-icon-slot pointer-events-none" aria-hidden="true">
+                                    <span class="material-symbols-outlined">mail</span>
+                                </span>
+                            </div>
+                        </div>
+                        <div class="space-y-1.5">
+                            <div class="flex justify-between items-center">
+                                <label class="block text-[0.75rem] font-bold uppercase tracking-wider text-primary/85" for="password">Contraseña</label>
+                            </div>
+                            <div class="field-shell">
+                                <input
+                                    class="field-input border-0 bg-transparent py-2.5 pl-3.5 pr-11 text-sm text-on-surface shadow-none ring-0 focus:outline-none focus:ring-0"
+                                    id="password"
+                                    name="password"
+                                    placeholder="Tu contraseña"
+                                    type="password"
+                                    autocomplete="current-password"
+                                />
+                                <button
+                                    id="toggle-password"
+                                    class="field-toggle"
+                                    type="button"
+                                    aria-label="Mostrar u ocultar contraseña"
+                                >
+                                    <span class="material-symbols-outlined" id="pw-icon">visibility</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex flex-wrap items-center justify-between gap-3 py-1">
+                            <label class="flex items-center gap-3 cursor-pointer select-none">
+                                <input class="w-4 h-4 rounded border-outline/40 text-primary focus:ring-primary/25 cursor-pointer" type="checkbox" name="remember" />
+                                <span class="text-sm text-on-surface-variant font-medium">Mantener sesión iniciada</span>
+                            </label>
+                            <a class="text-sm font-semibold text-primary hover:text-tertiary transition-colors" href="#">¿Olvidaste tu contraseña?</a>
+                        </div>
+                        <button
+                            class="w-full bg-gradient-to-r from-primary to-primary-container text-white font-bold tracking-wide py-3.5 px-6 rounded-lg editorial-shadow hover:opacity-95 transition-all active:scale-[0.99] flex items-center justify-center gap-2"
+                            type="submit"
+                        >
+                            Iniciar sesión
+                            <span class="material-symbols-outlined text-[18px]">arrow_forward</span>
+                        </button>
+                    </form>
+                    <div class="relative flex items-center gap-4 py-1">
+                        <div class="flex-grow h-px bg-outline-variant/40"></div>
+                        <span class="text-[0.65rem] font-bold tracking-[0.12em] text-on-surface-variant/65 uppercase">O accede con</span>
+                        <div class="flex-grow h-px bg-outline-variant/40"></div>
+                    </div>
+                    <div>
+                        <button type="button" class="w-full flex items-center justify-center gap-2 bg-surface-container-lowest border border-outline-variant/30 py-3 px-3 rounded-lg hover:bg-surface-container-low transition-colors editorial-shadow text-sm font-semibold text-on-surface">
+                            <span class="text-lg leading-none" aria-hidden="true">G</span>
+                            Google
+                        </button>
+                    </div>
+                    <div class="text-center pt-6 border-t border-outline-variant/20">
+                        <p class="text-sm text-on-surface-variant">
+                            ¿Nuevo en la plataforma?
+                            <a class="font-bold text-primary hover:underline underline-offset-4 ml-1" href="#">Solicitar acceso</a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </main>
     </div>
+
+    <div id="view-dashboard" class="hidden flex flex-1 flex-row min-h-0 overflow-hidden bg-surface text-on-surface">
+        <nav class="app-sidebar flex w-56 shrink-0 flex-col gap-1 px-3 py-4 z-20" aria-label="Módulos">
+            <div class="flex flex-1 flex-col gap-1">
+                <a class="nav-module is-active" href="#" data-module="panel" aria-current="page">
+                    <span class="material-symbols-outlined text-[20px] shrink-0">dashboard</span>
+                    <span>Panel principal</span>
+                </a>
+                <a class="nav-module" href="#" data-module="facturas">
+                    <span class="material-symbols-outlined text-[20px] shrink-0">receipt_long</span>
+                    <span>Facturas</span>
+                </a>
+                <a class="nav-module" href="#" data-module="inventario">
+                    <span class="material-symbols-outlined text-[20px] shrink-0">inventory_2</span>
+                    <span>Inventario</span>
+                </a>
+                <a class="nav-module" href="#" data-module="clientes">
+                    <span class="material-symbols-outlined text-[20px] shrink-0">group</span>
+                    <span>Clientes</span>
+                </a>
+                <a class="nav-module" href="#" data-module="config">
+                    <span class="material-symbols-outlined text-[20px] shrink-0">settings</span>
+                    <span>Configuración</span>
+                </a>
+            </div>
+            <div class="mt-auto flex flex-col gap-1 border-t border-outline-variant/40 pt-3">
+                <a class="nav-module" href="#">
+                    <span class="material-symbols-outlined text-[20px] shrink-0">help</span>
+                    <span>Ayuda</span>
+                </a>
+                <button type="button" id="logout-btn" class="nav-module w-full text-left cursor-default border-0 bg-transparent font-inherit">
+                    <span class="material-symbols-outlined text-[20px] shrink-0">logout</span>
+                    <span>Cerrar sesión</span>
+                </button>
+            </div>
+        </nav>
+
+        <div class="flex min-w-0 min-h-0 flex-1 flex-col">
+            <header class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-outline-variant/50 bg-surface-container-low px-5 lg:px-8">
+                <div class="flex min-w-0 flex-1 items-center gap-5">
+                    <div class="relative hidden max-w-xs flex-1 lg:block">
+                        <span class="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant">search</span>
+                        <input class="w-full rounded-full border-0 bg-surface-container-lowest py-2 pl-10 pr-4 text-sm text-on-surface shadow-sm ring-1 ring-outline-variant/30 placeholder:text-outline/70 focus:outline-none focus:ring-2 focus:ring-primary/25" type="search" placeholder="Buscar facturas, clientes, SKU…" />
+                    </div>
+                </div>
+                <nav class="hidden items-center gap-6 text-xs font-bold uppercase tracking-wide text-slate-400 md:flex" aria-label="Atajos">
+                    <a class="transition-colors hover:text-primary" href="#">Análisis</a>
+                    <a class="transition-colors hover:text-primary" href="#">Informes</a>
+                    <a class="transition-colors hover:text-primary" href="#">Auditoría</a>
+                </nav>
+                <div class="flex shrink-0 items-center gap-1">
+                    <button type="button" class="relative rounded-md p-2 text-primary transition-colors hover:bg-black/[0.04]" aria-label="Notificaciones">
+                        <span class="material-symbols-outlined text-[22px]">notifications</span>
+                        <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-error" aria-hidden="true"></span>
+                        <span class="sr-only">Hay avisos nuevos</span>
+                    </button>
+                    <button type="button" class="rounded-md p-2 text-primary transition-colors hover:bg-black/[0.04]" aria-label="Historial">
+                        <span class="material-symbols-outlined text-[22px]">history</span>
+                    </button>
+                    <button type="button" class="rounded-md p-2 text-primary transition-colors hover:bg-black/[0.04]" aria-label="Cuenta">
+                        <span class="material-symbols-outlined text-[22px]">account_circle</span>
+                    </button>
+                </div>
+            </header>
+
+            <main class="dash-main p-6 lg:p-9">
+                <div class="mx-auto flex w-full max-w-7xl flex-col gap-8">
+                    <div class="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+                        <div>
+                            <h2 class="font-headline text-2xl font-bold tracking-tight text-primary">Resumen operativo</h2>
+                            <p class="mt-1 text-sm text-on-surface-variant">Rendimiento del trimestre y alertas prioritarias</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" class="flex items-center gap-2 rounded-lg border border-outline-variant/40 bg-surface-container-lowest px-4 py-2 text-sm font-medium text-primary transition-colors hover:border-outline-variant/70">
+                                <span class="material-symbols-outlined text-[18px]">download</span>
+                                Exportar
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-5 md:grid-cols-2 lg:grid-cols-4">
+                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-surface-container-lowest p-6 ambient-shadow">
+                            <div class="mb-3 flex items-start justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Ventas totales</span>
+                                <div class="flex items-center gap-1 rounded-full bg-tertiary-fixed-dim/25 px-2 py-0.5">
+                                    <span class="material-symbols-outlined text-[14px] text-tertiary">trending_up</span>
+                                    <span class="text-xs font-medium text-tertiary">+12,5&nbsp;%</span>
+                                </div>
+                            </div>
+                            <div class="text-3xl font-bold tracking-tight text-primary">845.290<span class="ml-1 text-lg text-outline">€</span></div>
+                        </div>
+                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-surface-container-lowest p-6 ambient-shadow">
+                            <div class="mb-3 flex items-start justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Cuentas por cobrar</span>
+                                <div class="flex items-center gap-1 rounded-full bg-error-container/60 px-2 py-0.5">
+                                    <span class="material-symbols-outlined text-[14px] text-error">warning</span>
+                                    <span class="text-xs font-medium text-error">Revisar</span>
+                                </div>
+                            </div>
+                            <div class="text-3xl font-bold tracking-tight text-primary">124.500<span class="ml-1 text-lg text-outline">€</span></div>
+                        </div>
+                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-surface-container-lowest p-6 ambient-shadow">
+                            <div class="mb-3 flex items-start justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-on-surface-variant">Cobrado (mes)</span>
+                                <div class="rounded-full bg-surface-container px-2 py-0.5">
+                                    <span class="text-xs font-medium text-on-surface-variant">Mes en curso</span>
+                                </div>
+                            </div>
+                            <div class="text-3xl font-bold tracking-tight text-primary">612.400<span class="ml-1 text-lg text-outline">€</span></div>
+                        </div>
+                        <div class="relative flex min-h-[140px] flex-col justify-between overflow-hidden rounded-xl bg-primary-container p-6 text-on-primary">
+                            <div class="pointer-events-none absolute -right-6 -top-6 opacity-[0.12]">
+                                <span class="material-symbols-outlined text-[120px]">inventory_2</span>
+                            </div>
+                            <div class="relative z-10 mb-3 flex items-start justify-between">
+                                <span class="text-xs font-semibold uppercase tracking-wider text-on-primary-container/90">Stock bajo</span>
+                            </div>
+                            <div class="relative z-10 flex items-end gap-3">
+                                <div class="text-4xl font-bold tracking-tight">14</div>
+                                <span class="mb-1 text-sm text-on-primary-container/90">SKU requieren atención</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-8 lg:grid-cols-3">
+                        <div class="rounded-xl bg-surface-container-low p-1 lg:col-span-2">
+                            <div class="rounded-lg bg-surface-container-lowest p-6 ambient-shadow">
+                                <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+                                    <h3 class="text-base font-bold text-primary">Ingresos vs. gastos</h3>
+                                    <div class="flex gap-2">
+                                        <button type="button" class="rounded-md bg-surface-container px-3 py-1 text-xs font-medium text-on-surface">Mensual</button>
+                                        <button type="button" class="rounded-md px-3 py-1 text-xs font-medium text-on-surface-variant hover:bg-surface-container/60">Trimestral</button>
+                                    </div>
+                                </div>
+                                <div class="relative flex h-64 w-full items-stretch gap-1 border-b border-outline-variant/25 pt-4 pl-7 pr-1 pb-7">
+                                    <div class="pointer-events-none absolute bottom-8 left-0 top-4 flex w-6 flex-col justify-between text-[10px] font-medium text-outline">
+                                        <span>1&nbsp;M</span>
+                                        <span>750&nbsp;k</span>
+                                        <span>500&nbsp;k</span>
+                                        <span>250&nbsp;k</span>
+                                        <span>0</span>
+                                    </div>
+                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
+                                        <div class="h-[60%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                        <div class="h-[40%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
+                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Ene</span>
+                                    </div>
+                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
+                                        <div class="h-[75%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                        <div class="h-[45%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
+                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Feb</span>
+                                    </div>
+                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
+                                        <div class="h-[65%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                        <div class="h-[50%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
+                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Mar</span>
+                                    </div>
+                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
+                                        <div class="h-[85%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                        <div class="h-[55%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
+                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Abr</span>
+                                    </div>
+                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
+                                        <div class="h-[90%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                        <div class="h-[60%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
+                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">May</span>
+                                    </div>
+                                    <div class="relative flex h-full min-w-0 flex-1 items-end justify-center gap-1">
+                                        <div class="h-[70%] w-1/2 max-w-[2rem] rounded-t-sm bg-primary transition-opacity hover:opacity-90"></div>
+                                        <div class="h-[45%] w-1/2 max-w-[2rem] rounded-t-sm bg-surface-tint/60 transition-opacity hover:opacity-100"></div>
+                                        <span class="absolute bottom-0 left-1/2 -translate-x-1/2 whitespace-nowrap text-[10px] text-on-surface-variant">Jun</span>
+                                    </div>
+                                </div>
+                                <div class="mt-8 flex flex-wrap justify-center gap-6">
+                                    <div class="flex items-center gap-2">
+                                        <div class="h-3 w-3 rounded-sm bg-primary"></div>
+                                        <span class="text-xs font-medium text-on-surface-variant">Ingresos</span>
+                                    </div>
+                                    <div class="flex items-center gap-2">
+                                        <div class="h-3 w-3 rounded-sm bg-surface-tint/60"></div>
+                                        <span class="text-xs font-medium text-on-surface-variant">Gastos</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col gap-6">
+                            <div class="rounded-xl bg-surface-container-low p-1">
+                                <div class="rounded-lg bg-surface-container-lowest p-5">
+                                    <div class="mb-4 flex items-center justify-between">
+                                        <h3 class="text-base font-bold text-primary">Próximos cobros recurrentes</h3>
+                                        <button type="button" class="rounded-md p-1 text-primary hover:bg-surface-container" aria-label="Más opciones">
+                                            <span class="material-symbols-outlined text-[18px]">more_horiz</span>
+                                        </button>
+                                    </div>
+                                    <div class="flex flex-col gap-3">
+                                        <div class="flex cursor-pointer items-center justify-between rounded-lg bg-surface p-3 transition-colors hover:bg-surface-container/50">
+                                            <div class="flex items-center gap-3">
+                                                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-secondary-fixed text-sm font-bold text-on-secondary-fixed">AC</div>
+                                                <div>
+                                                    <p class="text-sm font-medium text-on-surface">Apex Corp</p>
+                                                    <p class="text-xs text-on-surface-variant">Vence mañana</p>
+                                                </div>
+                                            </div>
+                                            <div class="text-right">
+                                                <p class="text-sm font-bold text-primary">12.450&nbsp;€</p>
+                                                <p class="mt-0.5 font-mono text-[10px] uppercase text-on-surface-variant">FAC-2099</p>
+                                            </div>
+                                        </div>
+                                        <div class="flex cursor-pointer items-center justify-between rounded-lg bg-surface p-3 transition-colors hover:bg-surface-container/50">
+                                            <div class="flex items-center gap-3">
+                                                <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-container-high text-sm font-bold text-primary">V</div>
+                                                <div>
+                                                    <p class="text-sm font-medium text-on-surface">Vanguardia S.L.</p>
+                                                    <p class="text-xs text-on-surface-variant">Vence en 3 días</p>
+                                                </div>
+                                            </div>
+                                            <div class="text-right">
+                                                <p class="text-sm font-bold text-primary">8.200&nbsp;€</p>
+                                                <p class="mt-0.5 font-mono text-[10px] uppercase text-on-surface-variant">FAC-2104</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <button type="button" class="mt-2 w-full text-center text-xs font-medium text-primary hover:underline">Ver calendario completo</button>
+                                </div>
+                            </div>
+
+                            <div class="rounded-xl border border-error-container/50 bg-error-container/25 p-5">
+                                <div class="mb-3 flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-[20px] text-error">warning</span>
+                                    <h3 class="text-sm font-bold text-error">Alertas críticas de stock</h3>
+                                </div>
+                                <ul class="flex flex-col gap-2 text-sm">
+                                    <li class="flex items-center justify-between">
+                                        <span class="font-medium text-on-surface-variant">Rack servidor tipo C</span>
+                                        <span class="font-bold text-error">2 uds.</span>
+                                    </li>
+                                    <li class="flex items-center justify-between border-t border-outline-variant/20 pt-2">
+                                        <span class="font-medium text-on-surface-variant">Switches empresariales</span>
+                                        <span class="font-bold text-error">0 uds.</span>
+                                    </li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="rounded-xl bg-surface-container-low p-1">
+                        <div class="overflow-hidden rounded-lg bg-surface-container-lowest ambient-shadow">
+                            <div class="flex flex-wrap items-center justify-between gap-3 border-b border-outline-variant/20 p-6 pb-4">
+                                <h3 class="text-base font-bold text-primary">Facturas recientes</h3>
+                                <div class="relative">
+                                    <span class="material-symbols-outlined pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-[16px] text-outline">filter_list</span>
+                                    <select class="cursor-pointer appearance-none rounded-md border-0 bg-surface-container py-1.5 pl-8 pr-8 text-xs font-medium text-on-surface focus:outline-none focus:ring-1 focus:ring-primary" aria-label="Filtrar por estado">
+                                        <option>Todos los estados</option>
+                                        <option>Pagadas</option>
+                                        <option>Pendientes</option>
+                                        <option>Vencidas</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="w-full overflow-x-auto">
+                                <table class="w-full border-collapse text-left text-sm">
+                                    <thead>
+                                        <tr class="bg-surface-dim/50">
+                                            <th class="w-1/4 px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary">Cliente</th>
+                                            <th class="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary">N.º factura</th>
+                                            <th class="px-6 py-3 text-xs font-semibold uppercase tracking-wider text-primary">Fecha</th>
+                                            <th class="px-6 py-3 text-right text-xs font-semibold uppercase tracking-wider text-primary">Importe</th>
+                                            <th class="px-6 py-3 text-center text-xs font-semibold uppercase tracking-wider text-primary">Estado</th>
+                                            <th class="px-6 py-3"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <tr class="border-b border-outline-variant/15 transition-colors hover:bg-surface-container-low/50">
+                                            <td class="px-6 py-4 font-medium text-on-surface">Industrias Nexus</td>
+                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8492</td>
+                                            <td class="px-6 py-4 text-on-surface-variant">12 oct 2026</td>
+                                            <td class="px-6 py-4 text-right font-bold text-primary">24.500,00&nbsp;€</td>
+                                            <td class="px-6 py-4 text-center">
+                                                <span class="inline-block rounded-full bg-tertiary-fixed-dim/30 px-3 py-1 text-xs font-medium text-on-tertiary-fixed-variant">Pagada</span>
+                                            </td>
+                                            <td class="px-6 py-4 text-right">
+                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
+                                            </td>
+                                        </tr>
+                                        <tr class="border-b border-outline-variant/15 transition-colors hover:bg-surface-container-low/50">
+                                            <td class="px-6 py-4 font-medium text-on-surface">Logística Global</td>
+                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8493</td>
+                                            <td class="px-6 py-4 text-on-surface-variant">14 oct 2026</td>
+                                            <td class="px-6 py-4 text-right font-bold text-primary">8.920,50&nbsp;€</td>
+                                            <td class="px-6 py-4 text-center">
+                                                <span class="inline-block rounded-full bg-surface-container px-3 py-1 text-xs font-medium text-on-surface">Pendiente</span>
+                                            </td>
+                                            <td class="px-6 py-4 text-right">
+                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
+                                            </td>
+                                        </tr>
+                                        <tr class="border-b border-outline-variant/15 bg-error-container/10 transition-colors hover:bg-surface-container-low/50">
+                                            <td class="px-6 py-4 font-medium text-on-surface">Horizonte Media</td>
+                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8488</td>
+                                            <td class="px-6 py-4 text-on-surface-variant">28 sep 2026</td>
+                                            <td class="px-6 py-4 text-right font-bold text-primary">15.200,00&nbsp;€</td>
+                                            <td class="px-6 py-4 text-center">
+                                                <span class="inline-block rounded-full bg-error-container px-3 py-1 text-xs font-medium text-on-error-container">Vencida</span>
+                                            </td>
+                                            <td class="px-6 py-4 text-right">
+                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
+                                            </td>
+                                        </tr>
+                                        <tr class="transition-colors hover:bg-surface-container-low/50">
+                                            <td class="px-6 py-4 font-medium text-on-surface">Dinámica Estelar</td>
+                                            <td class="px-6 py-4 font-mono text-xs text-on-surface-variant">FAC-8494</td>
+                                            <td class="px-6 py-4 text-on-surface-variant">15 oct 2026</td>
+                                            <td class="px-6 py-4 text-right font-bold text-primary">42.100,00&nbsp;€</td>
+                                            <td class="px-6 py-4 text-center">
+                                                <span class="inline-block rounded-full bg-surface-container px-3 py-1 text-xs font-medium text-on-surface">Pendiente</span>
+                                            </td>
+                                            <td class="px-6 py-4 text-right">
+                                                <button type="button" class="text-on-surface-variant hover:text-primary" aria-label="Ver factura"><span class="material-symbols-outlined text-[20px]">visibility</span></button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div class="border-t border-outline-variant/20 p-4 text-center">
+                                <button type="button" class="text-sm font-medium text-primary hover:underline">Ver libro de facturas</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+    </div>
+
+    <script>
+        const updateMaximizeIcon = (isMaximized) => {
+            const maxIcon = document.getElementById('max-icon');
+            const restoreIcon = document.getElementById('restore-icon');
+            const maxBtn = document.getElementById('max-btn');
+            if (!maxIcon || !restoreIcon || !maxBtn) return;
+            if (isMaximized) {
+                maxIcon.style.display = 'none';
+                restoreIcon.style.display = 'block';
+                maxBtn.setAttribute('aria-label', 'Restaurar');
+            } else {
+                maxIcon.style.display = 'block';
+                restoreIcon.style.display = 'none';
+                maxBtn.setAttribute('aria-label', 'Maximizar');
+            }
+        };
+
+        window.electronAPI.onWindowMaximized(updateMaximizeIcon);
+
+        document.getElementById('min-btn').addEventListener('click', () => window.electronAPI.minimize());
+        document.getElementById('max-btn').addEventListener('click', () => window.electronAPI.maximize());
+        document.getElementById('close-btn').addEventListener('click', () => window.electronAPI.close());
+
+        const passwordInput = document.getElementById('password');
+        const togglePw = document.getElementById('toggle-password');
+        const pwIcon = document.getElementById('pw-icon');
+        togglePw.addEventListener('click', () => {
+            const show = passwordInput.type === 'password';
+            passwordInput.type = show ? 'text' : 'password';
+            pwIcon.textContent = show ? 'visibility_off' : 'visibility';
+            togglePw.setAttribute('aria-label', show ? 'Ocultar contraseña' : 'Mostrar contraseña');
+        });
+
+        const viewLogin = document.getElementById('view-login');
+        const viewDashboard = document.getElementById('view-dashboard');
+
+        const showDashboard = () => {
+            viewLogin.classList.add('hidden');
+            viewDashboard.classList.remove('hidden');
+            document.title = 'Zyron | Panel principal';
+        };
+
+        const showLogin = () => {
+            viewDashboard.classList.add('hidden');
+            viewLogin.classList.remove('hidden');
+            document.title = 'Zyron | Acceder';
+        };
+
+        document.getElementById('login-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            showDashboard();
+        });
+
+        document.getElementById('logout-btn').addEventListener('click', () => {
+            showLogin();
+        });
+
+        document.querySelectorAll('.nav-module[data-module]').forEach((el) => {
+            el.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                document.querySelectorAll('.nav-module[data-module]').forEach((n) => {
+                    n.classList.remove('is-active');
+                    n.removeAttribute('aria-current');
+                });
+                el.classList.add('is-active');
+                el.setAttribute('aria-current', 'page');
+            });
+        });
+    </script>
 </body>
 </html>

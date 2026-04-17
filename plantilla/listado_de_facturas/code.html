@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Sovereign Ledger - Invoice Management</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "surface-container-low": "#edf4ff",
+                        "primary-container": "#1b3b5f",
+                        "primary-fixed": "#d3e4ff",
+                        "on-primary-fixed": "#001c38",
+                        "on-surface-variant": "#43474e",
+                        "surface-container-lowest": "#ffffff",
+                        "on-secondary": "#ffffff",
+                        "inverse-primary": "#abc8f4",
+                        "tertiary-container": "#004239",
+                        "tertiary-fixed-dim": "#84d5c5",
+                        "surface-bright": "#f7f9ff",
+                        "surface-container-high": "#d8eaff",
+                        "inverse-surface": "#16334a",
+                        "on-primary": "#ffffff",
+                        "secondary-fixed-dim": "#a6c9f8",
+                        "outline": "#73777f",
+                        "background": "#f7f9ff",
+                        "on-secondary-fixed-variant": "#234871",
+                        "secondary-fixed": "#d2e4ff",
+                        "on-primary-fixed-variant": "#2a486d",
+                        "primary-fixed-dim": "#abc8f4",
+                        "primary": "#002547",
+                        "on-secondary-container": "#345881",
+                        "inverse-on-surface": "#e8f2ff",
+                        "surface-container-highest": "#cee5ff",
+                        "surface-tint": "#426086",
+                        "on-tertiary-fixed": "#00201b",
+                        "surface-dim": "#c1ddfb",
+                        "secondary": "#3d608a",
+                        "error": "#ba1a1a",
+                        "on-tertiary-fixed-variant": "#005046",
+                        "on-secondary-fixed": "#001c37",
+                        "tertiary": "#002a24",
+                        "on-background": "#001d32",
+                        "on-error-container": "#93000a",
+                        "surface-variant": "#cee5ff",
+                        "secondary-container": "#abcffe",
+                        "surface-container": "#e3efff",
+                        "surface": "#f7f9ff",
+                        "outline-variant": "#c3c6cf",
+                        "on-surface": "#001d32",
+                        "on-tertiary": "#ffffff",
+                        "tertiary-fixed": "#a0f2e1",
+                        "on-tertiary-container": "#61b2a2",
+                        "error-container": "#ffdad6",
+                        "on-primary-container": "#88a6cf",
+                        "on-error": "#ffffff"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.25rem",
+                        "xl": "0.5rem",
+                        "full": "0.75rem"
+                    },
+                    "fontFamily": {
+                        "headline": ["Inter"],
+                        "body": ["Inter"],
+                        "label": ["Inter"]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7f9ff; color: #001d32; }
+    </style>
+</head>
+<body class="flex bg-background font-body min-h-screen text-on-background">
+<!-- SideNavBar -->
+<nav class="bg-slate-50/80 dark:bg-slate-900/80 backdrop-blur-xl h-screen w-64 fixed left-0 top-0 border-r-0 tonal-shift-bg-surface-container-low shadow-xl shadow-blue-900/5 transition-all duration-300 ease-in-out hover:translate-x-1 z-50 flex flex-col h-full p-4 gap-8">
+<div class="flex items-center gap-3 px-4 py-2">
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="account_balance">account_balance</span>
+<div>
+<h1 class="text-xl font-bold tracking-tighter text-blue-950 dark:text-white">Sovereign Ledger</h1>
+<p class="text-xs text-on-surface-variant uppercase tracking-widest font-semibold">Architectural Authority</p>
+</div>
+</div>
+<button class="bg-gradient-to-r from-primary to-primary-container text-on-primary rounded-md px-4 py-3 flex items-center justify-center gap-2 font-medium hover:opacity-90 transition-opacity">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+            New Invoice
+        </button>
+<ul class="flex flex-col gap-2 flex-grow">
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors hover:bg-blue-50/50 dark:hover:bg-slate-800 rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="dashboard">dashboard</span>
+<span class="font-inter text-sm font-medium tracking-tight">Dashboard</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 bg-white dark:bg-blue-800 text-blue-900 dark:text-white rounded-lg shadow-sm font-semibold transition-colors" href="#">
+<span class="material-symbols-outlined" data-icon="receipt_long" style="font-variation-settings: 'FILL' 1;">receipt_long</span>
+<span class="font-inter text-sm font-medium tracking-tight">Invoices</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors hover:bg-blue-50/50 dark:hover:bg-slate-800 rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="inventory_2">inventory_2</span>
+<span class="font-inter text-sm font-medium tracking-tight">Inventory</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors hover:bg-blue-50/50 dark:hover:bg-slate-800 rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="group">group</span>
+<span class="font-inter text-sm font-medium tracking-tight">Clients</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors hover:bg-blue-50/50 dark:hover:bg-slate-800 rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="settings">settings</span>
+<span class="font-inter text-sm font-medium tracking-tight">Settings</span>
+</a>
+</li>
+</ul>
+<ul class="flex flex-col gap-2 mt-auto">
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors hover:bg-blue-50/50 dark:hover:bg-slate-800 rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="help">help</span>
+<span class="font-inter text-sm font-medium tracking-tight">Support</span>
+</a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 text-slate-500 dark:text-slate-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors hover:bg-blue-50/50 dark:hover:bg-slate-800 rounded-lg" href="#">
+<span class="material-symbols-outlined" data-icon="logout">logout</span>
+<span class="font-inter text-sm font-medium tracking-tight">Logout</span>
+</a>
+</li>
+</ul>
+</nav>
+<!-- Main Content Canvas -->
+<main class="flex-1 ml-64 min-h-screen flex flex-col relative">
+<!-- TopNavBar -->
+<header class="bg-slate-50 dark:bg-slate-950 h-16 sticky top-0 z-40 w-full tonal-depth-shift-no-border flat no shadows flex justify-between items-center px-8 text-blue-900 dark:text-blue-100 font-inter text-sm tracking-wide uppercase font-bold scale-95 active:opacity-80 transition-transform">
+<div class="flex-1 flex items-center gap-4">
+<div class="relative max-w-md w-full hidden md:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" data-icon="search">search</span>
+<input class="w-full bg-surface-container pl-10 pr-4 py-2 rounded-md outline-none border-b border-outline/20 focus:border-primary focus:border-b-2 transition-all font-body text-sm lowercase placeholder-on-surface-variant/70" placeholder="Search invoices, clients..." type="text"/>
+</div>
+</div>
+<nav class="hidden md:flex items-center gap-8 mx-8">
+<a class="text-slate-400 dark:text-slate-500 hover:text-blue-700 dark:hover:text-blue-300 transition-all" href="#">Analytics</a>
+<a class="text-slate-400 dark:text-slate-500 hover:text-blue-700 dark:hover:text-blue-300 transition-all" href="#">Reports</a>
+<a class="text-slate-400 dark:text-slate-500 hover:text-blue-700 dark:hover:text-blue-300 transition-all" href="#">Audit Log</a>
+</nav>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-3">
+<button class="p-2 text-on-surface-variant hover:text-primary transition-colors rounded-full hover:bg-surface-container-low">
+<span class="material-symbols-outlined" data-icon="notifications">notifications</span>
+</button>
+<button class="p-2 text-on-surface-variant hover:text-primary transition-colors rounded-full hover:bg-surface-container-low">
+<span class="material-symbols-outlined" data-icon="history">history</span>
+</button>
+</div>
+<div class="h-8 w-px bg-outline-variant/30 mx-2"></div>
+<button class="text-primary font-bold hover:text-primary-container transition-colors uppercase text-sm tracking-wide mr-4">Export</button>
+<button class="bg-gradient-to-r from-primary to-primary-container text-on-primary rounded-md px-5 py-2 font-bold tracking-wide hover:opacity-90 transition-opacity">Create New</button>
+<button class="ml-4 rounded-full overflow-hidden h-9 w-9 border border-outline-variant/20">
+<img alt="User Profile" class="h-full w-full object-cover" data-alt="professional headshot of a man in a blue shirt on a light background" src="https://lh3.googleusercontent.com/aida-public/AB6AXuDCMNGXgkr1CRruD0rhUi8g8L2U-HYRky9vlYL2DPD1CbiVUk5Gu03wy_uIk8xbe6M5ggVLbrT9atcVW71ogjqCybt55i8cPapFXEdBbmpQZ36MPaNF143sCXshV8QDIX_gdbOJdnNFnJmnx3xE0bbg_FkJy5gPGTb9ILz8jRskerW-sj0ryo6z7kWkZmoEoQ0sRMW6yolRKeLAkdWJXPt6Jf_pohvxz--oSBG8Py8oU6JETWRKBa2JIqaO5hA_7Hz7JHF5m72fvy52"/>
+</button>
+</div>
+</header>
+<!-- Page Content -->
+<div class="p-8 max-w-[1600px] mx-auto w-full flex-grow flex flex-col gap-8">
+<!-- Page Header -->
+<div class="flex justify-between items-end">
+<div>
+<h2 class="text-3xl font-headline font-bold text-primary tracking-tight mb-2">Invoice Management</h2>
+<p class="text-on-surface-variant text-sm font-body">Manage and track your receivables across all clients and series.</p>
+</div>
+<button class="bg-gradient-to-r from-primary to-primary-container text-on-primary rounded-md px-6 py-3 flex items-center justify-center gap-2 font-medium hover:opacity-90 transition-opacity shadow-[0_12px_40px_rgba(0,29,50,0.1)]">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+                    Create New Invoice
+                </button>
+</div>
+<!-- Tonal Content Area -->
+<div class="bg-surface-container-low rounded-xl flex-grow flex flex-col overflow-hidden">
+<!-- Filters & Tabs Bar -->
+<div class="bg-surface-container-lowest p-6 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6 shadow-[0_4px_20px_rgba(0,29,50,0.02)] z-10 relative">
+<!-- Tabs -->
+<div class="flex space-x-1 bg-surface-container p-1 rounded-lg">
+<button class="px-5 py-2 rounded-md bg-surface-container-lowest text-primary font-semibold text-sm shadow-sm">All</button>
+<button class="px-5 py-2 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container-low font-medium text-sm transition-colors">Drafts</button>
+<button class="px-5 py-2 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container-low font-medium text-sm transition-colors flex items-center gap-2">
+                            Unpaid <span class="bg-error-container text-on-error-container text-xs px-2 py-0.5 rounded-full font-bold">12</span>
+</button>
+<button class="px-5 py-2 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container-low font-medium text-sm transition-colors">Paid</button>
+<button class="px-5 py-2 rounded-md text-on-surface-variant hover:text-primary hover:bg-surface-container-low font-medium text-sm transition-colors flex items-center gap-2">
+                            Overdue <span class="bg-error text-on-error text-xs px-2 py-0.5 rounded-full font-bold">3</span>
+</button>
+</div>
+<!-- Filters -->
+<div class="flex items-center gap-4 w-full xl:w-auto">
+<div class="relative group flex-1 xl:flex-none">
+<select class="appearance-none w-full xl:w-48 bg-surface-container text-on-surface text-sm font-medium py-2.5 pl-4 pr-10 border-b border-outline/20 outline-none focus:border-primary focus:border-b-2 transition-all cursor-pointer rounded-t-md">
+<option>Last 30 Days</option>
+<option>This Quarter</option>
+<option>This Year</option>
+<option>Custom Range</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" data-icon="calendar_today">calendar_today</span>
+</div>
+<div class="relative group flex-1 xl:flex-none">
+<select class="appearance-none w-full xl:w-48 bg-surface-container text-on-surface text-sm font-medium py-2.5 pl-4 pr-10 border-b border-outline/20 outline-none focus:border-primary focus:border-b-2 transition-all cursor-pointer rounded-t-md">
+<option>All Clients</option>
+<option>Acme Corp</option>
+<option>Stark Industries</option>
+<option>Wayne Enterprises</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" data-icon="business">business</span>
+</div>
+<div class="relative group flex-1 xl:flex-none">
+<select class="appearance-none w-full xl:w-32 bg-surface-container text-on-surface text-sm font-medium py-2.5 pl-4 pr-10 border-b border-outline/20 outline-none focus:border-primary focus:border-b-2 transition-all cursor-pointer rounded-t-md">
+<option>All Series</option>
+<option>INV-2023</option>
+<option>SUB-2023</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" data-icon="tag">tag</span>
+</div>
+<button class="p-2.5 bg-surface-container text-on-surface-variant hover:text-primary hover:bg-surface-container-high rounded-md transition-colors flex-shrink-0" title="More Filters">
+<span class="material-symbols-outlined" data-icon="filter_list">filter_list</span>
+</button>
+</div>
+</div>
+<!-- Data Table Container -->
+<div class="flex-grow overflow-auto">
+<table class="w-full text-left border-collapse">
+<thead class="bg-surface-dim sticky top-0 z-10">
+<tr>
+<th class="py-4 px-6 font-label text-xs uppercase tracking-[0.05em] text-primary font-bold">Invoice #</th>
+<th class="py-4 px-6 font-label text-xs uppercase tracking-[0.05em] text-primary font-bold">Date Issued</th>
+<th class="py-4 px-6 font-label text-xs uppercase tracking-[0.05em] text-primary font-bold">Client</th>
+<th class="py-4 px-6 font-label text-xs uppercase tracking-[0.05em] text-primary font-bold text-right">Amount</th>
+<th class="py-4 px-6 font-label text-xs uppercase tracking-[0.05em] text-primary font-bold">Status</th>
+<th class="py-4 px-6 font-label text-xs uppercase tracking-[0.05em] text-primary font-bold text-right">Actions</th>
+</tr>
+</thead>
+<tbody class="text-sm font-body bg-surface">
+<!-- Row 1 (Overdue) -->
+<tr class="hover:bg-surface-container-lowest transition-colors group">
+<td class="py-5 px-6 border-b border-surface-container-low">
+<div class="flex flex-col">
+<span class="font-bold text-primary">INV-2023-089</span>
+<span class="text-xs text-on-surface-variant mt-0.5">Due: Oct 12, 2023</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface-container-low text-on-surface">Sep 12, 2023</td>
+<td class="py-5 px-6 border-b border-surface-container-low">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-primary-container text-on-primary flex items-center justify-center font-bold text-xs">AC</div>
+<span class="font-medium text-on-surface">Acme Corp</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface-container-low text-right font-headline font-bold text-on-surface">$12,450.00</td>
+<td class="py-5 px-6 border-b border-surface-container-low">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-error-container text-on-error-container">
+<span class="w-1.5 h-1.5 rounded-full bg-error mr-2"></span>
+                                        Overdue (14 days)
+                                    </span>
+</td>
+<td class="py-5 px-6 border-b border-surface-container-low text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Edit">
+<span class="material-symbols-outlined text-sm" data-icon="edit">edit</span>
+</button>
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Download PDF">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+</button>
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Duplicate">
+<span class="material-symbols-outlined text-sm" data-icon="content_copy">content_copy</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 2 (Unpaid) -->
+<tr class="hover:bg-surface-container-lowest transition-colors bg-surface-container-low group">
+<td class="py-5 px-6 border-b border-surface">
+<div class="flex flex-col">
+<span class="font-bold text-primary">INV-2023-090</span>
+<span class="text-xs text-on-surface-variant mt-0.5">Due: Nov 15, 2023</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface text-on-surface">Oct 15, 2023</td>
+<td class="py-5 px-6 border-b border-surface">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-secondary-container text-on-secondary-container flex items-center justify-center font-bold text-xs">SI</div>
+<span class="font-medium text-on-surface">Stark Industries</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface text-right font-headline font-bold text-on-surface">$8,900.50</td>
+<td class="py-5 px-6 border-b border-surface">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-on-primary-container text-on-primary-fixed">
+<span class="w-1.5 h-1.5 rounded-full bg-primary mr-2"></span>
+                                        Awaiting Payment
+                                    </span>
+</td>
+<td class="py-5 px-6 border-b border-surface text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Edit">
+<span class="material-symbols-outlined text-sm" data-icon="edit">edit</span>
+</button>
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Download PDF">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+</button>
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Duplicate">
+<span class="material-symbols-outlined text-sm" data-icon="content_copy">content_copy</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 3 (Paid) -->
+<tr class="hover:bg-surface-container-lowest transition-colors group">
+<td class="py-5 px-6 border-b border-surface-container-low">
+<div class="flex flex-col">
+<span class="font-bold text-primary">INV-2023-088</span>
+<span class="text-xs text-on-surface-variant mt-0.5">Paid on Oct 20</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface-container-low text-on-surface">Oct 01, 2023</td>
+<td class="py-5 px-6 border-b border-surface-container-low">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-tint text-on-primary flex items-center justify-center font-bold text-xs">WE</div>
+<span class="font-medium text-on-surface">Wayne Enterprises</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface-container-low text-right font-headline font-bold text-on-surface-variant">$45,000.00</td>
+<td class="py-5 px-6 border-b border-surface-container-low">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-tertiary-fixed-dim text-on-tertiary-fixed-variant">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary mr-2"></span>
+                                        Paid
+                                    </span>
+</td>
+<td class="py-5 px-6 border-b border-surface-container-low text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="View">
+<span class="material-symbols-outlined text-sm" data-icon="visibility">visibility</span>
+</button>
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Download PDF">
+<span class="material-symbols-outlined text-sm" data-icon="download">download</span>
+</button>
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Duplicate">
+<span class="material-symbols-outlined text-sm" data-icon="content_copy">content_copy</span>
+</button>
+</div>
+</td>
+</tr>
+<!-- Row 4 (Draft) -->
+<tr class="hover:bg-surface-container-lowest transition-colors bg-surface-container-low group">
+<td class="py-5 px-6 border-b border-surface">
+<div class="flex flex-col">
+<span class="font-bold text-on-surface-variant italic">Draft</span>
+<span class="text-xs text-on-surface-variant mt-0.5">Last edited 2h ago</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface text-on-surface-variant">-</td>
+<td class="py-5 px-6 border-b border-surface">
+<div class="flex items-center gap-3 opacity-70">
+<div class="w-8 h-8 rounded-full bg-surface-container-highest text-on-surface-variant flex items-center justify-center font-bold text-xs">?</div>
+<span class="font-medium text-on-surface-variant">New Client</span>
+</div>
+</td>
+<td class="py-5 px-6 border-b border-surface text-right font-headline font-bold text-on-surface-variant">$1,200.00</td>
+<td class="py-5 px-6 border-b border-surface">
+<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-bold bg-surface-variant text-on-surface-variant">
+<span class="w-1.5 h-1.5 rounded-full bg-outline mr-2"></span>
+                                        Draft
+                                    </span>
+</td>
+<td class="py-5 px-6 border-b border-surface text-right">
+<div class="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+<button class="p-1.5 text-on-surface-variant hover:text-primary rounded-md hover:bg-surface-container-low transition-colors" title="Edit">
+<span class="material-symbols-outlined text-sm" data-icon="edit">edit</span>
+</button>
+<button class="p-1.5 text-error hover:bg-error-container rounded-md transition-colors" title="Delete">
+<span class="material-symbols-outlined text-sm" data-icon="delete">delete</span>
+</button>
+</div>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+<!-- Pagination -->
+<div class="bg-surface-container-lowest p-4 flex justify-between items-center border-t border-outline-variant/10">
+<span class="text-sm text-on-surface-variant">Showing 1 to 4 of 124 entries</span>
+<div class="flex gap-1">
+<button class="px-3 py-1 text-sm font-medium text-on-surface-variant hover:bg-surface-container-low rounded-md disabled:opacity-50" disabled="">Prev</button>
+<button class="px-3 py-1 text-sm font-medium bg-primary-container text-on-primary rounded-md">1</button>
+<button class="px-3 py-1 text-sm font-medium text-on-surface-variant hover:bg-surface-container-low rounded-md">2</button>
+<button class="px-3 py-1 text-sm font-medium text-on-surface-variant hover:bg-surface-container-low rounded-md">3</button>
+<span class="px-2 py-1 text-on-surface-variant">...</span>
+<button class="px-3 py-1 text-sm font-medium text-on-surface-variant hover:bg-surface-container-low rounded-md">12</button>
+<button class="px-3 py-1 text-sm font-medium text-on-surface-variant hover:bg-surface-container-low rounded-md">Next</button>
+</div>
+</div>
+</div>
+</div>
+</main>
+</body></html>
