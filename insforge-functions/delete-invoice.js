@@ -86,27 +86,81 @@ module.exports = async function (request) {
     const { data: lines } = await client.database.from('invoice_items').select('*').eq('invoice_id', invoiceId)
 
     if (st === 'pending') {
+      let wid = null
+      try {
+        const { data: d } = await client.database.from('warehouses').select('id').eq('tenant_id', tenantId).eq('is_default', true).limit(1)
+        wid = d?.[0]?.id || null
+        if (!wid) {
+          const { data: a } = await client.database
+            .from('warehouses')
+            .select('id')
+            .eq('tenant_id', tenantId)
+            .order('created_at', { ascending: true })
+            .limit(1)
+          wid = a?.[0]?.id || null
+        }
+      } catch (_) {
+        wid = null
+      }
       for (const row of lines || []) {
         if (!row.product_id || Number(row.quantity || 0) <= 0) continue
         const q = Number(row.quantity)
         const { data: prodRows } = await client.database
           .from('products')
-          .select('stock, price')
+          .select('stock, price, tracks_stock, item_kind')
           .eq('id', row.product_id)
           .eq('tenant_id', tenantId)
           .limit(1)
-        const current = Number(prodRows?.[0]?.stock || 0)
+        const prod = prodRows?.[0]
+        const track = prod && Object.prototype.hasOwnProperty.call(prod, 'tracks_stock') ? prod.tracks_stock !== false : true
+        const isService = String(prod?.item_kind || '').toLowerCase() === 'service'
+        if (!track || isService) continue
+        const current = Number(prod?.stock || 0)
         await client.database.from('products').update({ stock: current + q }).eq('id', row.product_id).eq('tenant_id', tenantId)
-        await client.database.from('inventory_kardex').insert({
+        if (wid) {
+          const { data: wsRow } = await client.database
+            .from('warehouse_stock')
+            .select('quantity')
+            .eq('warehouse_id', wid)
+            .eq('product_id', row.product_id)
+            .limit(1)
+          const curW = wsRow?.length ? Number(wsRow[0].quantity ?? 0) : current
+          const nextW = curW + q
+          await client.database.from('warehouse_stock').upsert(
+            {
+              warehouse_id: wid,
+              product_id: row.product_id,
+              quantity: nextW,
+              updated_at: new Date().toISOString()
+            },
+            { onConflict: 'warehouse_id,product_id' }
+          )
+        }
+        const kFull = {
           tenant_id: tenantId,
+          warehouse_id: wid || null,
           product_id: row.product_id,
           movement_type: 'in',
           quantity: q,
-          unit_cost: Number(prodRows?.[0]?.price || 0),
+          unit_cost: Number(prod?.price || 0),
           reference_type: 'invoice_delete',
           reference_id: invoiceId,
           created_by: actor.id
-        })
+        }
+        let { error: kErr } = await client.database.from('inventory_kardex').insert(kFull)
+        if (kErr && /column .* does not exist|warehouse_id/i.test(kErr.message || '')) {
+          const slim = {
+            tenant_id: tenantId,
+            product_id: row.product_id,
+            movement_type: 'in',
+            quantity: q,
+            unit_cost: Number(prod?.price || 0),
+            reference_type: 'invoice_delete',
+            reference_id: invoiceId,
+            created_by: actor.id
+          }
+          ;({ error: kErr } = await client.database.from('inventory_kardex').insert(slim))
+        }
       }
     }
 

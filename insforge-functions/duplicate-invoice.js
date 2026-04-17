@@ -112,7 +112,9 @@ module.exports = async function (request) {
       tax_rate: row.tax_rate,
       line_total: row.line_total,
       line_kind: row.line_kind || (row.product_id ? 'product' : 'service'),
-      invoice_id: newInv.id
+      invoice_id: newInv.id,
+      tax_base_amount: row.tax_base_amount != null ? row.tax_base_amount : null,
+      withholding_amount: row.withholding_amount != null ? row.withholding_amount : null
     }))
 
     const { error: itemsErr } = await tryInsertInvoiceItems(client, items)
@@ -170,6 +172,15 @@ async function tryInsertInvoiceItems(client, itemRows) {
     const slim = itemRows.map((r) => {
       const c = { ...r }
       delete c.line_kind
+      return c
+    })
+    ;({ error } = await client.database.from('invoice_items').insert(slim))
+  }
+  if (error && /tax_base_amount|withholding_amount|column .* does not exist/i.test(error.message || '')) {
+    const slim = itemRows.map((r) => {
+      const c = { ...r }
+      delete c.tax_base_amount
+      delete c.withholding_amount
       return c
     })
     ;({ error } = await client.database.from('invoice_items').insert(slim))

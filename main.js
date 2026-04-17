@@ -1,4 +1,7 @@
 const { app, BrowserWindow, ipcMain, nativeImage } = require('electron/main')
+
+/** Logs detallados de IPC/DB en main (menos overhead). Activar: ZYRON_MAIN_VERBOSE=1 */
+const mainVerboseIpc = () => process.env.ZYRON_MAIN_VERBOSE === '1'
 const fs = require('node:fs')
 const path = require('node:path')
 
@@ -58,14 +61,16 @@ const zyronLog = (scope, detail) => {
 
 const redactPayload = (payload) => {
   if (!payload || typeof payload !== 'object') return payload
-  const clone = JSON.parse(JSON.stringify(payload))
-  if (clone.password) clone.password = '***'
-  if (clone.newPassword) clone.newPassword = '***'
-  if (clone.body && typeof clone.body === 'object') {
-    clone.body = { ...clone.body }
-    if (clone.body.password) clone.body.password = '***'
+  const out = { ...payload }
+  if (out.password) out.password = '***'
+  if (out.newPassword) out.newPassword = '***'
+  if (out.body && typeof out.body === 'object' && !Array.isArray(out.body)) {
+    out.body = { ...out.body }
+    if (out.body.password) out.body.password = '***'
+    const bk = Object.keys(out.body)
+    if (bk.length > 24) out.body = { _keys: bk.length, _note: 'body_truncated_for_log' }
   }
-  return clone
+  return out
 }
 
 /** Insforge a veces devuelve snake_case; el SDK solo persiste sesion si hay accessToken + user en camelCase. */
@@ -324,10 +329,23 @@ function createWindow () {
     minHeight: 560,
     frame: false,
     titleBarStyle: 'hidden',
+    show: false,
     icon: resolveWindowIcon(),
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js')
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      sandbox: true,
+      nodeIntegration: false
     }
+  })
+
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show()
+  })
+
+  mainWindow.webContents.once('did-fail-load', (_e, code, desc) => {
+    zyronLog('window:did-fail-load', { code, desc })
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show()
   })
 
   mainWindow.loadFile('index.html')
@@ -374,12 +392,12 @@ ipcMain.handle('insforge:config', async () => {
 
 ipcMain.handle('insforge:auth:signUp', async (_event, payload) => {
   try {
-    zyronLog('auth:signUp', { email: payload?.email, hasPassword: Boolean(payload?.password) })
+    if (mainVerboseIpc()) zyronLog('auth:signUp', { email: payload?.email, hasPassword: Boolean(payload?.password) })
     const client = await getInsforgeClient()
     const result = await client.auth.signUp(payload)
     if (!result?.error && result?.data) applyAuthSessionFromPayload(client, result.data)
     if (result?.error) zyronLog('auth:signUp:error', result.error)
-    else zyronLog('auth:signUp:ok', { userId: result?.data?.user?.id, email: result?.data?.user?.email })
+    else if (mainVerboseIpc()) zyronLog('auth:signUp:ok', { userId: result?.data?.user?.id, email: result?.data?.user?.email })
     return normalizeResult(result)
   } catch (error) {
     zyronLog('auth:signUp:exception', error?.message || String(error))
@@ -389,12 +407,12 @@ ipcMain.handle('insforge:auth:signUp', async (_event, payload) => {
 
 ipcMain.handle('insforge:auth:signInWithPassword', async (_event, payload) => {
   try {
-    zyronLog('auth:signIn', { email: payload?.email })
+    if (mainVerboseIpc()) zyronLog('auth:signIn', { email: payload?.email })
     const client = await getInsforgeClient()
     const result = await client.auth.signInWithPassword(payload)
     if (!result?.error && result?.data) applyAuthSessionFromPayload(client, result.data)
     if (result?.error) zyronLog('auth:signIn:error', result.error)
-    else zyronLog('auth:signIn:ok', { userId: result?.data?.user?.id })
+    else if (mainVerboseIpc()) zyronLog('auth:signIn:ok', { userId: result?.data?.user?.id })
     return normalizeResult(result)
   } catch (error) {
     zyronLog('auth:signIn:exception', error?.message || String(error))
@@ -486,7 +504,7 @@ ipcMain.handle('insforge:db:select', async (_event, payload) => {
       maybeSingle = false,
       count
     } = payload || {}
-    zyronLog('db:select:req', { table, filters: filters.length, limit, single })
+    if (mainVerboseIpc()) zyronLog('db:select:req', { table, filters: filters.length, limit, single })
     let query = client.database.from(table).select(columns, count ? { count } : undefined)
     query = applyFilters(query, filters)
     if (order && order.column) {
@@ -502,7 +520,7 @@ ipcMain.handle('insforge:db:select', async (_event, payload) => {
     else if (maybeSingle) query = query.maybeSingle()
     const result = await query
     if (result?.error) zyronLog('db:select:err', { table, error: result.error })
-    else {
+    else if (mainVerboseIpc()) {
       const n = Array.isArray(result?.data) ? result.data.length : result?.data ? 1 : 0
       zyronLog('db:select:ok', { table, rows: n })
     }
@@ -517,17 +535,23 @@ ipcMain.handle('insforge:db:insert', async (_event, payload) => {
   try {
     const client = await getInsforgeClient()
     const { table, values, selectColumns = '*' } = payload || {}
-    const preview = Array.isArray(values)
-      ? values.map((row) => {
-          const r = { ...row }
-          if (r.password) r.password = '***'
-          return r
-        })
-      : values
-    zyronLog('db:insert', { table, rows: Array.isArray(values) ? values.length : 1, preview })
+    const nIns = Array.isArray(values) ? values.length : 1
+    let preview = values
+    if (mainVerboseIpc() && Array.isArray(values) && values.length) {
+      const cap = Math.min(3, values.length)
+      preview = values.slice(0, cap).map((row) => {
+        const r = { ...row }
+        if (r.password) r.password = '***'
+        return r
+      })
+      if (values.length > cap) preview = { sample: preview, total: values.length }
+    }
+    if (mainVerboseIpc()) zyronLog('db:insert', { table, rows: nIns, preview })
     const result = await client.database.from(table).insert(values).select(selectColumns)
     if (result?.error) zyronLog('db:insert:error', { table, error: result.error })
-    else zyronLog('db:insert:ok', { table, returned: Array.isArray(result?.data) ? result.data.length : Boolean(result?.data) })
+    else if (mainVerboseIpc()) {
+      zyronLog('db:insert:ok', { table, returned: Array.isArray(result?.data) ? result.data.length : Boolean(result?.data) })
+    }
     return normalizeResult(result)
   } catch (error) {
     zyronLog('db:insert:exception', { table: payload?.table, message: error?.message || String(error) })
@@ -539,12 +563,12 @@ ipcMain.handle('insforge:db:update', async (_event, payload) => {
   try {
     const client = await getInsforgeClient()
     const { table, values, filters = [], selectColumns = '*' } = payload || {}
-    zyronLog('db:update:req', { table, filters: filters.length, valueKeys: values ? Object.keys(values) : [] })
+    if (mainVerboseIpc()) zyronLog('db:update:req', { table, filters: filters.length, valueKeys: values ? Object.keys(values) : [] })
     let query = client.database.from(table).update(values)
     query = applyFilters(query, filters)
     const result = await query.select(selectColumns)
     if (result?.error) zyronLog('db:update:err', { table, error: result.error })
-    else zyronLog('db:update:ok', { table })
+    else if (mainVerboseIpc()) zyronLog('db:update:ok', { table })
     return normalizeResult(result)
   } catch (error) {
     zyronLog('db:update:exception', { message: error?.message || String(error) })
@@ -556,12 +580,12 @@ ipcMain.handle('insforge:db:delete', async (_event, payload) => {
   try {
     const client = await getInsforgeClient()
     const { table, filters = [] } = payload || {}
-    zyronLog('db:delete:req', { table, filters: filters.length })
+    if (mainVerboseIpc()) zyronLog('db:delete:req', { table, filters: filters.length })
     let query = client.database.from(table).delete()
     query = applyFilters(query, filters)
     const result = await query
     if (result?.error) zyronLog('db:delete:err', { table, error: result.error })
-    else zyronLog('db:delete:ok', { table })
+    else if (mainVerboseIpc()) zyronLog('db:delete:ok', { table })
     return normalizeResult(result)
   } catch (error) {
     zyronLog('db:delete:exception', { message: error?.message || String(error) })
@@ -573,10 +597,10 @@ ipcMain.handle('insforge:db:rpc', async (_event, payload) => {
   try {
     const client = await getInsforgeClient()
     const { functionName, args = {} } = payload || {}
-    zyronLog('db:rpc', { functionName, args })
+    if (mainVerboseIpc()) zyronLog('db:rpc', { functionName, argsKeys: args && typeof args === 'object' ? Object.keys(args) : [] })
     const result = await client.database.rpc(functionName, args)
     if (result?.error) zyronLog('db:rpc:error', { functionName, error: result.error })
-    else zyronLog('db:rpc:ok', { functionName, data: result?.data })
+    else if (mainVerboseIpc()) zyronLog('db:rpc:ok', { functionName, hasData: result?.data != null })
     return normalizeResult(result)
   } catch (error) {
     zyronLog('db:rpc:exception', { functionName: payload?.functionName, message: error?.message || String(error) })
@@ -588,10 +612,10 @@ ipcMain.handle('insforge:functions:invoke', async (_event, payload) => {
   try {
     const client = await getInsforgeClient()
     const { slug, body, headers, method } = payload || {}
-    zyronLog('fn:invoke', { slug, method: method || 'POST', body: redactPayload(body) })
+    if (mainVerboseIpc()) zyronLog('fn:invoke', { slug, method: method || 'POST', body: redactPayload(body) })
     const result = await client.functions.invoke(slug, { body, headers, method })
     if (result?.error) zyronLog('fn:invoke:error', { slug, error: result.error })
-    else {
+    else if (mainVerboseIpc()) {
       const d = result?.data
       const summary =
         d && typeof d === 'object' && !Array.isArray(d)

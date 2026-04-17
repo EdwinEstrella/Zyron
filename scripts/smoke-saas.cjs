@@ -17,7 +17,15 @@ const requiredFiles = [
   'insforge-functions/manage-invoice-series.js',
   'insforge-functions/manage-invoice-recurrence.js',
   'insforge-functions/get-super-admin-overview.js',
-  'insforge-functions/manage-payments.js'
+  'insforge-functions/manage-super-access.js',
+  'insforge-functions/manage-payments.js',
+  'insforge-functions/manage-customers.js',
+  'insforge-functions/manage-products.js',
+  'insforge-functions/manage-inventory.js',
+  'insforge-functions/manage-reports.js',
+  'insforge-functions/manage-tax-compliance.js',
+  'insforge-functions/manage-documents.js',
+  'insforge-functions/manage-tenant-context.js'
 ]
 
 const missing = requiredFiles.filter((file) => !fs.existsSync(path.join(root, file)))
@@ -33,7 +41,7 @@ const indexContent = fs.readFileSync(path.join(root, 'index.html'), 'utf8')
 const checks = [
   'insforgeAPI.auth.signInWithPassword',
   "key: 'empresas'",
-  "key: 'usuarios'",
+  "key: 'acceso'",
   'roleSystemPresetsResolved',
   'create-invoice-with-stock',
   'update-invoice',
@@ -42,7 +50,25 @@ const checks = [
   'manage-invoice-series',
   'manage-invoice-recurrence',
   'manage-payments',
-  'renderPagosModule'
+  'renderPagosModule',
+  'manage-customers',
+  'renderClientesModule',
+  'manage-products',
+  'manage-inventory',
+  'renderInventarioModule',
+  'manage-reports',
+  'renderReportesModule',
+  'manage-tax-compliance',
+  'renderFiscalModule',
+  'manage-super-access',
+  'renderSuperAccessModule',
+  'manage-documents',
+  'manage-tenant-context',
+  'TENANT_SCOPED_TABLES',
+  'tenant-context-mount',
+  'renderConfigModule',
+  'Formato / PDF',
+  'buildInvoiceDocumentHtml'
 ]
 
 const failedChecks = checks.filter((check) => !indexContent.includes(check))
