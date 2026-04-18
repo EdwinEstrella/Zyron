@@ -5,7 +5,6 @@
     <title>Zyron | Acceder</title>
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.tailwindcss.com" />
     <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-    <link rel="stylesheet" href="components/paint-first.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
     <script>
@@ -309,6 +308,12 @@
             clip: rect(0, 0, 0, 0);
             white-space: nowrap;
             border-width: 0;
+        }
+
+        /* Modo embed: shell (titlebar + sidebar) lo pinta React en la ventana padre. */
+        html.zyron-embed .titlebar,
+        html.zyron-embed #sidebar-nav {
+            display: none !important;
         }
     </style>
 </head>
@@ -645,6 +650,11 @@
     </div>
 
     <script>
+        const __ZYRON_EMBED__ = new URLSearchParams(window.location.search).get('embed') === '1';
+        if (__ZYRON_EMBED__) {
+            document.documentElement.classList.add('zyron-embed');
+        }
+
         const updateMaximizeIcon = (isMaximized) => {
             const maxIcon = document.getElementById('max-icon');
             const restoreIcon = document.getElementById('restore-icon');
@@ -661,7 +671,7 @@
             }
         };
 
-        if (window.electronAPI) {
+        if (window.electronAPI && !__ZYRON_EMBED__) {
             window.electronAPI.onWindowMaximized(updateMaximizeIcon);
             document.getElementById('min-btn').addEventListener('click', () => window.electronAPI.minimize());
             document.getElementById('max-btn').addEventListener('click', () => window.electronAPI.maximize());
@@ -1128,85 +1138,6 @@
                 </div>`;
         };
 
-        /** Modulos validos en ?view= (patron Nexo / portal). */
-        const ZYRON_VIEW_KEYS = new Set([
-            'panel',
-            'empresas',
-            'solicitudes',
-            'acceso',
-            'usuarios',
-            'roles',
-            'facturas',
-            'fiscal',
-            'inventario',
-            'clientes',
-            'pagos',
-            'reportes',
-            'config'
-        ]);
-
-        /** Fragmento HTML inicial del outlet (mismo archivo por ahora; se puede trocear como Nexo). */
-        const ZYRON_MODULE_FRAGMENTS = {
-            panel: 'fragments/outlet-skeleton.html',
-            empresas: 'fragments/outlet-skeleton.html',
-            solicitudes: 'fragments/outlet-skeleton.html',
-            acceso: 'fragments/outlet-skeleton.html',
-            usuarios: 'fragments/outlet-skeleton.html',
-            roles: 'fragments/outlet-skeleton.html',
-            facturas: 'fragments/outlet-skeleton.html',
-            fiscal: 'fragments/outlet-skeleton.html',
-            inventario: 'fragments/outlet-skeleton.html',
-            clientes: 'fragments/outlet-skeleton.html',
-            pagos: 'fragments/outlet-skeleton.html',
-            reportes: 'fragments/outlet-skeleton.html',
-            config: 'fragments/outlet-skeleton.html'
-        };
-
-        const zyronModuleLabel = (moduleKey) =>
-            (
-                {
-                    panel: 'Panel',
-                    empresas: 'Empresas',
-                    solicitudes: 'Solicitudes',
-                    acceso: 'Acceso',
-                    usuarios: 'Usuarios',
-                    roles: 'Roles',
-                    facturas: 'Facturas',
-                    fiscal: 'Fiscal',
-                    inventario: 'Inventario',
-                    clientes: 'Clientes',
-                    pagos: 'Pagos',
-                    reportes: 'Reportes',
-                    config: 'Configuracion'
-                }[moduleKey] || 'Modulo'
-            );
-
-        const getZyronViewFromUrl = () => {
-            try {
-                const v = new URL(window.location.href).searchParams.get('view');
-                if (v && ZYRON_VIEW_KEYS.has(v)) return v;
-            } catch (_) {
-                /* */
-            }
-            return null;
-        };
-
-        const paintOutletFromFragment = async (moduleKey) => {
-            if (!dashboardContent) return;
-            const fragmentUrl = ZYRON_MODULE_FRAGMENTS[moduleKey] || 'fragments/outlet-skeleton.html';
-            try {
-                const res = await fetch(fragmentUrl, { cache: 'no-store' });
-                if (!res.ok) throw new Error(String(res.status));
-                const html = await res.text();
-                dashboardContent.innerHTML = html;
-                const lab = dashboardContent.querySelector('[data-zyron-module-label]');
-                if (lab) lab.textContent = zyronModuleLabel(moduleKey);
-            } catch (e) {
-                zyronLog('fragment:outlet:fallback', { moduleKey, message: e?.message || String(e) });
-                paintDashboardSkeleton(moduleKey);
-            }
-        };
-
         const unwrapFnInvoke = (result) => {
             if (result?.error) return { err: result.error.message || String(result.error), data: null };
             let d = result?.data;
@@ -1315,8 +1246,8 @@
             renderTenantContextBar();
             refreshSessionRoleUi();
             updateSessionNoticeBanner();
-            await paintOutletFromFragment(state.currentModule);
-            await openModule(state.currentModule, { skipHistory: true });
+            paintDashboardSkeleton(state.currentModule);
+            await openModule(state.currentModule, { skipHash: true });
         };
 
         const renderTenantContextBar = () => {
@@ -1883,11 +1814,8 @@
                 zyronLog('bootstrapSession:success', { module: 'pending-gate' });
             } else {
                 const firstSuper = state.navModulesSuper[0]?.key || 'empresas';
-                const defaultMod = state.isSuperAdmin ? firstSuper : 'panel';
-                const urlView = getZyronViewFromUrl();
-                const target = urlView || defaultMod;
-                void openModule(target, { replaceHistory: true });
-                zyronLog('bootstrapSession:success', { module: target, fromUrl: Boolean(urlView) });
+                void openModule(state.isSuperAdmin ? firstSuper : 'panel');
+                zyronLog('bootstrapSession:success', { module: state.isSuperAdmin ? firstSuper : 'panel' });
             }
             const bootOk = { ok: true, message: null };
             zyronLog('bootstrapSession:return', bootOk);
@@ -5392,7 +5320,6 @@
             });
         };
 
-        /** upsert_context: misma logica que manage-tenant-context edge (app_settings + auditoria). */
         const tenantContextUpsertViaDb = async (tenantId, body) => {
             const { data: rows, error: selErr } = await dbSelect({
                 table: 'app_settings',
@@ -5470,7 +5397,6 @@
 
         const MAX_INVOICE_DOC_LOGO_CHARS = 480000;
 
-        /** upsert_settings branding factura: misma logica que manage-documents edge. */
         const invoiceDocumentBrandingUpsertViaDb = async (tenantId, body) => {
             const { data: erows, error: eerr } = await dbSelect({
                 table: 'app_settings',
@@ -9497,30 +9423,32 @@
             zyronLog('render:config:done', { rows: (rows || []).length });
         };
 
-        const pushZyronModuleUrl = (moduleKey, opts = {}) => {
-            if (opts.skipHistory) return;
+        const syncModuleRouteHash = (moduleKey, opts = {}) => {
+            if (opts.skipHash) return;
+            if (__ZYRON_EMBED__) return;
             if (!moduleKey || moduleKey === 'pending-gate') return;
             try {
-                const u = new URL(window.location.href);
-                if (!opts.replaceHistory && u.searchParams.get('view') === moduleKey) return;
-                u.searchParams.set('view', moduleKey);
-                u.hash = '';
-                const method = opts.replaceHistory ? 'replaceState' : 'pushState';
-                history[method]({ view: moduleKey }, '', u.toString());
+                const next = `#/app/${moduleKey}`;
+                const cur = (window.location.hash || '').replace(/\/$/, '');
+                if (cur === next) return;
+                window.location.hash = next;
             } catch (_) {
                 /* ignore */
             }
         };
 
-        let zyronPopstateInstalled = false;
-        const installZyronPopstateNavigation = () => {
-            if (zyronPopstateInstalled) return;
-            zyronPopstateInstalled = true;
-            window.addEventListener('popstate', () => {
+        let zyronHashRoutingInstalled = false;
+        const installZyronModuleHashRouting = () => {
+            if (__ZYRON_EMBED__) return;
+            if (zyronHashRoutingInstalled) return;
+            zyronHashRoutingInstalled = true;
+            window.addEventListener('hashchange', () => {
+                const m = /^#\/app\/([a-zA-Z0-9_-]+)\/?$/.exec(window.location.hash || '');
+                if (!m) return;
+                const key = m[1];
                 if (!viewDashboard || viewDashboard.classList.contains('hidden')) return;
-                const v = getZyronViewFromUrl();
-                if (!v || v === state.currentModule) return;
-                void openModule(v, { skipHistory: true });
+                if (key === state.currentModule) return;
+                void openModule(key, { skipHash: true });
             });
         };
 
@@ -9548,9 +9476,16 @@
             }
             state.currentModule = moduleKey;
             refreshSidebarSelection();
-            await paintOutletFromFragment(moduleKey);
-            pushZyronModuleUrl(moduleKey, opts);
-            installZyronPopstateNavigation();
+            paintDashboardSkeleton(moduleKey);
+            syncModuleRouteHash(moduleKey, opts);
+            installZyronModuleHashRouting();
+            if (__ZYRON_EMBED__ && !opts.fromParent) {
+                try {
+                    window.parent?.postMessage({ type: 'zyron-route', module: moduleKey }, '*');
+                } catch (_) {
+                    /* ignore */
+                }
+            }
             zyronLog('openModule:route', { moduleKey });
             if (moduleKey === 'panel') return renderPanelModule();
             if (moduleKey === 'empresas') return renderEmpresasModule();
@@ -9566,6 +9501,16 @@
             if (moduleKey === 'config') return renderConfigModule();
             console.warn('[Zyron:openModule:unknown]', { moduleKey });
         };
+
+        const installParentNavBridge = () => {
+            if (!__ZYRON_EMBED__) return;
+            window.addEventListener('message', (ev) => {
+                const d = ev.data;
+                if (!d || d.type !== 'zyron-parent-nav' || typeof d.module !== 'string') return;
+                void openModule(d.module, { skipHash: true, fromParent: true });
+            });
+        };
+        installParentNavBridge();
 
         loginForm.addEventListener('submit', async (event) => {
             event.preventDefault();

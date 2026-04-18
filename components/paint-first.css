@@ -1,0 +1,8 @@
+/**
+ * Primer pintado: tono base del shell Zyron (superficie).
+ * Reduce el destello al cambiar de modulo (fragmento en el outlet).
+ */
+html,
+body {
+    background-color: #f4f7fb;
+}
