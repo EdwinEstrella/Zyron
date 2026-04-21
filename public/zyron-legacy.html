@@ -768,7 +768,7 @@
             navModulesTenant: [...DEFAULT_NAV_TENANT],
             permissionRowsForUi: [...DEFAULT_PERMISSION_UI],
             roleSystemPresetsResolved: [...DEFAULT_ROLE_SYSTEM_PRESETS],
-            facturasUi: { tab: 'list' },
+            facturasUi: { tab: 'list', openComposer: false },
             pagosUi: { tab: 'payments' },
             reportesUi: { tab: 'sales', dateFrom: '', dateTo: '' },
             fiscalUi: { tab: 'general' },
@@ -885,11 +885,6 @@
 
         const updateSessionNoticeBanner = () => {
             if (!sessionNoticeBanner) return;
-            if (!state.isSuperAdmin && state.currentTenantId && !isTenantPendingApproval()) {
-                sessionNoticeBanner.textContent = tr('iso.banner');
-                sessionNoticeBanner.classList.remove('hidden');
-                return;
-            }
             sessionNoticeBanner.textContent = '';
             sessionNoticeBanner.classList.add('hidden');
         };
@@ -1575,7 +1570,6 @@
                 'nav.reports': 'Reportes',
                 'nav.fiscal': 'Fiscal',
                 'nav.config': 'Configuracion',
-                'iso.banner': 'Aislamiento: solo ves datos de la empresa activa. Cambiar empresa recarga el contexto.',
                 'iso.switch': 'Empresa activa',
                 'iso.currency': 'Moneda',
                 'iso.locale': 'Idioma',
@@ -1594,7 +1588,6 @@
                 'nav.reports': 'Reports',
                 'nav.fiscal': 'Tax / compliance',
                 'nav.config': 'Settings',
-                'iso.banner': 'Isolation: you only see data for the active company. Switching workspace reloads context.',
                 'iso.switch': 'Active company',
                 'iso.currency': 'Currency',
                 'iso.locale': 'Language',
@@ -1908,10 +1901,6 @@
                     <h2 class="text-2xl font-bold tracking-tight text-primary">${title}</h2>
                     <p class="mt-1 text-sm text-on-surface-variant">${subtitle}</p>
                 </div>
-                <span class="inline-flex max-w-full flex-col items-end gap-0.5 rounded-lg bg-surface-container px-3 py-2 text-right" title="${escapeHtml(rp.title || '')}">
-                    <span class="text-xs font-semibold text-on-surface">${escapeHtml(rp.primary)}</span>
-                    <span class="max-w-[18rem] text-[10px] font-normal leading-snug text-on-surface-variant">${escapeHtml(rp.secondary)}</span>
-                </span>
             </div>
         `;
         };
@@ -2011,6 +2000,19 @@
 
             dashboardContent.innerHTML = `
                 ${renderModuleHeader('Panel principal', 'Datos de tu empresa en tiempo real')}
+                <div class="mb-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 class="text-sm font-bold text-primary">Acciones rapidas</h3>
+                            <p class="mt-1 text-xs text-on-surface-variant">Crea clientes, productos y facturas sin tener que adivinar en que modulo estan.</p>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <button type="button" id="panel-quick-customer" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar cliente</button>
+                            <button type="button" id="panel-quick-product" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar producto</button>
+                            <button type="button" id="panel-quick-invoice" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
+                        </div>
+                    </div>
+                </div>
                 <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
                     <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
                         <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Facturas (muestra)</div>
@@ -2052,6 +2054,18 @@
                     </div>
                 </div>
             `;
+            document.getElementById('panel-quick-customer')?.addEventListener('click', () => {
+                state.clientesUi = { ...state.clientesUi, sheet: 'form', editId: null, historyCustomerId: null, tab: 'list' };
+                void openModule('clientes');
+            });
+            document.getElementById('panel-quick-product')?.addEventListener('click', () => {
+                state.inventarioUi = { ...state.inventarioUi, section: 'catalog', tab: 'list', sheet: 'form', editId: null };
+                void openModule('inventario');
+            });
+            document.getElementById('panel-quick-invoice')?.addEventListener('click', () => {
+                state.facturasUi = { ...state.facturasUi, tab: 'list', openComposer: true };
+                void openModule('facturas');
+            });
             zyronLog('render:panel:tenantDone', { invoices: invoices.length, products: products.length, lowStock });
         };
 
@@ -6415,12 +6429,21 @@
                 .join('');
 
             const listPanel = `
+                <div class="mb-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 class="text-sm font-bold text-primary">Facturacion</h3>
+                            <p class="mt-1 text-xs text-on-surface-variant">Crea una factura nueva desde aqui y luego completa las lineas, cliente y emision.</p>
+                        </div>
+                        <button type="button" id="factura-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
+                    </div>
+                </div>
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div class="flex flex-wrap items-center gap-2">
-                        <button type="button" id="factura-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Nueva factura (borrador)</button>
+                        <button type="button" id="factura-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
                         <button type="button" id="factura-fiscal-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Fiscal / NCF</button>
                     </div>
-                    <p class="text-xs text-on-surface-variant">Borradores BOR. Emision: NCF si activo, retenciones segun modulo Fiscal.</p>
+                    <p class="text-xs text-on-surface-variant">Abre el editor de factura aqui. Borradores BOR; al emitir usa NCF si esta activo.</p>
                 </div>
                 <div id="facturas-table-wrap" class="overflow-x-auto">
                     <table class="w-full min-w-[820px] text-left text-sm">
@@ -6766,6 +6789,21 @@
                     lines: [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }]
                 });
             });
+            document.getElementById('factura-new-btn-top')?.addEventListener('click', () => {
+                openSheet({
+                    mode: 'create',
+                    invoiceId: null,
+                    lines: [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }]
+                });
+            });
+            if (state.facturasUi?.openComposer) {
+                state.facturasUi = { ...state.facturasUi, openComposer: false };
+                openSheet({
+                    mode: 'create',
+                    invoiceId: null,
+                    lines: [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }]
+                });
+            }
             document.getElementById('factura-fiscal-btn')?.addEventListener('click', () => {
                 void openModule('fiscal');
             });
@@ -7769,6 +7807,15 @@
             };
 
             const listPanel = `
+                <div class="mb-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 class="text-sm font-bold text-primary">Gestion de clientes</h3>
+                            <p class="mt-1 text-xs text-on-surface-variant">Registra un cliente nuevo aqui y luego podras facturarle, editarlo o revisar su historial.</p>
+                        </div>
+                        <button type="button" id="cli-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Agregar cliente</button>
+                    </div>
+                </div>
                 <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
                     <input id="cli-filter-q" type="search" class="max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Buscar nombre, correo, telefono, RNC…" value="${escapeHtml(
                         q
@@ -7776,7 +7823,7 @@
                     <select id="cli-filter-seg" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${segmentFilterOpts}</select>
                     <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="cli-filter-inactive" ${includeInactive ? 'checked' : ''} /> Incluir inactivos</label>
                     <button type="button" id="cli-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
-                    <button type="button" id="cli-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Nuevo cliente</button>
+                    <button type="button" id="cli-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar cliente</button>
                     <button type="button" id="cli-export-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Exportar CSV</button>
                 </div>
                 <div class="overflow-x-auto">
@@ -7960,6 +8007,10 @@
             });
 
             document.getElementById('cli-new-btn')?.addEventListener('click', () => {
+                state.clientesUi = { ...state.clientesUi, sheet: 'form', editId: null };
+                void renderClientesModule();
+            });
+            document.getElementById('cli-new-btn-top')?.addEventListener('click', () => {
                 state.clientesUi = { ...state.clientesUi, sheet: 'form', editId: null };
                 void renderClientesModule();
             });
@@ -8463,6 +8514,15 @@
                 .join('');
 
             const listPanel = `
+                <div class="mb-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                            <h3 class="text-sm font-bold text-primary">Catalogo</h3>
+                            <p class="mt-1 text-xs text-on-surface-variant">Agrega productos o servicios desde aqui para usarlos despues en facturas e inventario.</p>
+                        </div>
+                        <button type="button" id="inv-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Agregar producto o servicio</button>
+                    </div>
+                </div>
                 <div class="mb-4 flex flex-col flex-wrap gap-2 sm:flex-row sm:items-end">
                     <input id="inv-filter-q" type="search" class="max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="SKU o nombre…" value="${escapeHtml(
                         q
@@ -8475,7 +8535,7 @@
                     </select>
                     <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="inv-filter-inactive" ${includeInactive ? 'checked' : ''} /> Inactivos</label>
                     <button type="button" id="inv-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
-                    <button type="button" id="inv-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Nuevo</button>
+                    <button type="button" id="inv-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar producto o servicio</button>
                     <button type="button" id="inv-export-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Exportar CSV</button>
                 </div>
                 <div class="overflow-x-auto">
@@ -8651,6 +8711,10 @@
             });
 
             document.getElementById('inv-new-btn')?.addEventListener('click', () => {
+                state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null };
+                void renderInventarioModule();
+            });
+            document.getElementById('inv-new-btn-top')?.addEventListener('click', () => {
                 state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null };
                 void renderInventarioModule();
             });
