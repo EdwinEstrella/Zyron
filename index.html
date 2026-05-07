@@ -1429,6 +1429,20 @@
             rejected: 'Rechazada'
         };
         const formatRequestStatus = (status) => REQUEST_STATUS_LABEL[String(status || '').toLowerCase()] || status || '-';
+        const normalizeAccessRequestRow = (row) => {
+            const payload = row?.request_payload && typeof row.request_payload === 'object' ? row.request_payload : {};
+            return {
+                ...row,
+                requested_email: row?.requested_email || row?.email || payload.email || '',
+                request_status: row?.request_status || row?.status || payload.status || 'pending',
+                username: row?.username || payload.username || row?.full_name || '',
+                full_name: row?.full_name || payload.full_name || row?.username || '',
+                company_name: row?.company_name || payload.company_name || '',
+                phone: row?.phone || payload.phone || '',
+                notes: row?.notes || payload.notes || ''
+            };
+        };
+        const normalizeAccessRequestRows = (rows) => (rows || []).map(normalizeAccessRequestRow);
 
         const loadAppUsersSuperOrFallback = async () => {
             console.log('[Zyron:loadAppUsersSuperOrFallback] start');
@@ -1488,14 +1502,14 @@
             console.log('[Zyron:loadAccessRequestsSuperOrFallback] start');
             const { data, error } = await dbRpc('super_admin_list_user_access_requests', {});
             if (!error && data != null) {
-                const rows = normalizeRpcRows(data);
+                const rows = normalizeAccessRequestRows(normalizeRpcRows(data));
                 zyronLog('loadAccessRequestsSuperOrFallback:rpc', { count: rows.length });
                 console.log('[Zyron:loadAccessRequestsSuperOrFallback] end', { count: rows.length, source: 'rpc' });
                 return rows;
             }
             zyronLog('loadAccessRequestsSuperOrFallback:fallback', { error: error?.message || error });
             const { data: rows } = await dbSelect({ table: 'user_access_requests', order: { column: 'created_at', ascending: false } });
-            const out = rows || [];
+            const out = normalizeAccessRequestRows(rows || []);
             console.log('[Zyron:loadAccessRequestsSuperOrFallback] end', { count: out.length, source: 'table' });
             return out;
         };
@@ -1567,6 +1581,123 @@
             return { ok: Boolean(updated?.length), error: upErr };
         };
 
+        const slugifyTenant = (value) => {
+            const base = String(value || 'empresa')
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 42);
+            return base || `empresa-${Date.now().toString(36)}`;
+        };
+
+        const approveAccessRequestViaDb = async (requestId, action) => {
+            const { data: reqRows, error: reqErr } = await dbSelect({
+                table: 'user_access_requests',
+                filters: [{ op: 'eq', column: 'id', value: requestId }],
+                limit: 1
+            });
+            if (reqErr || !reqRows?.length) return { data: null, error: reqErr || { message: 'Solicitud no encontrada.' } };
+            const req = normalizeAccessRequestRow(reqRows[0]);
+            const now = new Date().toISOString();
+            if (action === 'reject') {
+                const upd = await dbUpdate({
+                    table: 'user_access_requests',
+                    values: {
+                        status: 'rejected',
+                        request_status: 'rejected',
+                        updated_at: now,
+                        reviewed_by: state.appUser?.id || null
+                    },
+                    filters: [{ op: 'eq', column: 'id', value: requestId }]
+                });
+                return upd.error ? { data: null, error: upd.error } : { data: { ok: true, action: 'reject' }, error: null };
+            }
+            if (action !== 'approve') return { data: null, error: { message: 'Accion invalida.' } };
+            const email = String(req.requested_email || '').trim().toLowerCase();
+            if (!email) return { data: null, error: { message: 'La solicitud no tiene correo.' } };
+
+            let { data: appRows } = await dbSelect({
+                table: 'app_users',
+                filters: [{ op: 'eq', column: 'email', value: email }],
+                limit: 1
+            });
+            let appUser = appRows?.[0] || null;
+            if (!appUser) {
+                const ins = await dbInsert({
+                    table: 'app_users',
+                    values: [
+                        {
+                            email,
+                            full_name: req.full_name || req.username || email.split('@')[0],
+                            global_role: 'user',
+                            status: 'active'
+                        }
+                    ]
+                });
+                if (ins.error || !ins.data?.length) return { data: null, error: ins.error || { message: 'No se pudo crear app_user.' } };
+                appUser = ins.data[0];
+            } else {
+                const upd = await dbUpdate({
+                    table: 'app_users',
+                    values: {
+                        full_name: appUser.full_name || req.full_name || req.username || email.split('@')[0],
+                        global_role: 'user',
+                        status: 'active',
+                        updated_at: now
+                    },
+                    filters: [{ op: 'eq', column: 'id', value: appUser.id }]
+                });
+                if (upd.error) return { data: null, error: upd.error };
+                appUser = upd.data?.[0] || appUser;
+            }
+
+            const slug = `${slugifyTenant(req.company_name)}-${Date.now().toString(36)}`;
+            const ten = await dbInsert({
+                table: 'tenants',
+                values: [
+                    {
+                        slug,
+                        display_name: req.company_name || 'Empresa',
+                        legal_name: req.company_name || 'Empresa',
+                        email,
+                        status: 'active',
+                        created_by: appUser.id
+                    }
+                ]
+            });
+            if (ten.error || !ten.data?.length) return { data: null, error: ten.error || { message: 'No se pudo crear empresa.' } };
+            const tenant = ten.data[0];
+
+            const mem = await dbInsert({
+                table: 'tenant_memberships',
+                values: [
+                    {
+                        tenant_id: tenant.id,
+                        app_user_id: appUser.id,
+                        role_key: 'tenant_admin',
+                        status: 'active',
+                        is_owner: true
+                    }
+                ]
+            });
+            if (mem.error) return { data: null, error: mem.error };
+
+            const reqUpd = await dbUpdate({
+                table: 'user_access_requests',
+                values: { status: 'approved', request_status: 'approved', reviewed_by: state.appUser?.id || null, updated_at: now },
+                filters: [{ op: 'eq', column: 'id', value: requestId }]
+            });
+            if (reqUpd.error) return { data: null, error: reqUpd.error };
+            await appendAuditLogSafe(tenant.id, 'access_request_approved', 'user_access_requests', requestId, {
+                email,
+                app_user_id: appUser.id,
+                tenant_id: tenant.id
+            });
+            return { data: { ok: true, tenant, appUser }, error: null };
+        };
+
         const runApproveAccessRequest = async (requestId, action, requestedEmail = null) => {
             if (!requestId) {
                 window.alert('Solicitud invalida.');
@@ -1577,8 +1708,17 @@
             console.log('[Zyron:approveAccessRequest:raw]', summarizeInsforgeResult(res));
             if (res.error) {
                 zyronLog('approveAccessRequest:error', res.error);
-                window.alert(res.error.message || 'No se pudo completar la accion. Revisa que la funcion approve-access-request este desplegada.');
-                return res;
+                const fallback = await approveAccessRequestViaDb(requestId, action);
+                if (fallback.error) {
+                    window.alert(
+                        fallback.error.message ||
+                            res.error.message ||
+                            'No se pudo completar la accion. Revisa que la funcion approve-access-request este desplegada.'
+                    );
+                    return fallback;
+                }
+                window.alert(action === 'approve' ? 'Solicitud aprobada desde base de datos.' : 'Solicitud rechazada.');
+                return fallback;
             }
             const body = res.data;
             if (body && typeof body === 'object' && body.ok !== true && body.error) {
@@ -1756,6 +1896,46 @@
                 const current = existingRows[0];
                 zyronLog('upsertAppUser:existing', { id: current.id, status: current.status, global_role: current.global_role });
                 return { appUser: current, error: null };
+            }
+
+            const { data: emailRows, error: emailSelectError } = await dbSelect({
+                table: 'app_users',
+                filters: [{ op: 'eq', column: 'email', value: normalizedEmail }],
+                limit: 1
+            });
+            if (emailSelectError) {
+                zyronLog('upsertAppUser:emailSelectError', emailSelectError);
+                return { appUser: null, error: emailSelectError };
+            }
+            if (emailRows && emailRows.length > 0) {
+                const current = emailRows[0];
+                if (!current.auth_user_id) {
+                    const { data: claimedRows, error: claimError } = await dbUpdate({
+                        table: 'app_users',
+                        values: { auth_user_id: authUser.id, updated_at: new Date().toISOString() },
+                        filters: [{ op: 'eq', column: 'id', value: current.id }]
+                    });
+                    if (claimError) {
+                        zyronLog('upsertAppUser:claimByEmailError', claimError);
+                        return { appUser: null, error: claimError };
+                    }
+                    const claimed = claimedRows?.[0] || { ...current, auth_user_id: authUser.id };
+                    zyronLog('upsertAppUser:claimedByEmail', {
+                        id: claimed.id,
+                        status: claimed.status,
+                        global_role: claimed.global_role
+                    });
+                    return { appUser: claimed, error: null };
+                }
+                zyronLog('upsertAppUser:emailAlreadyLinked', {
+                    id: current.id,
+                    auth_user_id: current.auth_user_id,
+                    loginAuthUserId: authUser.id
+                });
+                return {
+                    appUser: null,
+                    error: { message: 'Este correo ya esta vinculado a otro usuario de autenticacion.' }
+                };
             }
 
             zyronLog('upsertAppUser:insertPath', { reason: 'no_row_for_auth_user', authUserId: authUser.id });
@@ -10284,13 +10464,25 @@
                     const fallback = await dbInsert({
                         table: 'user_access_requests',
                         values: [{
+                            email,
                             requested_email: email,
                             username,
                             full_name: fullName,
                             company_name: company,
                             phone,
                             notes,
-                            request_status: 'pending'
+                            requested_role: 'tenant_admin',
+                            status: 'pending',
+                            request_status: 'pending',
+                            request_payload: {
+                                email,
+                                username,
+                                full_name: fullName || username,
+                                company_name: company,
+                                phone,
+                                notes,
+                                requested_owner: true
+                            }
                         }]
                     });
                     requestError = fallback.error || null;
