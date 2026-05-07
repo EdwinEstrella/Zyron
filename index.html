@@ -711,6 +711,7 @@
         const DEFAULT_NAV_TENANT = Object.freeze([
             { key: 'panel', label: 'Panel principal', icon: 'dashboard' },
             { key: 'facturas', label: 'Facturas', icon: 'receipt_long' },
+            { key: 'presupuestos', label: 'Presupuestos', icon: 'request_quote' },
             { key: 'pagos', label: 'Pagos y cobros', icon: 'payments' },
             { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
             { key: 'clientes', label: 'Clientes', icon: 'groups' },
@@ -759,6 +760,7 @@
             permissionRowsForUi: [...DEFAULT_PERMISSION_UI],
             roleSystemPresetsResolved: [...DEFAULT_ROLE_SYSTEM_PRESETS],
             facturasUi: { tab: 'list', openComposer: false },
+            presupuestosUi: { openComposer: false },
             pagosUi: { tab: 'payments' },
             reportesUi: { tab: 'sales', dateFrom: '', dateTo: '' },
             fiscalUi: { tab: 'general' },
@@ -1100,6 +1102,7 @@
                     usuarios: 'Usuarios',
                     roles: 'Roles',
                     facturas: 'Facturas',
+                    presupuestos: 'Presupuestos',
                     fiscal: 'Fiscal',
                     inventario: 'Inventario',
                     clientes: 'Clientes',
@@ -1132,6 +1135,7 @@
             'usuarios',
             'roles',
             'facturas',
+            'presupuestos',
             'fiscal',
             'inventario',
             'clientes',
@@ -1149,6 +1153,7 @@
             usuarios: 'fragments/outlet-skeleton.html',
             roles: 'fragments/outlet-skeleton.html',
             facturas: 'fragments/outlet-skeleton.html',
+            presupuestos: 'fragments/outlet-skeleton.html',
             fiscal: 'fragments/outlet-skeleton.html',
             inventario: 'fragments/outlet-skeleton.html',
             clientes: 'fragments/outlet-skeleton.html',
@@ -1167,6 +1172,7 @@
                     usuarios: 'Usuarios',
                     roles: 'Roles',
                     facturas: 'Facturas',
+                    presupuestos: 'Presupuestos',
                     fiscal: 'Fiscal',
                     inventario: 'Inventario',
                     clientes: 'Clientes',
@@ -1633,6 +1639,7 @@
             es: {
                 'nav.panel': 'Panel principal',
                 'nav.invoices': 'Facturas',
+                'nav.estimates': 'Presupuestos',
                 'nav.payments': 'Pagos y cobros',
                 'nav.inventory': 'Inventario',
                 'nav.customers': 'Clientes',
@@ -1651,6 +1658,7 @@
             en: {
                 'nav.panel': 'Dashboard',
                 'nav.invoices': 'Invoices',
+                'nav.estimates': 'Estimates',
                 'nav.payments': 'Payments',
                 'nav.inventory': 'Inventory',
                 'nav.customers': 'Customers',
@@ -1671,6 +1679,7 @@
         const NAV_LABEL_KEYS = Object.freeze({
             panel: 'nav.panel',
             facturas: 'nav.invoices',
+            presupuestos: 'nav.estimates',
             pagos: 'nav.payments',
             inventario: 'nav.inventory',
             clientes: 'nav.customers',
@@ -6165,6 +6174,7 @@
                 {
                     standard: 'Factura',
                     proforma: 'Proforma',
+                    estimate: 'Presupuesto',
                     credit_note: 'Nota de credito',
                     debit_note: 'Nota de debito'
                 }[String(invoice.invoice_type || 'standard')] || 'Documento';
@@ -6333,7 +6343,10 @@
                 fetchInvoiceDocSettingsViaDb(tid),
                 dbSelect({
                     table: 'invoices',
-                    filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+                    filters: [
+                        { op: 'eq', column: 'tenant_id', value: tid },
+                        { op: 'neq', column: 'invoice_type', value: 'estimate' }
+                    ],
                     order: { column: 'created_at', ascending: false },
                     limit: 80
                 }),
@@ -6373,6 +6386,7 @@
                 ({
                     standard: 'Factura',
                     proforma: 'Proforma',
+                    estimate: 'Presupuesto',
                     credit_note: 'N. credito',
                     debit_note: 'N. debito'
                 }[String(t || 'standard')] || t);
@@ -7338,6 +7352,507 @@
             }
 
             zyronLog('render:facturas:done', { invoiceCount: (invoices || []).length, tab });
+        };
+
+        const renderPresupuestosModule = async () => {
+            zyronLog('render:presupuestos:start', { tenantId: state.currentTenantId });
+            if (!state.currentTenantId) {
+                dashboardContent.innerHTML = `${renderModuleHeader('Presupuestos', 'Necesitas seleccionar una empresa')}`;
+                return;
+            }
+            const tid = state.currentTenantId;
+            const [hintsRes, docRes, { data: estimates }, { data: customers }, { data: products }, { data: tenantRows }] =
+                await Promise.all([
+                    fetchTaxHintsViaDb(tid),
+                    fetchInvoiceDocSettingsViaDb(tid),
+                    dbSelect({
+                        table: 'invoices',
+                        filters: [
+                            { op: 'eq', column: 'tenant_id', value: tid },
+                            { op: 'eq', column: 'invoice_type', value: 'estimate' }
+                        ],
+                        order: { column: 'created_at', ascending: false },
+                        limit: 100
+                    }),
+                    dbSelect({
+                        table: 'customers',
+                        filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+                        order: { column: 'name', ascending: true },
+                        limit: 200
+                    }),
+                    dbSelect({
+                        table: 'products',
+                        filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+                        order: { column: 'name', ascending: true },
+                        limit: 200
+                    }),
+                    dbSelect({
+                        table: 'tenants',
+                        filters: [{ op: 'eq', column: 'id', value: tid }],
+                        limit: 1
+                    })
+                ]);
+            const hintsU = unwrapFnInvoke(hintsRes);
+            const fh = !hintsU.err && hintsU.data?.ok ? hintsU.data : { defaultTaxRate: 18, taxLabel: 'ITBIS' };
+            const fallbackTax = Number.isFinite(Number(fh.defaultTaxRate)) ? Number(fh.defaultTaxRate) : 18;
+            const docU = unwrapFnInvoke(docRes);
+            const docSettings = mergeInvoiceDocumentSettings(docU.data?.settings || {});
+            const tenantRow = (tenantRows || [])[0] || {};
+            const customerById = new Map((customers || []).map((c) => [c.id, c]));
+
+            const lineRowTemplate = (line = {}) => {
+                const kind = line.lineKind || (line.productId ? 'product' : 'service');
+                const opts = (products || [])
+                    .map((p) => {
+                        const tax = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : fallbackTax;
+                        const disc = p.discount_default != null && p.discount_default !== '' ? Number(p.discount_default) : 0;
+                        const itemKind = String(p.item_kind || 'product').toLowerCase();
+                        return `<option value="${p.id}" data-price="${Number(p.price || 0)}" data-tax="${tax}" data-disc="${disc}" data-item-kind="${escapeHtml(
+                            itemKind
+                        )}" data-label="${escapeHtml(p.name || p.sku || '')}">${escapeHtml(p.name || p.sku || p.id)}</option>`;
+                    })
+                    .join('');
+                return `<tr data-est-line class="border-b border-outline-variant/15 align-top">
+                    <td class="py-2 pr-2">
+                        <select data-fld="kind" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs">
+                            <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
+                            <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
+                        </select>
+                    </td>
+                    <td class="py-2 pr-2 hidden" data-product-cell>
+                        <select data-fld="product" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs"><option value="">-</option>${opts}</select>
+                    </td>
+                    <td class="py-2 pr-2"><input data-fld="desc" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${escapeHtml(
+                        line.description || ''
+                    )}" placeholder="Descripcion" /></td>
+                    <td class="py-2 pr-2 w-20"><input data-fld="qty" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.quantity ?? 1
+                    )}" /></td>
+                    <td class="py-2 pr-2 w-24"><input data-fld="price" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.unitPrice ?? 0
+                    )}" /></td>
+                    <td class="py-2 pr-2 w-20"><input data-fld="tax" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.taxRate != null && line.taxRate !== '' ? line.taxRate : fallbackTax
+                    )}" /></td>
+                    <td class="py-2 pr-2 w-20"><input data-fld="disc" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
+                        line.discount ?? 0
+                    )}" /></td>
+                    <td class="py-2"><button type="button" data-remove-est-line class="text-xs text-error">Quitar</button></td>
+                </tr>`;
+            };
+
+            const statusLabel = (status) =>
+                ({
+                    draft: 'Borrador',
+                    pending: 'Enviado a revision',
+                    accepted: 'Aceptado',
+                    rejected: 'Rechazado',
+                    converted: 'Convertido'
+                }[String(status || '').toLowerCase()] || status || '-');
+
+            const estimateRows = (estimates || [])
+                .map((est) => {
+                    const cust = est.customer_id ? customerById.get(est.customer_id) : null;
+                    const st = String(est.status || '').toLowerCase();
+                    const doc = `${escapeHtml(est.series || '')}-${escapeHtml(est.number || '')}`.replace(/^-|-$/g, '');
+                    const canEdit = st === 'draft';
+                    const canDecision = st === 'pending';
+                    const canConvert = st === 'accepted' || st === 'pending';
+                    return `<tr class="border-b border-outline-variant/20" data-est-row="${est.id}">
+                        <td class="py-3 font-mono text-xs">${doc || escapeHtml(est.id)}</td>
+                        <td class="py-3">${escapeHtml(statusLabel(st))}</td>
+                        <td class="py-3 font-semibold">${fmtMoneyPanel(est.total, est.currency)}</td>
+                        <td class="py-3 text-xs">${cust ? escapeHtml(cust.name || cust.email || '') : '-'}</td>
+                        <td class="py-3 text-xs">${escapeHtml(toDateString(est.created_at))}</td>
+                        <td class="py-3 text-right space-x-1 whitespace-nowrap">
+                            <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="history" data-id="${est.id}">Historial</button>
+                            ${
+                                canEdit
+                                    ? `<button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="edit" data-id="${est.id}">Editar</button>
+                                       <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-est-action="issue" data-id="${est.id}">Emitir</button>`
+                                    : ''
+                            }
+                            ${
+                                canDecision
+                                    ? `<button type="button" class="rounded border border-primary/40 px-2 py-1 text-xs text-primary" data-est-action="accept" data-id="${est.id}">Aceptar</button>
+                                       <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="reject" data-id="${est.id}">Rechazar</button>`
+                                    : ''
+                            }
+                            ${
+                                canConvert
+                                    ? `<button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-est-action="convert" data-id="${est.id}">Convertir</button>`
+                                    : ''
+                            }
+                            <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="dup" data-id="${est.id}">Duplicar</button>
+                            <button type="button" class="rounded border border-primary/40 px-2 py-1 text-xs text-primary" data-est-action="pdf" data-id="${est.id}">PDF</button>
+                            <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="html" data-id="${est.id}">HTML</button>
+                            ${
+                                st === 'draft' || st === 'pending' || st === 'rejected'
+                                    ? `<button type="button" class="rounded border border-error/40 px-2 py-1 text-xs text-error" data-est-action="del" data-id="${est.id}">Eliminar</button>`
+                                    : ''
+                            }
+                        </td>
+                    </tr>`;
+                })
+                .join('');
+
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Presupuestos', 'Crea, edita, aprueba, rechaza y convierte presupuestos a facturas. Sin envio de email.')}
+                <div class="rounded-xl bg-surface-container-low p-1" data-presupuestos-root>
+                    <div class="rounded-lg bg-surface-container-lowest p-5">
+                        <div class="mb-4 rounded-xl border border-outline-variant/25 bg-surface-container-low p-4">
+                            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 class="text-sm font-bold text-primary">Presupuestos comerciales</h3>
+                                    <p class="mt-1 text-xs text-on-surface-variant">Trabaja propuestas con lineas, impuestos, cliente, PDF/HTML y conversion a factura borrador.</p>
+                                </div>
+                                <button type="button" id="estimate-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear presupuesto</button>
+                            </div>
+                        </div>
+                        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+                            <button type="button" id="estimate-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear presupuesto</button>
+                            <p class="text-xs text-on-surface-variant">Emitir marca el presupuesto como pendiente. Aceptar/Rechazar actualiza estado; Convertir crea una factura borrador.</p>
+                        </div>
+                        <div id="presupuestos-table-wrap" class="overflow-x-auto">
+                            <table class="w-full min-w-[840px] text-left text-sm">
+                                <thead>
+                                    <tr class="border-b border-outline-variant/30">
+                                        <th class="py-2">Documento</th>
+                                        <th class="py-2">Estado</th>
+                                        <th class="py-2">Total</th>
+                                        <th class="py-2">Cliente</th>
+                                        <th class="py-2">Fecha</th>
+                                        <th class="py-2 text-right">Acciones</th>
+                                    </tr>
+                                </thead>
+                                <tbody>${estimateRows || `<tr><td colspan="6" class="py-6 text-center text-on-surface-variant">Sin presupuestos</td></tr>`}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+                <div id="estimate-sheet" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
+                    <div class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-surface-container-lowest p-5 shadow-lg">
+                        <div class="mb-4 flex items-start justify-between gap-2">
+                            <div>
+                                <h3 id="estimate-sheet-title" class="text-lg font-semibold">Presupuesto</h3>
+                                <p class="text-xs text-on-surface-variant" id="estimate-sheet-sub"></p>
+                            </div>
+                            <button type="button" id="estimate-sheet-close" class="rounded-md border border-outline-variant/40 px-2 py-1 text-sm">Cerrar</button>
+                        </div>
+                        <input type="hidden" id="estimate-sheet-id" value="" />
+                        <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                            <label class="text-xs">Serie al emitir
+                                <input id="estimate-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" value="COT" />
+                            </label>
+                            <label class="text-xs">Cliente
+                                <select id="estimate-customer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                    <option value="">-</option>
+                                    ${(customers || [])
+                                        .map((c) => `<option value="${c.id}">${escapeHtml(c.name || c.email || c.id)}</option>`)
+                                        .join('')}
+                                </select>
+                            </label>
+                            <label class="text-xs sm:col-span-2">Notas
+                                <textarea id="estimate-notes" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="2"></textarea>
+                            </label>
+                        </div>
+                        <div class="mb-2 flex items-center justify-between">
+                            <span class="text-sm font-medium">Lineas</span>
+                            <button type="button" id="estimate-add-line" class="rounded border border-outline-variant/40 px-2 py-1 text-xs">Anadir linea</button>
+                        </div>
+                        <div class="overflow-x-auto">
+                            <table class="w-full min-w-[640px] text-left text-xs">
+                                <thead>
+                                    <tr class="border-b border-outline-variant/30">
+                                        <th class="py-1">Tipo linea</th>
+                                        <th class="py-1">Producto</th>
+                                        <th class="py-1">Descripcion</th>
+                                        <th class="py-1">Cant</th>
+                                        <th class="py-1">P.U.</th>
+                                        <th class="py-1">${escapeHtml(fh.taxLabel || 'ITBIS')}%</th>
+                                        <th class="py-1">Dto</th>
+                                        <th class="py-1"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="estimates-lines-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div class="mt-4 flex flex-wrap gap-2">
+                            <button type="button" id="estimate-save-draft" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">Guardar borrador</button>
+                            <button type="button" id="estimate-issue-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Emitir presupuesto</button>
+                        </div>
+                    </div>
+                </div>
+                <div id="estimate-history-backdrop" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
+                    <div class="max-h-[80vh] w-full max-w-lg overflow-y-auto rounded-xl bg-surface-container-lowest p-5 shadow-lg">
+                        <div class="mb-3 flex justify-between">
+                            <h3 class="text-lg font-semibold">Historial</h3>
+                            <button type="button" id="estimate-history-close" class="text-sm">Cerrar</button>
+                        </div>
+                        <div id="estimate-history-body" class="space-y-2 text-xs font-mono"></div>
+                    </div>
+                </div>`;
+
+            const syncLineRowUi = (tr) => {
+                if (!tr) return;
+                const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
+                tr.querySelector('[data-product-cell]')?.classList.toggle('hidden', kind !== 'product');
+            };
+            const collectLines = () => {
+                const out = [];
+                for (const tr of document.querySelectorAll('[data-est-line]')) {
+                    const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
+                    const productId = tr.querySelector('[data-fld="product"]')?.value || null;
+                    const description = tr.querySelector('[data-fld="desc"]')?.value?.trim() || '';
+                    const quantity = Number(tr.querySelector('[data-fld="qty"]')?.value || 0);
+                    const unitPrice = Number(tr.querySelector('[data-fld="price"]')?.value || 0);
+                    const taxRate = Number(tr.querySelector('[data-fld="tax"]')?.value || 0);
+                    const discount = Number(tr.querySelector('[data-fld="disc"]')?.value || 0);
+                    if ((!description && !productId) || quantity <= 0) continue;
+                    const item = { description, quantity, unitPrice, taxRate, discount, lineKind: kind };
+                    if (kind === 'product' && productId) item.productId = productId;
+                    out.push(item);
+                }
+                return out;
+            };
+            const openSheet = (opts) => {
+                document.getElementById('estimate-sheet-id').value = opts.id || '';
+                document.getElementById('estimate-sheet-title').textContent = opts.id ? 'Editar presupuesto' : 'Nuevo presupuesto';
+                document.getElementById('estimate-sheet-sub').textContent = opts.id ? `ID interno: ${opts.id}` : 'Se creara como borrador (serie BOR).';
+                document.getElementById('estimate-customer').value = opts.customerId || '';
+                document.getElementById('estimate-notes').value = opts.notes || '';
+                const tbody = document.getElementById('estimates-lines-tbody');
+                const seed = opts.lines?.length
+                    ? opts.lines
+                    : [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }];
+                tbody.innerHTML = seed.map((l) => lineRowTemplate(l)).join('');
+                [...tbody.querySelectorAll('[data-est-line]')].forEach((tr, i) => {
+                    syncLineRowUi(tr);
+                    if (seed[i]?.productId) {
+                        const sel = tr.querySelector('[data-fld="product"]');
+                        if (sel) sel.value = seed[i].productId;
+                    }
+                });
+                const sheet = document.getElementById('estimate-sheet');
+                sheet.classList.remove('hidden');
+                sheet.classList.add('flex');
+            };
+            const closeSheet = () => {
+                const sheet = document.getElementById('estimate-sheet');
+                sheet.classList.add('hidden');
+                sheet.classList.remove('flex');
+            };
+            const loadEstimateLines = async (id) => {
+                const { data: lineRows } = await dbSelect({
+                    table: 'invoice_items',
+                    filters: [{ op: 'eq', column: 'invoice_id', value: id }]
+                });
+                return (lineRows || []).map((r) => ({
+                    lineKind: r.line_kind || (r.product_id ? 'product' : 'service'),
+                    productId: r.product_id,
+                    description: r.description,
+                    quantity: Number(r.quantity),
+                    unitPrice: Number(r.unit_price),
+                    taxRate: Number(r.tax_rate),
+                    discount: Number(r.discount || 0)
+                }));
+            };
+            const saveOrIssue = async (issue) => {
+                const items = collectLines();
+                if (!items.length) {
+                    window.alert('Anade al menos una linea valida.');
+                    return;
+                }
+                const id = document.getElementById('estimate-sheet-id').value.trim();
+                const payload = {
+                    tenantId: tid,
+                    customerId: document.getElementById('estimate-customer').value || null,
+                    items,
+                    notes: document.getElementById('estimate-notes').value || '',
+                    invoiceType: 'estimate'
+                };
+                const res = !id
+                    ? await invokeFn('create-invoice-with-stock', {
+                          ...payload,
+                          isDraft: !issue,
+                          series: document.getElementById('estimate-issue-series').value || 'COT'
+                      })
+                    : await invokeFn('update-invoice', {
+                          ...payload,
+                          invoiceId: id,
+                          action: issue ? 'issue' : 'save_draft',
+                          series: document.getElementById('estimate-issue-series').value || 'COT'
+                      });
+                const u = unwrapFnInvoke(res);
+                if (u.err || !u.data?.ok) {
+                    window.alert(u.err || u.data?.error || 'No se pudo guardar el presupuesto.');
+                    return;
+                }
+                if (issue) closeSheet();
+                else window.alert(id ? 'Borrador actualizado.' : 'Borrador guardado.');
+                await renderPresupuestosModule();
+            };
+
+            document.getElementById('estimate-new-btn')?.addEventListener('click', () => openSheet({}));
+            document.getElementById('estimate-new-btn-top')?.addEventListener('click', () => openSheet({}));
+            if (state.presupuestosUi?.openComposer) {
+                state.presupuestosUi = { ...state.presupuestosUi, openComposer: false };
+                openSheet({});
+            }
+            document.getElementById('estimate-sheet-close')?.addEventListener('click', closeSheet);
+            document.getElementById('estimate-add-line')?.addEventListener('click', () => {
+                const tbody = document.getElementById('estimates-lines-tbody');
+                tbody.insertAdjacentHTML('beforeend', lineRowTemplate({}));
+                syncLineRowUi(tbody.lastElementChild);
+            });
+            document.getElementById('estimates-lines-tbody')?.addEventListener('change', (e) => {
+                const t = e.target;
+                const tr = t.closest('[data-est-line]');
+                if (t.matches('[data-fld="kind"]')) syncLineRowUi(tr);
+                if (t.matches('[data-fld="product"]')) {
+                    const opt = t.selectedOptions[0];
+                    const desc = tr.querySelector('[data-fld="desc"]');
+                    if (desc && !desc.value.trim()) desc.value = opt?.getAttribute('data-label') || '';
+                    const price = tr.querySelector('[data-fld="price"]');
+                    if (price && !Number(price.value)) price.value = String(Number(opt?.getAttribute('data-price') || 0));
+                    const tax = tr.querySelector('[data-fld="tax"]');
+                    if (tax) tax.value = String(Number(opt?.getAttribute('data-tax') || fallbackTax));
+                    const disc = tr.querySelector('[data-fld="disc"]');
+                    if (disc) disc.value = String(Number(opt?.getAttribute('data-disc') || 0));
+                    const itemKind = String(opt?.getAttribute('data-item-kind') || 'product').toLowerCase();
+                    if (itemKind === 'service') {
+                        const kindSel = tr.querySelector('[data-fld="kind"]');
+                        if (kindSel) kindSel.value = 'service';
+                        syncLineRowUi(tr);
+                    }
+                }
+            });
+            document.getElementById('estimates-lines-tbody')?.addEventListener('click', (e) => {
+                if (!e.target.matches('[data-remove-est-line]')) return;
+                const tbody = document.getElementById('estimates-lines-tbody');
+                if (tbody.querySelectorAll('[data-est-line]').length > 1) e.target.closest('[data-est-line]')?.remove();
+            });
+            document.getElementById('estimate-save-draft')?.addEventListener('click', () => saveOrIssue(false));
+            document.getElementById('estimate-issue-btn')?.addEventListener('click', () => saveOrIssue(true));
+
+            document.getElementById('presupuestos-table-wrap')?.addEventListener('click', async (e) => {
+                const btn = e.target.closest('[data-est-action]');
+                if (!btn) return;
+                const id = btn.getAttribute('data-id');
+                const act = btn.getAttribute('data-est-action');
+                const est = (estimates || []).find((x) => x.id === id);
+                if (!est) return;
+                if (act === 'history') {
+                    const { data: logs } = await dbSelect({
+                        table: 'audit_logs',
+                        filters: [
+                            { op: 'eq', column: 'tenant_id', value: tid },
+                            { op: 'eq', column: 'target_type', value: 'invoices' },
+                            { op: 'eq', column: 'target_id', value: id }
+                        ],
+                        order: { column: 'created_at', ascending: false },
+                        limit: 40
+                    });
+                    document.getElementById('estimate-history-body').innerHTML =
+                        (logs || [])
+                            .map(
+                                (l) =>
+                                    `<div class="rounded border border-outline-variant/30 p-2"><div class="font-semibold">${escapeHtml(
+                                        l.action || ''
+                                    )}</div><div class="text-on-surface-variant">${escapeHtml(toDateString(l.created_at))}</div><pre class="mt-1 whitespace-pre-wrap break-all">${escapeHtml(
+                                        JSON.stringify(l.details || {}, null, 0)
+                                    )}</pre></div>`
+                            )
+                            .join('') || '<p class="text-on-surface-variant">Sin registros.</p>';
+                    const bd = document.getElementById('estimate-history-backdrop');
+                    bd.classList.remove('hidden');
+                    bd.classList.add('flex');
+                }
+                if (act === 'edit' || act === 'issue') {
+                    openSheet({
+                        id,
+                        lines: await loadEstimateLines(id),
+                        customerId: est.customer_id,
+                        notes: est.notes || ''
+                    });
+                }
+                if (act === 'accept' || act === 'reject') {
+                    const status = act === 'accept' ? 'accepted' : 'rejected';
+                    const { error } = await dbUpdate({
+                        table: 'invoices',
+                        values: { status, updated_at: new Date().toISOString() },
+                        filters: [
+                            { op: 'eq', column: 'tenant_id', value: tid },
+                            { op: 'eq', column: 'id', value: id }
+                        ]
+                    });
+                    if (error) window.alert(error.message || 'No se pudo cambiar el estado.');
+                    await renderPresupuestosModule();
+                }
+                if (act === 'convert') {
+                    const lines = await loadEstimateLines(id);
+                    const res = await invokeFn('create-invoice-with-stock', {
+                        tenantId: tid,
+                        customerId: est.customer_id,
+                        items: lines,
+                        notes: `Convertida desde presupuesto ${est.series || ''}-${est.number || ''}\n${est.notes || ''}`.trim(),
+                        isDraft: true,
+                        invoiceType: 'standard'
+                    });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) {
+                        window.alert(u.err || u.data?.error || 'No se pudo convertir.');
+                        return;
+                    }
+                    await dbUpdate({
+                        table: 'invoices',
+                        values: { status: 'converted', updated_at: new Date().toISOString() },
+                        filters: [
+                            { op: 'eq', column: 'tenant_id', value: tid },
+                            { op: 'eq', column: 'id', value: id }
+                        ]
+                    });
+                    window.alert('Presupuesto convertido a factura borrador.');
+                    await renderPresupuestosModule();
+                }
+                if (act === 'dup') {
+                    const res = await invokeFn('duplicate-invoice', { tenantId: tid, invoiceId: id });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Duplicar fallo.');
+                    await renderPresupuestosModule();
+                }
+                if (act === 'del') {
+                    if (!window.confirm('Eliminar este presupuesto?')) return;
+                    const res = await invokeFn('delete-invoice', { tenantId: tid, invoiceId: id });
+                    const u = unwrapFnInvoke(res);
+                    if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Eliminar fallo.');
+                    await renderPresupuestosModule();
+                }
+                if (act === 'pdf' || act === 'html') {
+                    const { data: lineRows } = await dbSelect({
+                        table: 'invoice_items',
+                        filters: [{ op: 'eq', column: 'invoice_id', value: id }]
+                    });
+                    const html = buildInvoiceDocumentHtml({
+                        invoice: est,
+                        lines: lineRows || [],
+                        customer: est.customer_id ? customerById.get(est.customer_id) : null,
+                        tenant: tenantRow,
+                        branding: docSettings,
+                        fiscalTaxLabel: fh.taxLabel,
+                        isDraft: String(est.status || '').toLowerCase() === 'draft'
+                    });
+                    const fn = `presupuesto-${String(est.series || 'COT')}-${String(est.number || id)}.html`;
+                    if (act === 'pdf') openInvoiceDocumentPreview(html, true);
+                    else downloadInvoiceDocumentHtml(fn, html);
+                }
+            });
+            document.getElementById('estimate-history-close')?.addEventListener('click', () => {
+                const bd = document.getElementById('estimate-history-backdrop');
+                bd.classList.add('hidden');
+                bd.classList.remove('flex');
+            });
+            zyronLog('render:presupuestos:done', { estimateCount: (estimates || []).length });
         };
 
         const renderPagosModule = async () => {
@@ -9622,6 +10137,7 @@
             if (moduleKey === 'acceso' || moduleKey === 'usuarios') return renderSuperAccessModule();
             if (moduleKey === 'roles') return renderRolesModule();
             if (moduleKey === 'facturas') return renderFacturasModule();
+            if (moduleKey === 'presupuestos') return renderPresupuestosModule();
             if (moduleKey === 'fiscal') return renderFiscalModule();
             if (moduleKey === 'inventario') return renderInventarioModule();
             if (moduleKey === 'clientes') return renderClientesModule();
