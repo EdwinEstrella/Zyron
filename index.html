@@ -696,6 +696,7 @@
             { key: 'users.manage', label: 'Gestion de usuarios' },
             { key: 'roles.manage', label: 'Gestion de roles' },
             { key: 'billing.manage', label: 'Facturacion' },
+            { key: 'estimates.manage', label: 'Gestion de presupuestos' },
             { key: 'inventory.manage', label: 'Inventario' },
             { key: 'reports.view', label: 'Reportes' },
             { key: 'fiscal.manage', label: 'Fiscal / cumplimiento' }
@@ -731,13 +732,13 @@
                 role_key: 'manager',
                 label: 'Gerente',
                 hierarchy_level: 20,
-                permissions: ['users.manage', 'billing.manage', 'inventory.manage', 'reports.view', 'fiscal.manage']
+                permissions: ['users.manage', 'billing.manage', 'estimates.manage', 'inventory.manage', 'reports.view', 'fiscal.manage']
             },
             {
                 role_key: 'billing_agent',
                 label: 'Facturacion',
                 hierarchy_level: 30,
-                permissions: ['billing.manage', 'reports.view', 'fiscal.manage']
+                permissions: ['billing.manage', 'estimates.manage', 'reports.view', 'fiscal.manage']
             },
             {
                 role_key: 'inventory_agent',
@@ -2231,81 +2232,246 @@
                 return;
             }
 
-            const [{ data: invSlice }, { data: prodRows }] = await Promise.all([
+            const [{ data: invSlice }, { data: estimateRows }, { data: payRows }, { data: prodRows }, { data: customerRows }] = await Promise.all([
                 dbSelect({
                     table: 'invoices',
-                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                    filters: [
+                        { op: 'eq', column: 'tenant_id', value: state.currentTenantId },
+                        { op: 'neq', column: 'invoice_type', value: 'estimate' }
+                    ],
                     order: { column: 'created_at', ascending: false },
-                    limit: 12
+                    limit: 250
+                }),
+                dbSelect({
+                    table: 'invoices',
+                    filters: [
+                        { op: 'eq', column: 'tenant_id', value: state.currentTenantId },
+                        { op: 'eq', column: 'invoice_type', value: 'estimate' }
+                    ],
+                    order: { column: 'created_at', ascending: false },
+                    limit: 80
+                }),
+                dbSelect({
+                    table: 'payments',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                    order: { column: 'paid_at', ascending: false },
+                    limit: 250
                 }),
                 dbSelect({
                     table: 'products',
                     filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
                     limit: 150
+                }),
+                dbSelect({
+                    table: 'customers',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+                    order: { column: 'name', ascending: true },
+                    limit: 400
                 })
             ]);
             const invoices = invSlice || [];
+            const estimates = estimateRows || [];
+            const payments = payRows || [];
             const products = prodRows || [];
+            const customers = customerRows || [];
+            const customerById = new Map(customers.map((c) => [c.id, c]));
             const lowStock = products.filter((p) => {
                 const st = Number(p.stock);
                 const min = Number(p.min_stock != null ? p.min_stock : 0);
                 return Number.isFinite(st) && st <= min;
             }).length;
+            const currency = state.tenantContext?.priceDisplayCurrency || state.tenantContext?.defaultCurrency || 'DOP';
+            const openBalance = (inv) => Math.max(0, Number(inv.total || 0) - Number(inv.amount_paid || 0));
+            const dueInvoices = invoices
+                .filter((inv) => openBalance(inv) > 0)
+                .sort((a, b) => {
+                    const ad = a.due_date ? new Date(a.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+                    const bd = b.due_date ? new Date(b.due_date).getTime() : Number.MAX_SAFE_INTEGER;
+                    return ad - bd;
+                })
+                .slice(0, 8);
+            const recentInvoices = invoices.slice(0, 8);
+            const recentEstimates = estimates.slice(0, 8);
+            const totalSales = invoices.reduce((sum, inv) => sum + Number(inv.total || 0), 0);
+            const totalReceipts = payments.reduce((sum, pay) => sum + Number(pay.amount || 0), 0);
+            const totalDue = invoices.reduce((sum, inv) => sum + openBalance(inv), 0);
+            const netCash = totalReceipts - totalDue;
+            const now = new Date();
+            const currentYear = now.getFullYear();
+            const months = Array.from({ length: 12 }, (_, i) => ({
+                i,
+                label: new Date(currentYear, i, 1).toLocaleDateString(getTenantNumberLocale(), { month: 'short' }).replace('.', '')
+            }));
+            const monthSales = Array(12).fill(0);
+            const monthReceipts = Array(12).fill(0);
+            invoices.forEach((inv) => {
+                const d = inv.created_at ? new Date(inv.created_at) : null;
+                if (d && d.getFullYear() === currentYear) monthSales[d.getMonth()] += Number(inv.total || 0);
+            });
+            payments.forEach((pay) => {
+                const d = pay.paid_at ? new Date(pay.paid_at) : pay.created_at ? new Date(pay.created_at) : null;
+                if (d && d.getFullYear() === currentYear) monthReceipts[d.getMonth()] += Number(pay.amount || 0);
+            });
+            const maxMonthly = Math.max(1, ...monthSales, ...monthReceipts);
+            const monthBars = months
+                .map((m) => {
+                    const salesH = Math.max(4, Math.round((monthSales[m.i] / maxMonthly) * 150));
+                    const receiptsH = Math.max(4, Math.round((monthReceipts[m.i] / maxMonthly) * 150));
+                    return `
+                        <div class="flex min-w-0 flex-1 flex-col items-center justify-end gap-2">
+                            <div class="flex h-40 items-end gap-1.5">
+                                <div title="Ventas ${fmtMoneyPanel(monthSales[m.i], currency)}" class="w-2 rounded-t bg-primary/80" style="height:${salesH}px"></div>
+                                <div title="Cobros ${fmtMoneyPanel(monthReceipts[m.i], currency)}" class="w-2 rounded-t bg-emerald-500/85" style="height:${receiptsH}px"></div>
+                            </div>
+                            <span class="truncate text-[11px] uppercase text-on-surface-variant">${escapeHtml(m.label)}</span>
+                        </div>`;
+                })
+                .join('');
+            const statCard = (icon, label, value, hint, tone = 'primary') => `
+                <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-4 text-left shadow-sm">
+                    <div class="flex items-start justify-between gap-3">
+                        <div>
+                            <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">${escapeHtml(label)}</div>
+                            <div class="mt-2 text-2xl font-bold ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-error' : 'text-primary'}">${value}</div>
+                            <p class="mt-1 text-xs text-on-surface-variant">${escapeHtml(hint || '')}</p>
+                        </div>
+                        <span class="material-symbols-outlined rounded-md bg-surface-container-low p-2 text-primary/80" aria-hidden="true">${escapeHtml(icon)}</span>
+                    </div>
+                </div>`;
+            const invoiceRow = (invoice, opts = {}) => {
+                const cust = invoice.customer_id ? customerById.get(invoice.customer_id) : null;
+                const num = invoice.series != null && invoice.number != null ? `${invoice.series}-${invoice.number}` : invoice.id || '-';
+                const amount = opts.balance ? openBalance(invoice) : Number(invoice.total || 0);
+                return `
+                    <tr class="border-b border-outline-variant/15">
+                        <td class="py-3 pr-4 text-on-surface-variant">${escapeHtml(toDateString(opts.due ? invoice.due_date || invoice.created_at : invoice.created_at))}</td>
+                        <td class="py-3 pr-4">
+                            <div class="font-medium text-primary">${escapeHtml(cust?.name || 'Cliente sin nombre')}</div>
+                            <div class="font-mono text-[11px] text-on-surface-variant">${escapeHtml(String(num))}</div>
+                        </td>
+                        <td class="py-3 pr-4 text-xs">${escapeHtml(String(invoice.status || '-'))}</td>
+                        <td class="py-3 text-right font-semibold">${fmtMoneyPanel(amount, invoice.currency || currency)}</td>
+                    </tr>`;
+            };
+            const estimateRow = (estimate) => {
+                const cust = estimate.customer_id ? customerById.get(estimate.customer_id) : null;
+                const num = estimate.series != null && estimate.number != null ? `${estimate.series}-${estimate.number}` : estimate.id || '-';
+                return `
+                    <tr class="border-b border-outline-variant/15">
+                        <td class="py-3 pr-4 text-on-surface-variant">${escapeHtml(toDateString(estimate.created_at))}</td>
+                        <td class="py-3 pr-4">
+                            <div class="font-medium text-primary">${escapeHtml(cust?.name || 'Cliente sin nombre')}</div>
+                            <div class="font-mono text-[11px] text-on-surface-variant">${escapeHtml(String(num))}</div>
+                        </td>
+                        <td class="py-3 pr-4 text-xs">${escapeHtml(String(estimate.status || '-'))}</td>
+                        <td class="py-3 text-right font-semibold">${fmtMoneyPanel(estimate.total, estimate.currency || currency)}</td>
+                    </tr>`;
+            };
 
             dashboardContent.innerHTML = `
-                ${renderModuleHeader('Panel principal', 'Datos de tu empresa en tiempo real')}
-                <div class="mb-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                ${renderModuleHeader('Panel principal', 'Resumen operativo de ventas, cobros y documentos')}
+                <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                    ${statCard('account_balance_wallet', 'Monto por cobrar', fmtMoneyPanel(totalDue, currency), 'Facturas con saldo abierto')}
+                    ${statCard('groups', 'Clientes', String(customers.length), 'Contactos activos en esta empresa')}
+                    ${statCard('receipt_long', 'Facturas', String(invoices.length), 'Documentos de venta registrados')}
+                    ${statCard('request_quote', 'Presupuestos', String(estimates.length), 'Cotizaciones recientes')}
+                </div>
+                <div class="grid grid-cols-1 gap-6 xl:grid-cols-10">
+                    <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm xl:col-span-7">
+                        <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <h3 class="flex items-center gap-2 text-base font-bold text-primary"><span class="material-symbols-outlined text-xl" aria-hidden="true">monitoring</span>Movimiento mensual</h3>
+                                <p class="mt-1 text-xs text-on-surface-variant">Ventas y cobros del ano actual.</p>
+                            </div>
+                            <div class="flex items-center gap-3 text-xs text-on-surface-variant">
+                                <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-sm bg-primary"></span>Ventas</span>
+                                <span class="inline-flex items-center gap-1"><span class="h-2.5 w-2.5 rounded-sm bg-emerald-500"></span>Cobros</span>
+                            </div>
+                        </div>
+                        <div class="flex min-h-48 items-end gap-2 border-b border-outline-variant/25 pb-3">${monthBars}</div>
+                    </div>
+                    <div class="grid grid-cols-2 rounded-lg border border-outline-variant/25 bg-surface-container-lowest shadow-sm xl:col-span-3 xl:grid-cols-1">
+                        <div class="p-5">
+                            <div class="text-xs text-on-surface-variant">Ventas totales</div>
+                            <div class="mt-1 text-xl font-bold text-primary">${fmtMoneyPanel(totalSales, currency)}</div>
+                        </div>
+                        <div class="border-l border-outline-variant/25 p-5 xl:border-l-0 xl:border-t">
+                            <div class="text-xs text-on-surface-variant">Cobros recibidos</div>
+                            <div class="mt-1 text-xl font-bold text-emerald-600">${fmtMoneyPanel(totalReceipts, currency)}</div>
+                        </div>
+                        <div class="border-t border-outline-variant/25 p-5">
+                            <div class="text-xs text-on-surface-variant">Stock bajo</div>
+                            <div class="mt-1 text-xl font-bold ${lowStock ? 'text-error' : 'text-primary'}">${lowStock}</div>
+                        </div>
+                        <div class="border-l border-t border-outline-variant/25 p-5 xl:border-l-0">
+                            <div class="text-xs text-on-surface-variant">Flujo neto</div>
+                            <div class="mt-1 text-xl font-bold ${netCash >= 0 ? 'text-primary' : 'text-error'}">${fmtMoneyPanel(netCash, currency)}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-4 shadow-sm">
                     <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <div>
                             <h3 class="text-sm font-bold text-primary">Acciones rapidas</h3>
-                            <p class="mt-1 text-xs text-on-surface-variant">Crea clientes, productos y facturas sin tener que adivinar en que modulo estan.</p>
+                            <p class="mt-1 text-xs text-on-surface-variant">Crea operaciones comunes desde el panel.</p>
                         </div>
                         <div class="flex flex-wrap gap-2">
                             <button type="button" id="panel-quick-customer" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar cliente</button>
                             <button type="button" id="panel-quick-product" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar producto</button>
+                            <button type="button" id="panel-quick-estimate" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Crear presupuesto</button>
                             <button type="button" id="panel-quick-invoice" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
                         </div>
                     </div>
                 </div>
-                <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
-                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
-                        <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Facturas (muestra)</div>
-                        <div class="mt-1 text-2xl font-bold text-primary">${invoices.length}</div>
-                        <p class="mt-1 text-xs text-on-surface-variant">Hasta 12 mas recientes en la tabla inferior.</p>
-                    </div>
-                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
-                        <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Productos</div>
-                        <div class="mt-1 text-2xl font-bold text-primary">${products.length}</div>
-                    </div>
-                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
-                        <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">Alerta stock bajo</div>
-                        <div class="mt-1 text-2xl font-bold text-primary">${lowStock}</div>
-                        <p class="mt-1 text-xs text-on-surface-variant">SKU con stock &lt;= minimo configurado.</p>
-                    </div>
-                </div>
-                <div class="rounded-xl bg-surface-container-low p-1">
-                    <div class="rounded-lg bg-surface-container-lowest p-5">
-                        <h3 class="mb-3 text-sm font-bold text-primary">Facturas recientes</h3>
+                <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                    <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm">
+                        <div class="mb-3 flex items-center justify-between gap-3">
+                            <h3 class="text-base font-bold text-on-surface">Facturas por cobrar</h3>
+                            <button type="button" id="panel-view-invoices" class="rounded-md border border-outline-variant/50 px-3 py-1.5 text-xs font-semibold text-primary">Ver todas</button>
+                        </div>
                         ${
-                            invoices.length
+                            dueInvoices.length
                                 ? `<div class="w-full overflow-x-auto"><table class="w-full border-collapse text-left text-sm">
                             <thead><tr class="border-b border-outline-variant/30">
-                                <th class="py-2 pr-4">Numero</th><th class="py-2 pr-4">Estado</th><th class="py-2 pr-4 text-right">Total</th><th class="py-2">Fecha</th>
+                                <th class="py-2 pr-4">Vence</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4">Estado</th><th class="py-2 text-right">Saldo</th>
                             </tr></thead>
-                            <tbody>${invoices
-                                .map(
-                                    (invoice) => `
-                                <tr class="border-b border-outline-variant/15">
-                                    <td class="py-3 font-mono text-xs">${invoice.series != null && invoice.number != null ? `${invoice.series}-${invoice.number}` : invoice.id || '-'}</td>
-                                    <td class="py-3">${invoice.status ?? '-'}</td>
-                                    <td class="py-3 text-right font-semibold">${fmtMoneyPanel(invoice.total)}</td>
-                                    <td class="py-3 text-on-surface-variant">${toDateString(invoice.created_at)}</td>
-                                </tr>`
-                                )
+                            <tbody>${dueInvoices
+                                .map((invoice) => invoiceRow(invoice, { due: true, balance: true }))
                                 .join('')}</tbody></table></div>`
-                                : '<p class="text-sm text-on-surface-variant">No hay facturas todavia. Usa el modulo Facturas para crear la primera.</p>'
+                                : '<p class="text-sm text-on-surface-variant">No hay facturas con saldo pendiente.</p>'
                         }
                     </div>
+                    <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm">
+                        <div class="mb-3 flex items-center justify-between gap-3">
+                            <h3 class="text-base font-bold text-on-surface">Presupuestos recientes</h3>
+                            <button type="button" id="panel-view-estimates" class="rounded-md border border-outline-variant/50 px-3 py-1.5 text-xs font-semibold text-primary">Ver todos</button>
+                        </div>
+                        ${
+                            recentEstimates.length
+                                ? `<div class="w-full overflow-x-auto"><table class="w-full border-collapse text-left text-sm">
+                            <thead><tr class="border-b border-outline-variant/30">
+                                <th class="py-2 pr-4">Fecha</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4">Estado</th><th class="py-2 text-right">Total</th>
+                            </tr></thead>
+                            <tbody>${recentEstimates.map((estimate) => estimateRow(estimate)).join('')}</tbody></table></div>`
+                                : '<p class="text-sm text-on-surface-variant">No hay presupuestos recientes.</p>'
+                        }
+                    </div>
+                </div>
+                <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm">
+                    <div class="mb-3 flex items-center justify-between gap-3">
+                        <h3 class="text-base font-bold text-on-surface">Facturas recientes</h3>
+                        <span class="text-xs text-on-surface-variant">Ultimos documentos emitidos</span>
+                    </div>
+                    ${
+                        recentInvoices.length
+                            ? `<div class="w-full overflow-x-auto"><table class="w-full border-collapse text-left text-sm">
+                        <thead><tr class="border-b border-outline-variant/30">
+                            <th class="py-2 pr-4">Fecha</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4">Estado</th><th class="py-2 text-right">Total</th>
+                        </tr></thead>
+                        <tbody>${recentInvoices.map((invoice) => invoiceRow(invoice)).join('')}</tbody></table></div>`
+                            : '<p class="text-sm text-on-surface-variant">No hay facturas todavia. Usa el modulo Facturas para crear la primera.</p>'
+                        }
+                    }
                 </div>
             `;
             document.getElementById('panel-quick-customer')?.addEventListener('click', () => {
@@ -2316,11 +2482,22 @@
                 state.inventarioUi = { ...state.inventarioUi, section: 'catalog', tab: 'list', sheet: 'form', editId: null };
                 void openModule('inventario');
             });
+            document.getElementById('panel-quick-estimate')?.addEventListener('click', () => {
+                state.presupuestosUi = { ...state.presupuestosUi, openComposer: true };
+                void openModule('presupuestos');
+            });
             document.getElementById('panel-quick-invoice')?.addEventListener('click', () => {
                 state.facturasUi = { ...state.facturasUi, tab: 'list', openComposer: true };
                 void openModule('facturas');
             });
-            zyronLog('render:panel:tenantDone', { invoices: invoices.length, products: products.length, lowStock });
+            document.getElementById('panel-view-invoices')?.addEventListener('click', () => {
+                state.facturasUi = { ...state.facturasUi, tab: 'list' };
+                void openModule('facturas');
+            });
+            document.getElementById('panel-view-estimates')?.addEventListener('click', () => {
+                void openModule('presupuestos');
+            });
+            zyronLog('render:panel:tenantDone', { invoices: invoices.length, estimates: estimates.length, products: products.length, lowStock });
         };
 
         const renderEmpresasModule = async () => {
@@ -6492,6 +6669,23 @@
             URL.revokeObjectURL(url);
         };
 
+        const exportInvoiceDocumentPdf = async (filename, html) => {
+            if (window.electronAPI?.savePdfFromHtml) {
+                const res = await safeCall(
+                    () => window.electronAPI.savePdfFromHtml({ filename: filename.replace(/\.html?$/i, '.pdf'), html }),
+                    'desktop.savePdfFromHtml'
+                );
+                const u = unwrapFnInvoke(res);
+                if (u.err || u.data?.error) {
+                    window.alert(u.err || u.data?.error || 'No se pudo guardar el PDF.');
+                    return;
+                }
+                if (u.data?.ok && u.data?.path) window.alert(`PDF guardado en:\n${u.data.path}`);
+                return;
+            }
+            openInvoiceDocumentPreview(html, true);
+        };
+
         const renderFacturasModule = async () => {
             zyronLog('render:facturas:start', { tenantId: state.currentTenantId });
             if (!state.currentTenantId) {
@@ -6547,7 +6741,7 @@
             const fh = !hintsU.err && hintsU.data?.ok ? hintsU.data : { defaultTaxRate: 18, taxLabel: 'ITBIS' };
             const docU = unwrapFnInvoke(docRes);
             const docSettings = mergeInvoiceDocumentSettings(docU.data?.settings || {});
-            const docTemplates = Array.isArray(docU.data?.templates) && docU.data.templates.length ? docU.data.templates : [];
+            const docTemplates = Array.isArray(docU.data?.templates) && docU.data.templates.length ? docU.data.templates : documentTemplateCatalog();
             const tenantRow = (tenantRows || [])[0] || {};
             const seriesUnwrapped = unwrapFnInvoke(seriesListRes);
             const seriesRows = seriesUnwrapped.err ? [] : seriesUnwrapped.data?.rows || [];
@@ -6565,14 +6759,15 @@
                 }[String(t || 'standard')] || t);
 
             const seriesCodes = new Set(['FAC', 'PRO', 'NCC', 'NDD', ...seriesRows.map((r) => r.code).filter(Boolean)]);
+            const fallbackTax = Number.isFinite(Number(fh.defaultTaxRate)) ? Number(fh.defaultTaxRate) : 18;
 
             const lineRowTemplate = (line = {}) => {
                 const kind = line.lineKind || (line.productId ? 'product' : 'service');
                 const defTx = Number(fh.defaultTaxRate);
-                const fallbackTax = Number.isFinite(defTx) ? defTx : 18;
+                const rowFallbackTax = Number.isFinite(defTx) ? defTx : fallbackTax;
                 const opts = (products || [])
                     .map((p) => {
-                        const tx = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : fallbackTax;
+                        const tx = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : rowFallbackTax;
                         const dc = p.discount_default != null && p.discount_default !== '' ? Number(p.discount_default) : 0;
                         const ik = String(p.item_kind || 'product').toLowerCase();
                         const st = ik === 'service' ? 'srv' : Number(p.stock ?? 0);
@@ -6601,12 +6796,66 @@
                         line.unitPrice ?? 0
                     )}" /></td>
                     <td class="py-2 pr-2 w-20"><input data-fld="tax" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                        line.taxRate != null && line.taxRate !== '' ? line.taxRate : fallbackTax
+                        line.taxRate != null && line.taxRate !== '' ? line.taxRate : rowFallbackTax
                     )}" /></td>
                     <td class="py-2 pr-2 w-20"><input data-fld="disc" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
                         line.discount ?? 0
                     )}" /></td>
                     <td class="py-2"><button type="button" data-remove-line class="text-xs text-error">Quitar</button></td>
+                </tr>`;
+            };
+
+            const invoiceShelfLineRowTemplate = (line = {}) => {
+                const kind = line.lineKind || (line.productId ? 'product' : 'service');
+                const defTx = Number(fh.defaultTaxRate);
+                const rowFallbackTax = Number.isFinite(defTx) ? defTx : fallbackTax;
+                const opts = (products || [])
+                    .map((p) => {
+                        const tx = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : rowFallbackTax;
+                        const dc = p.discount_default != null && p.discount_default !== '' ? Number(p.discount_default) : 0;
+                        const ik = String(p.item_kind || 'product').toLowerCase();
+                        const st = ik === 'service' ? 'servicio' : `stock ${Number(p.stock ?? 0)}`;
+                        return `<option value="${p.id}" ${line.productId === p.id ? 'selected' : ''} data-price="${Number(p.price || 0)}" data-tax="${tx}" data-disc="${dc}" data-item-kind="${escapeHtml(
+                            ik
+                        )}" data-label="${escapeHtml(p.name || p.sku || '')}">${escapeHtml(p.name || p.sku || p.id)} - ${escapeHtml(st)}</option>`;
+                    })
+                    .join('');
+                return `<tr data-inv-line class="border border-outline-variant/25 bg-white align-top">
+                    <td colspan="7" class="p-0">
+                        <div class="grid min-w-[900px] grid-cols-[minmax(320px,1.4fr)_110px_140px_130px_130px_130px_52px] items-start">
+                            <div class="border-r border-outline-variant/20 px-5 py-4">
+                                <div class="flex gap-3">
+                                    <span class="material-symbols-outlined mt-2 cursor-move text-lg text-outline" aria-hidden="true">drag_indicator</span>
+                                    <div class="min-w-0 flex-1 space-y-2">
+                                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr]">
+                                            <select data-fld="kind" class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs">
+                                                <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
+                                                <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
+                                            </select>
+                                            <select data-fld="product" data-product-cell class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs ${kind === 'product' ? '' : 'hidden'}"><option value="">Seleccionar item</option>${opts}</select>
+                                        </div>
+                                        <textarea data-fld="desc" rows="2" class="w-full resize-none rounded-md border border-outline-variant/45 px-3 py-2 text-sm" placeholder="Nombre o descripcion del item">${escapeHtml(
+                                            line.description || ''
+                                        )}</textarea>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4 text-right"><input data-fld="qty" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.quantity ?? 1
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4"><input data-fld="price" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.unitPrice ?? 0
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4"><input data-fld="tax" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.taxRate != null && line.taxRate !== '' ? line.taxRate : rowFallbackTax
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4"><input data-fld="disc" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.discount ?? 0
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4 text-right font-semibold" data-line-total>${fmtMoneyPanel(0)}</div>
+                            <div class="flex items-center justify-center px-2 py-4"><button type="button" data-remove-line class="material-symbols-outlined text-error" title="Quitar linea">delete</button></div>
+                        </div>
+                    </td>
                 </tr>`;
             };
 
@@ -6702,9 +6951,8 @@
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
                     <div class="flex flex-wrap items-center gap-2">
                         <button type="button" id="factura-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
-                        <button type="button" id="factura-fiscal-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Fiscal / NCF</button>
                     </div>
-                    <p class="text-xs text-on-surface-variant">Abre el editor de factura aqui. Borradores BOR; al emitir usa NCF si esta activo.</p>
+                    <p class="text-xs text-on-surface-variant">Abre el editor de factura aqui. Borradores BOR; al emitir queda lista para cobro.</p>
                 </div>
                 <div id="facturas-table-wrap" class="overflow-x-auto">
                     <table class="w-full min-w-[820px] text-left text-sm">
@@ -6852,8 +7100,7 @@
                     </div>
                 </div>`;
 
-            const mainBody =
-                tab === 'list' ? listPanel : tab === 'series' ? seriesPanel : tab === 'documentos' ? documentosPanel : recurrencePanel;
+            const mainBody = tab === 'list' ? listPanel : tab === 'series' ? seriesPanel : recurrencePanel;
 
             dashboardContent.innerHTML = `
                 ${renderModuleHeader('Facturas', 'Facturacion avanzada: borradores, tipos, NC/ND, series, plantillas recurrentes, formato PDF/HTML e historial')}
@@ -6862,90 +7109,118 @@
                         <div class="mb-4 flex flex-wrap gap-2">${tabBtn('list', 'Facturas')}${tabBtn('series', 'Series')}${tabBtn(
                 'recurrence',
                 'Recurrencia'
-            )}${tabBtn('documentos', 'Formato / PDF')}</div>
+            )}</div>
                         ${mainBody}
                     </div>
                 </div>
-                <div id="factura-sheet" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
-                    <div class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-surface-container-lowest p-5 shadow-lg">
-                        <div class="mb-4 flex items-start justify-between gap-2">
-                            <div>
-                                <h3 id="factura-sheet-title" class="text-lg font-semibold">Factura</h3>
-                                <p class="text-xs text-on-surface-variant" id="factura-sheet-sub"></p>
+                <div id="factura-sheet" class="hidden bg-surface text-on-surface">
+                    <div class="w-full bg-surface py-5">
+                        <div class="sticky top-0 z-10 -mx-6 -mt-5 mb-6 border-b border-outline-variant/30 bg-surface-container-lowest px-6 py-4 shadow-sm">
+                            <div class="mx-auto flex max-w-7xl items-start justify-between gap-2">
+                                <div>
+                                    <div class="mb-1 text-xs text-on-surface-variant">Facturas / <span id="factura-sheet-sub"></span></div>
+                                    <h3 id="factura-sheet-title" class="text-2xl font-bold tracking-tight">Factura</h3>
+                                </div>
+                                <div class="flex flex-wrap gap-2">
+                                    <button type="button" id="factura-sheet-close" class="rounded-md border border-outline-variant/50 bg-white px-4 py-2 text-sm font-semibold text-primary">Cerrar</button>
+                                    <button type="button" id="factura-save-draft-top" class="rounded-md border border-outline-variant/50 bg-white px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
+                                    <button type="button" id="factura-issue-btn-top" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar factura</button>
+                                </div>
                             </div>
-                            <button type="button" id="factura-sheet-close" class="rounded-md border border-outline-variant/40 px-2 py-1 text-sm">Cerrar</button>
                         </div>
-                        <input type="hidden" id="factura-sheet-invoice-id" value="" />
-                        <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <label class="text-xs">Tipo
-                                <select id="factura-inv-type" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                    <option value="standard">Factura</option>
-                                    <option value="proforma">Proforma</option>
-                                    <option value="credit_note">Nota de credito</option>
-                                    <option value="debit_note">Nota de debito</option>
-                                </select>
-                            </label>
-                            <label class="text-xs hidden" id="factura-parent-wrap">Documento padre (NC/ND)
-                                <select id="factura-parent-id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                    <option value="">—</option>
-                                    ${(invoices || [])
-                                        .filter((inv) => {
-                                            const s = String(inv.status || '').toLowerCase();
-                                            const t = String(inv.invoice_type || 'standard');
-                                            return (s === 'pending' || s === 'paid') && t !== 'credit_note' && t !== 'debit_note';
-                                        })
-                                        .map(
-                                            (inv) =>
-                                                `<option value="${inv.id}">${escapeHtml(inv.series)}-${escapeHtml(inv.number)} (${escapeHtml(
-                                                    inv.status
-                                                )})</option>`
-                                        )
-                                        .join('')}
-                                </select>
-                            </label>
-                            <label class="text-xs">Serie al emitir
-                                <select id="factura-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                    ${[...seriesCodes]
-                                        .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
-                                        .join('')}
-                                </select>
-                            </label>
-                            <label class="text-xs">Cliente
-                                <select id="factura-customer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                    <option value="">—</option>
-                                    ${(customers || [])
-                                        .map((c) => `<option value="${c.id}">${escapeHtml(c.name || c.email || c.id)}</option>`)
-                                        .join('')}
-                                </select>
-                            </label>
-                            <label class="text-xs sm:col-span-2">Notas
-                                <textarea id="factura-notes" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="2"></textarea>
-                            </label>
-                        </div>
-                        <div class="mb-2 flex items-center justify-between">
-                            <span class="text-sm font-medium">Lineas</span>
-                            <button type="button" id="factura-add-line" class="rounded border border-outline-variant/40 px-2 py-1 text-xs">Anadir linea</button>
-                        </div>
-                        <div class="overflow-x-auto">
-                            <table class="w-full min-w-[640px] text-left text-xs">
-                                <thead>
-                                    <tr class="border-b border-outline-variant/30">
-                                        <th class="py-1">Tipo linea</th>
-                                        <th class="py-1">Producto</th>
-                                        <th class="py-1">Descripcion</th>
-                                        <th class="py-1">Cant</th>
-                                        <th class="py-1">P.U.</th>
-                                        <th class="py-1">${escapeHtml(fh.taxLabel || 'ITBIS')}%</th>
-                                        <th class="py-1">Dto</th>
-                                        <th class="py-1"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="facturas-lines-tbody"></tbody>
-                            </table>
-                        </div>
-                        <div class="mt-4 flex flex-wrap gap-2">
-                            <button type="button" id="factura-save-draft" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">Guardar borrador</button>
-                            <button type="button" id="factura-issue-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Emitir documento</button>
+                        <div class="mx-auto max-w-7xl">
+                            <input type="hidden" id="factura-sheet-invoice-id" value="" />
+                            <div class="mb-8 grid grid-cols-12 gap-8">
+                                <div class="col-span-12 rounded-md border border-outline-variant/30 bg-white p-5 shadow-sm lg:col-span-5">
+                                    <label class="block text-sm font-semibold text-on-surface">Cliente
+                                        <select id="factura-customer" class="mt-2 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
+                                            <option value="">Seleccionar cliente</option>
+                                            ${(customers || [])
+                                                .map((c) => `<option value="${c.id}">${escapeHtml(c.name || c.email || c.id)}</option>`)
+                                                .join('')}
+                                        </select>
+                                    </label>
+                                    <p class="mt-3 text-xs text-on-surface-variant">Se usara en el documento y la exportacion PDF.</p>
+                                </div>
+                                <div class="col-span-12 grid grid-cols-1 gap-4 rounded-md border border-outline-variant/30 bg-white p-5 shadow-sm sm:grid-cols-2 lg:col-span-7">
+                                    <label class="text-xs font-semibold text-on-surface-variant">Tipo
+                                        <select id="factura-inv-type" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                            <option value="standard">Factura</option>
+                                            <option value="proforma">Proforma</option>
+                                            <option value="credit_note">Nota de credito</option>
+                                            <option value="debit_note">Nota de debito</option>
+                                        </select>
+                                    </label>
+                                    <label class="text-xs font-semibold text-on-surface-variant">Serie al guardar
+                                        <select id="factura-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                            ${[...seriesCodes].map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+                                        </select>
+                                    </label>
+                                    <label class="text-xs font-semibold text-on-surface-variant">Fecha de factura
+                                        <input id="factura-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" />
+                                    </label>
+                                    <label class="text-xs font-semibold text-on-surface-variant">Fecha de vencimiento
+                                        <input id="factura-due-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" />
+                                    </label>
+                                    <label class="hidden text-xs font-semibold text-on-surface-variant sm:col-span-2" id="factura-parent-wrap">Documento padre (NC/ND)
+                                        <select id="factura-parent-id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                            <option value="">Seleccionar documento</option>
+                                            ${(invoices || [])
+                                                .filter((inv) => {
+                                                    const s = String(inv.status || '').toLowerCase();
+                                                    const t = String(inv.invoice_type || 'standard');
+                                                    return (s === 'pending' || s === 'paid') && t !== 'credit_note' && t !== 'debit_note';
+                                                })
+                                                .map((inv) => `<option value="${inv.id}">${escapeHtml(inv.series)}-${escapeHtml(inv.number)} (${escapeHtml(inv.status)})</option>`)
+                                                .join('')}
+                                        </select>
+                                    </label>
+                                </div>
+                            </div>
+                            <div class="overflow-x-auto rounded-md border border-outline-variant/30 bg-white shadow-sm">
+                                <table class="w-full min-w-[900px] text-left text-sm">
+                                    <thead>
+                                        <tr class="border-b border-outline-variant/30 text-on-surface-variant">
+                                            <th class="px-5 py-3 text-left"><span class="pl-8">Items</span></th>
+                                            <th class="px-5 py-3 text-right">Cantidad</th>
+                                            <th class="px-5 py-3 text-right">Precio</th>
+                                            <th class="px-5 py-3 text-right">${escapeHtml(fh.taxLabel || 'ITBIS')} %</th>
+                                            <th class="px-5 py-3 text-right">Descuento %</th>
+                                            <th class="px-5 py-3 text-right">Importe</th>
+                                            <th class="px-2 py-3"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="facturas-lines-tbody"></tbody>
+                                </table>
+                                <button type="button" id="factura-add-line" class="flex w-full items-center justify-center gap-2 border-t border-outline-variant/30 px-6 py-3 text-sm font-semibold text-primary hover:bg-primary/5">
+                                    <span class="material-symbols-outlined text-lg" aria-hidden="true">add_circle</span>
+                                    Anadir nuevo item
+                                </button>
+                            </div>
+                            <div class="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
+                                <div>
+                                    <label class="mb-2 block text-sm font-semibold text-on-surface">Notas</label>
+                                    <textarea id="factura-notes" class="min-h-[150px] w-full rounded-md border border-outline-variant/35 bg-white px-3 py-3 text-sm shadow-sm" placeholder="Notas visibles para el cliente"></textarea>
+                                </div>
+                                <div class="ml-auto w-full rounded-md border border-outline-variant/30 bg-white p-5 shadow-sm md:min-w-[390px] lg:max-w-md">
+                                    <div class="flex items-center justify-between">
+                                        <span class="text-sm font-semibold uppercase text-on-surface-variant">Subtotal</span>
+                                        <span id="factura-subtotal" class="text-lg text-on-surface">${fmtMoneyPanel(0)}</span>
+                                    </div>
+                                    <div class="mt-3 flex items-center justify-between">
+                                        <span class="text-sm font-semibold uppercase text-on-surface-variant">${escapeHtml(fh.taxLabel || 'ITBIS')}</span>
+                                        <span id="factura-tax-total" class="text-lg text-on-surface">${fmtMoneyPanel(0)}</span>
+                                    </div>
+                                    <div class="mt-5 flex items-center justify-between border-t border-outline-variant/30 pt-4">
+                                        <span class="text-sm font-semibold uppercase text-on-surface-variant">Total importe:</span>
+                                        <span id="factura-grand-total" class="text-xl font-bold text-primary">${fmtMoneyPanel(0)}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mt-6 flex flex-wrap justify-end gap-2">
+                                <button type="button" id="factura-save-draft" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
+                                <button type="button" id="factura-issue-btn" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar factura</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -6991,6 +7266,31 @@
                 return out;
             };
 
+            const refreshFacturaTotals = () => {
+                let subtotal = 0;
+                let taxTotal = 0;
+                document.querySelectorAll('[data-inv-line]').forEach((tr) => {
+                    const qty = Number(tr.querySelector('[data-fld="qty"]')?.value || 0);
+                    const price = Number(tr.querySelector('[data-fld="price"]')?.value || 0);
+                    const tax = Number(tr.querySelector('[data-fld="tax"]')?.value || 0);
+                    const disc = Number(tr.querySelector('[data-fld="disc"]')?.value || 0);
+                    const base = Math.max(0, qty * price);
+                    const discounted = base * (1 - Math.max(0, disc) / 100);
+                    const lineTax = discounted * (Math.max(0, tax) / 100);
+                    const total = discounted + lineTax;
+                    subtotal += discounted;
+                    taxTotal += lineTax;
+                    const lineEl = tr.querySelector('[data-line-total]');
+                    if (lineEl) lineEl.textContent = fmtMoneyPanel(total);
+                });
+                const subEl = document.getElementById('factura-subtotal');
+                const taxEl = document.getElementById('factura-tax-total');
+                const totalEl = document.getElementById('factura-grand-total');
+                if (subEl) subEl.textContent = fmtMoneyPanel(subtotal);
+                if (taxEl) taxEl.textContent = fmtMoneyPanel(taxTotal);
+                if (totalEl) totalEl.textContent = fmtMoneyPanel(subtotal + taxTotal);
+            };
+
             const openSheet = (opts) => {
                 const { mode, invoiceId, lines, invoiceType, parentId, customerId, notes } = opts;
                 const sheet = document.getElementById('factura-sheet');
@@ -7003,11 +7303,17 @@
                 document.getElementById('factura-parent-id').value = parentId || '';
                 document.getElementById('factura-customer').value = customerId || '';
                 document.getElementById('factura-notes').value = notes || '';
+                const today = new Date().toISOString().slice(0, 10);
+                const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+                const dateEl = document.getElementById('factura-date');
+                const dueEl = document.getElementById('factura-due-date');
+                if (dateEl) dateEl.value = opts.invoiceDate || today;
+                if (dueEl) dueEl.value = opts.dueDate || due;
                 const tbody = document.getElementById('facturas-lines-tbody');
                 const seed = lines?.length
                     ? lines
                     : [{ lineKind: 'service', description: 'Servicio', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }];
-                tbody.innerHTML = seed.map((l) => lineRowTemplate(l)).join('');
+                tbody.innerHTML = seed.map((l) => invoiceShelfLineRowTemplate(l)).join('');
                 const fixProductSelect = (tr, pid) => {
                     if (!pid || !tr) return;
                     const sel = tr.querySelector('[data-fld="product"]');
@@ -7026,14 +7332,15 @@
                 };
                 invTypeEl.onchange = toggleParent;
                 toggleParent();
+                refreshFacturaTotals();
+                document.querySelector('[data-facturas-root]')?.classList.add('hidden');
                 sheet.classList.remove('hidden');
-                sheet.classList.add('flex');
             };
 
             const closeSheet = () => {
                 const sheet = document.getElementById('factura-sheet');
                 sheet.classList.add('hidden');
-                sheet.classList.remove('flex');
+                document.querySelector('[data-facturas-root]')?.classList.remove('hidden');
             };
 
             document.querySelectorAll('[data-fact-tab]').forEach((btn) => {
@@ -7065,16 +7372,19 @@
                     lines: [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }]
                 });
             }
-            document.getElementById('factura-fiscal-btn')?.addEventListener('click', () => {
-                void openModule('fiscal');
-            });
-
             document.getElementById('factura-sheet-close')?.addEventListener('click', closeSheet);
+            document.getElementById('factura-save-draft-top')?.addEventListener('click', () => {
+                document.getElementById('factura-save-draft')?.click();
+            });
+            document.getElementById('factura-issue-btn-top')?.addEventListener('click', () => {
+                document.getElementById('factura-issue-btn')?.click();
+            });
             document.getElementById('factura-add-line')?.addEventListener('click', () => {
                 const tbody = document.getElementById('facturas-lines-tbody');
-                tbody.insertAdjacentHTML('beforeend', lineRowTemplate({}));
+                tbody.insertAdjacentHTML('beforeend', invoiceShelfLineRowTemplate({}));
                 const tr = tbody.lastElementChild;
                 syncLineRowUi(tr);
+                refreshFacturaTotals();
             });
 
             document.getElementById('facturas-lines-tbody')?.addEventListener('change', (e) => {
@@ -7102,6 +7412,11 @@
                         syncLineRowUi(tr);
                     }
                 }
+                refreshFacturaTotals();
+            });
+
+            document.getElementById('facturas-lines-tbody')?.addEventListener('input', () => {
+                refreshFacturaTotals();
             });
 
             document.getElementById('facturas-lines-tbody')?.addEventListener('click', (e) => {
@@ -7109,6 +7424,7 @@
                     const tr = e.target.closest('[data-inv-line]');
                     const tbody = document.getElementById('facturas-lines-tbody');
                     if (tbody && tbody.querySelectorAll('[data-inv-line]').length > 1) tr.remove();
+                    refreshFacturaTotals();
                 }
             });
 
@@ -7117,7 +7433,8 @@
                 parentInvoiceId: document.getElementById('factura-parent-id').value || null,
                 customerId: document.getElementById('factura-customer').value || null,
                 notes: document.getElementById('factura-notes').value || '',
-                series: document.getElementById('factura-issue-series').value || 'FAC'
+                series: document.getElementById('factura-issue-series').value || 'FAC',
+                dueDate: document.getElementById('factura-due-date')?.value || null
             });
 
             document.getElementById('factura-save-draft')?.addEventListener('click', async () => {
@@ -7138,6 +7455,7 @@
                         customerId: meta.customerId,
                         items,
                         notes: meta.notes,
+                        dueDate: meta.dueDate,
                         isDraft: true,
                         invoiceType: meta.invoiceType,
                         parentInvoiceId: meta.parentInvoiceId
@@ -7156,6 +7474,7 @@
                         action: 'save_draft',
                         items,
                         notes: meta.notes,
+                        dueDate: meta.dueDate,
                         customerId: meta.customerId,
                         invoiceType: meta.invoiceType,
                         parentInvoiceId: meta.parentInvoiceId
@@ -7188,6 +7507,7 @@
                         customerId: meta.customerId,
                         items,
                         notes: meta.notes,
+                        dueDate: meta.dueDate,
                         isDraft: false,
                         series: meta.series,
                         invoiceType: meta.invoiceType,
@@ -7209,6 +7529,7 @@
                     items,
                     series: meta.series,
                     notes: meta.notes,
+                    dueDate: meta.dueDate,
                     customerId: meta.customerId,
                     invoiceType: meta.invoiceType,
                     parentInvoiceId: meta.parentInvoiceId
@@ -7275,7 +7596,8 @@
                         invoiceType: inv?.invoice_type || 'standard',
                         parentId: inv?.parent_invoice_id,
                         customerId: inv?.customer_id,
-                        notes: inv?.notes || ''
+                        notes: inv?.notes || '',
+                        dueDate: inv?.due_date || ''
                     });
                 }
                 if (act === 'issue') {
@@ -7300,7 +7622,8 @@
                         invoiceType: inv?.invoice_type || 'standard',
                         parentId: inv?.parent_invoice_id,
                         customerId: inv?.customer_id,
-                        notes: inv?.notes || ''
+                        notes: inv?.notes || '',
+                        dueDate: inv?.due_date || ''
                     });
                 }
                 if (act === 'dup') {
@@ -7334,7 +7657,7 @@
                         isDraft: String(inv.status || '').toLowerCase() === 'draft'
                     });
                     const fn = `factura-${String(inv.series || 'DOC')}-${String(inv.number || id)}.html`;
-                    if (act === 'pdf') openInvoiceDocumentPreview(html, true);
+                    if (act === 'pdf') await exportInvoiceDocumentPdf(fn.replace(/\.html?$/i, '.pdf'), html);
                     else downloadInvoiceDocumentHtml(fn, html);
                 }
             });
@@ -7614,6 +7937,58 @@
                 </tr>`;
             };
 
+            const estimateShelfLineRowTemplate = (line = {}) => {
+                const kind = line.lineKind || (line.productId ? 'product' : 'service');
+                const opts = (products || [])
+                    .map((p) => {
+                        const tax = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : fallbackTax;
+                        const disc = p.discount_default != null && p.discount_default !== '' ? Number(p.discount_default) : 0;
+                        const itemKind = String(p.item_kind || 'product').toLowerCase();
+                        const st = itemKind === 'service' ? 'servicio' : `stock ${Number(p.stock ?? 0)}`;
+                        return `<option value="${p.id}" ${line.productId === p.id ? 'selected' : ''} data-price="${Number(p.price || 0)}" data-tax="${tax}" data-disc="${disc}" data-item-kind="${escapeHtml(
+                            itemKind
+                        )}" data-label="${escapeHtml(p.name || p.sku || '')}">${escapeHtml(p.name || p.sku || p.id)} - ${escapeHtml(st)}</option>`;
+                    })
+                    .join('');
+                return `<tr data-est-line class="border border-outline-variant/25 bg-white align-top">
+                    <td colspan="7" class="p-0">
+                        <div class="grid min-w-[900px] grid-cols-[minmax(320px,1.4fr)_110px_140px_130px_130px_130px_52px] items-start">
+                            <div class="border-r border-outline-variant/20 px-5 py-4">
+                                <div class="flex gap-3">
+                                    <span class="material-symbols-outlined mt-2 cursor-move text-lg text-outline" aria-hidden="true">drag_indicator</span>
+                                    <div class="min-w-0 flex-1 space-y-2">
+                                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr]">
+                                            <select data-fld="kind" class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs">
+                                                <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
+                                                <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
+                                            </select>
+                                            <select data-fld="product" data-product-cell class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs ${kind === 'product' ? '' : 'hidden'}"><option value="">Seleccionar item</option>${opts}</select>
+                                        </div>
+                                        <textarea data-fld="desc" rows="2" class="w-full resize-none rounded-md border border-outline-variant/45 px-3 py-2 text-sm" placeholder="Nombre o descripcion del item">${escapeHtml(
+                                            line.description || ''
+                                        )}</textarea>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4 text-right"><input data-fld="qty" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.quantity ?? 1
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4"><input data-fld="price" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.unitPrice ?? 0
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4"><input data-fld="tax" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.taxRate != null && line.taxRate !== '' ? line.taxRate : fallbackTax
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4"><input data-fld="disc" type="number" step="0.01" class="w-full rounded-md border border-outline-variant/45 px-2 py-2 text-right text-sm" value="${Number(
+                                line.discount ?? 0
+                            )}" /></div>
+                            <div class="border-r border-outline-variant/20 px-5 py-4 text-right font-semibold" data-est-line-total>${fmtMoneyPanel(0)}</div>
+                            <div class="flex items-center justify-center px-2 py-4"><button type="button" data-remove-est-line class="material-symbols-outlined text-error" title="Quitar linea">delete</button></div>
+                        </div>
+                    </td>
+                </tr>`;
+            };
+
             const statusLabel = (status) =>
                 ({
                     draft: 'Borrador',
@@ -7703,56 +8078,89 @@
                         </div>
                     </div>
                 </div>
-                <div id="estimate-sheet" class="fixed inset-0 z-50 hidden items-center justify-center bg-black/50 p-4">
-                    <div class="max-h-[90vh] w-full max-w-4xl overflow-y-auto rounded-xl bg-surface-container-lowest p-5 shadow-lg">
+                <div id="estimate-sheet" class="hidden bg-surface py-5 text-on-surface">
+                    <div class="mx-auto w-full max-w-7xl">
+                        <div class="mb-4 border-b border-outline-variant/30 bg-surface-container-lowest pb-4">
                         <div class="mb-4 flex items-start justify-between gap-2">
                             <div>
-                                <h3 id="estimate-sheet-title" class="text-lg font-semibold">Presupuesto</h3>
-                                <p class="text-xs text-on-surface-variant" id="estimate-sheet-sub"></p>
+                                <div class="mb-1 text-xs text-on-surface-variant">Presupuestos / <span id="estimate-sheet-sub"></span></div>
+                                <h3 id="estimate-sheet-title" class="text-2xl font-bold tracking-tight">Presupuesto</h3>
                             </div>
-                            <button type="button" id="estimate-sheet-close" class="rounded-md border border-outline-variant/40 px-2 py-1 text-sm">Cerrar</button>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" id="estimate-sheet-close" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Cerrar</button>
+                                <button type="button" id="estimate-save-draft-top" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
+                                <button type="button" id="estimate-issue-btn-top" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar presupuesto</button>
+                            </div>
+                        </div>
                         </div>
                         <input type="hidden" id="estimate-sheet-id" value="" />
-                        <div class="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <label class="text-xs">Serie al emitir
-                                <input id="estimate-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" value="COT" />
-                            </label>
-                            <label class="text-xs">Cliente
-                                <select id="estimate-customer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                    <option value="">-</option>
-                                    ${(customers || [])
-                                        .map((c) => `<option value="${c.id}">${escapeHtml(c.name || c.email || c.id)}</option>`)
-                                        .join('')}
-                                </select>
-                            </label>
-                            <label class="text-xs sm:col-span-2">Notas
-                                <textarea id="estimate-notes" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="2"></textarea>
-                            </label>
+                        <div class="mb-8 grid grid-cols-12 gap-8">
+                            <div class="col-span-12 rounded-md border border-outline-variant/30 bg-white p-5 shadow-sm lg:col-span-5">
+                                <label class="block text-sm font-semibold text-on-surface">Cliente
+                                    <select id="estimate-customer" class="mt-2 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
+                                        <option value="">Seleccionar cliente</option>
+                                        ${(customers || [])
+                                            .map((c) => `<option value="${c.id}">${escapeHtml(c.name || c.email || c.id)}</option>`)
+                                            .join('')}
+                                    </select>
+                                </label>
+                                <p class="mt-3 text-xs text-on-surface-variant">El presupuesto usa la misma metodologia que factura, pero no descuenta inventario.</p>
+                            </div>
+                            <div class="col-span-12 grid grid-cols-1 gap-4 rounded-md border border-outline-variant/30 bg-white p-5 shadow-sm sm:grid-cols-2 lg:col-span-7">
+                                <label class="text-xs font-semibold text-on-surface-variant">Fecha del presupuesto
+                                    <input id="estimate-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" />
+                                </label>
+                                <label class="text-xs font-semibold text-on-surface-variant">Fecha de expiracion
+                                    <input id="estimate-expiry-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" />
+                                </label>
+                                <label class="text-xs font-semibold text-on-surface-variant sm:col-span-2">Serie al guardar
+                                    <input id="estimate-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="COT" />
+                                </label>
+                            </div>
                         </div>
-                        <div class="mb-2 flex items-center justify-between">
-                            <span class="text-sm font-medium">Lineas</span>
-                            <button type="button" id="estimate-add-line" class="rounded border border-outline-variant/40 px-2 py-1 text-xs">Anadir linea</button>
-                        </div>
-                        <div class="overflow-x-auto">
-                            <table class="w-full min-w-[640px] text-left text-xs">
+                        <div class="overflow-x-auto rounded-md border border-outline-variant/30 bg-white shadow-sm">
+                            <table class="w-full min-w-[900px] text-left text-sm">
                                 <thead>
-                                    <tr class="border-b border-outline-variant/30">
-                                        <th class="py-1">Tipo linea</th>
-                                        <th class="py-1">Producto</th>
-                                        <th class="py-1">Descripcion</th>
-                                        <th class="py-1">Cant</th>
-                                        <th class="py-1">P.U.</th>
-                                        <th class="py-1">${escapeHtml(fh.taxLabel || 'ITBIS')}%</th>
-                                        <th class="py-1">Dto</th>
-                                        <th class="py-1"></th>
+                                    <tr class="border-b border-outline-variant/30 text-on-surface-variant">
+                                        <th class="px-5 py-3 text-left"><span class="pl-8">Items</span></th>
+                                        <th class="px-5 py-3 text-right">Cantidad</th>
+                                        <th class="px-5 py-3 text-right">Precio</th>
+                                        <th class="px-5 py-3 text-right">${escapeHtml(fh.taxLabel || 'ITBIS')} %</th>
+                                        <th class="px-5 py-3 text-right">Descuento %</th>
+                                        <th class="px-5 py-3 text-right">Importe</th>
+                                        <th class="px-2 py-3"></th>
                                     </tr>
                                 </thead>
                                 <tbody id="estimates-lines-tbody"></tbody>
                             </table>
+                            <button type="button" id="estimate-add-line" class="flex w-full items-center justify-center gap-2 border-t border-outline-variant/30 px-6 py-3 text-sm font-semibold text-primary hover:bg-primary/5">
+                                <span class="material-symbols-outlined text-lg" aria-hidden="true">add_circle</span>
+                                Anadir nuevo item
+                            </button>
                         </div>
-                        <div class="mt-4 flex flex-wrap gap-2">
-                            <button type="button" id="estimate-save-draft" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">Guardar borrador</button>
-                            <button type="button" id="estimate-issue-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Emitir presupuesto</button>
+                        <div class="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-2">
+                            <div>
+                                <label class="mb-2 block text-sm font-semibold text-on-surface">Notas</label>
+                                <textarea id="estimate-notes" class="min-h-[150px] w-full rounded-md border border-outline-variant/35 bg-white px-3 py-3 text-sm shadow-sm" placeholder="Notas visibles para el cliente"></textarea>
+                            </div>
+                            <div class="ml-auto w-full rounded-md border border-outline-variant/30 bg-white p-5 shadow-sm md:min-w-[390px] lg:max-w-md">
+                                <div class="flex items-center justify-between">
+                                    <span class="text-sm font-semibold uppercase text-on-surface-variant">Subtotal</span>
+                                    <span id="estimate-subtotal" class="text-lg text-on-surface">${fmtMoneyPanel(0)}</span>
+                                </div>
+                                <div class="mt-3 flex items-center justify-between">
+                                    <span class="text-sm font-semibold uppercase text-on-surface-variant">${escapeHtml(fh.taxLabel || 'ITBIS')}</span>
+                                    <span id="estimate-tax-total" class="text-lg text-on-surface">${fmtMoneyPanel(0)}</span>
+                                </div>
+                                <div class="mt-5 flex items-center justify-between border-t border-outline-variant/30 pt-4">
+                                    <span class="text-sm font-semibold uppercase text-on-surface-variant">Total importe:</span>
+                                    <span id="estimate-grand-total" class="text-xl font-bold text-primary">${fmtMoneyPanel(0)}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="mt-6 flex flex-wrap justify-end gap-2">
+                            <button type="button" id="estimate-save-draft" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
+                            <button type="button" id="estimate-issue-btn" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar presupuesto</button>
                         </div>
                     </div>
                 </div>
@@ -7788,17 +8196,47 @@
                 }
                 return out;
             };
+            const refreshEstimateTotals = () => {
+                let subtotal = 0;
+                let taxTotal = 0;
+                document.querySelectorAll('[data-est-line]').forEach((tr) => {
+                    const qty = Number(tr.querySelector('[data-fld="qty"]')?.value || 0);
+                    const price = Number(tr.querySelector('[data-fld="price"]')?.value || 0);
+                    const tax = Number(tr.querySelector('[data-fld="tax"]')?.value || 0);
+                    const disc = Number(tr.querySelector('[data-fld="disc"]')?.value || 0);
+                    const base = Math.max(0, qty * price);
+                    const discounted = base * (1 - Math.max(0, disc) / 100);
+                    const lineTax = discounted * (Math.max(0, tax) / 100);
+                    const total = discounted + lineTax;
+                    subtotal += discounted;
+                    taxTotal += lineTax;
+                    const lineEl = tr.querySelector('[data-est-line-total]');
+                    if (lineEl) lineEl.textContent = fmtMoneyPanel(total);
+                });
+                const subEl = document.getElementById('estimate-subtotal');
+                const taxEl = document.getElementById('estimate-tax-total');
+                const totalEl = document.getElementById('estimate-grand-total');
+                if (subEl) subEl.textContent = fmtMoneyPanel(subtotal);
+                if (taxEl) taxEl.textContent = fmtMoneyPanel(taxTotal);
+                if (totalEl) totalEl.textContent = fmtMoneyPanel(subtotal + taxTotal);
+            };
             const openSheet = (opts) => {
                 document.getElementById('estimate-sheet-id').value = opts.id || '';
                 document.getElementById('estimate-sheet-title').textContent = opts.id ? 'Editar presupuesto' : 'Nuevo presupuesto';
                 document.getElementById('estimate-sheet-sub').textContent = opts.id ? `ID interno: ${opts.id}` : 'Se creara como borrador (serie BOR).';
                 document.getElementById('estimate-customer').value = opts.customerId || '';
                 document.getElementById('estimate-notes').value = opts.notes || '';
+                const today = new Date().toISOString().slice(0, 10);
+                const expiry = new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
+                const dateEl = document.getElementById('estimate-date');
+                const expiryEl = document.getElementById('estimate-expiry-date');
+                if (dateEl) dateEl.value = opts.estimateDate || today;
+                if (expiryEl) expiryEl.value = opts.expiryDate || expiry;
                 const tbody = document.getElementById('estimates-lines-tbody');
                 const seed = opts.lines?.length
                     ? opts.lines
                     : [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }];
-                tbody.innerHTML = seed.map((l) => lineRowTemplate(l)).join('');
+                tbody.innerHTML = seed.map((l) => estimateShelfLineRowTemplate(l)).join('');
                 [...tbody.querySelectorAll('[data-est-line]')].forEach((tr, i) => {
                     syncLineRowUi(tr);
                     if (seed[i]?.productId) {
@@ -7806,14 +8244,15 @@
                         if (sel) sel.value = seed[i].productId;
                     }
                 });
+                refreshEstimateTotals();
+                document.querySelector('[data-presupuestos-root]')?.classList.add('hidden');
                 const sheet = document.getElementById('estimate-sheet');
                 sheet.classList.remove('hidden');
-                sheet.classList.add('flex');
             };
             const closeSheet = () => {
                 const sheet = document.getElementById('estimate-sheet');
                 sheet.classList.add('hidden');
-                sheet.classList.remove('flex');
+                document.querySelector('[data-presupuestos-root]')?.classList.remove('hidden');
             };
             const loadEstimateLines = async (id) => {
                 const { data: lineRows } = await dbSelect({
@@ -7842,6 +8281,7 @@
                     customerId: document.getElementById('estimate-customer').value || null,
                     items,
                     notes: document.getElementById('estimate-notes').value || '',
+                    dueDate: document.getElementById('estimate-expiry-date')?.value || null,
                     invoiceType: 'estimate'
                 };
                 const res = !id
@@ -7873,10 +8313,17 @@
                 openSheet({});
             }
             document.getElementById('estimate-sheet-close')?.addEventListener('click', closeSheet);
+            document.getElementById('estimate-save-draft-top')?.addEventListener('click', () => {
+                document.getElementById('estimate-save-draft')?.click();
+            });
+            document.getElementById('estimate-issue-btn-top')?.addEventListener('click', () => {
+                document.getElementById('estimate-issue-btn')?.click();
+            });
             document.getElementById('estimate-add-line')?.addEventListener('click', () => {
                 const tbody = document.getElementById('estimates-lines-tbody');
-                tbody.insertAdjacentHTML('beforeend', lineRowTemplate({}));
+                tbody.insertAdjacentHTML('beforeend', estimateShelfLineRowTemplate({}));
                 syncLineRowUi(tbody.lastElementChild);
+                refreshEstimateTotals();
             });
             document.getElementById('estimates-lines-tbody')?.addEventListener('change', (e) => {
                 const t = e.target;
@@ -7899,11 +8346,16 @@
                         syncLineRowUi(tr);
                     }
                 }
+                refreshEstimateTotals();
+            });
+            document.getElementById('estimates-lines-tbody')?.addEventListener('input', () => {
+                refreshEstimateTotals();
             });
             document.getElementById('estimates-lines-tbody')?.addEventListener('click', (e) => {
                 if (!e.target.matches('[data-remove-est-line]')) return;
                 const tbody = document.getElementById('estimates-lines-tbody');
                 if (tbody.querySelectorAll('[data-est-line]').length > 1) e.target.closest('[data-est-line]')?.remove();
+                refreshEstimateTotals();
             });
             document.getElementById('estimate-save-draft')?.addEventListener('click', () => saveOrIssue(false));
             document.getElementById('estimate-issue-btn')?.addEventListener('click', () => saveOrIssue(true));
@@ -7946,7 +8398,8 @@
                         id,
                         lines: await loadEstimateLines(id),
                         customerId: est.customer_id,
-                        notes: est.notes || ''
+                        notes: est.notes || '',
+                        expiryDate: est.due_date || ''
                     });
                 }
                 if (act === 'accept' || act === 'reject') {
@@ -8016,7 +8469,7 @@
                         isDraft: String(est.status || '').toLowerCase() === 'draft'
                     });
                     const fn = `presupuesto-${String(est.series || 'COT')}-${String(est.number || id)}.html`;
-                    if (act === 'pdf') openInvoiceDocumentPreview(html, true);
+                    if (act === 'pdf') await exportInvoiceDocumentPdf(fn.replace(/\.html?$/i, '.pdf'), html);
                     else downloadInvoiceDocumentHtml(fn, html);
                 }
             });
@@ -10175,6 +10628,48 @@
                 order: { column: 'updated_at', ascending: false },
                 limit: 80
             });
+            const [docRes, hintsRes, { data: tenantRows }] = await Promise.all([
+                fetchInvoiceDocSettingsViaDb(tid),
+                fetchTaxHintsViaDb(tid),
+                dbSelect({ table: 'tenants', filters: [{ op: 'eq', column: 'id', value: tid }], limit: 1 })
+            ]);
+            const docU = unwrapFnInvoke(docRes);
+            const hintsU = unwrapFnInvoke(hintsRes);
+            const docSettings = mergeInvoiceDocumentSettings(docU.data?.settings || {});
+            const docTemplates = Array.isArray(docU.data?.templates) && docU.data.templates.length ? docU.data.templates : documentTemplateCatalog();
+            const tenantRow = (tenantRows || [])[0] || {};
+            const fiscalTaxLabel = !hintsU.err && hintsU.data?.ok ? hintsU.data.taxLabel : 'ITBIS';
+            const previewInvoiceSample = {
+                series: 'FAC',
+                number: '0001',
+                invoice_type: 'standard',
+                status: 'emitida',
+                created_at: new Date().toISOString(),
+                currency: cur || 'DOP',
+                subtotal: 12500,
+                tax_total: 2250,
+                total: 14750,
+                notes: 'Gracias por su compra.'
+            };
+            const previewLineSample = [
+                { description: 'Servicio profesional', quantity: 1, unit_price: 8500, tax_rate: 18, discount: 0 },
+                { description: 'Soporte mensual', quantity: 2, unit_price: 2000, tax_rate: 18, discount: 0 }
+            ];
+            const previewCustomerSample = {
+                name: 'Cliente de ejemplo',
+                email: 'cliente@empresa.com',
+                tax_id: 'RNC 000-00000-0',
+                address: 'Santo Domingo, RD'
+            };
+            const initialPreviewHtml = buildInvoiceDocumentHtml({
+                invoice: previewInvoiceSample,
+                lines: previewLineSample,
+                customer: previewCustomerSample,
+                tenant: tenantRow,
+                branding: docSettings,
+                fiscalTaxLabel,
+                isDraft: false
+            });
             const regionalBlock = `
                 <div class="mb-6 rounded-xl border border-primary/25 bg-surface-container-high/30 p-5">
                     <h3 class="text-sm font-bold text-primary">${tr('iso.regionalTitle')}</h3>
@@ -10198,12 +10693,85 @@
                     <button type="button" id="reg-save-btn" class="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">${tr('iso.saveRegional')}</button>
                     <p id="reg-save-status" class="mt-2 hidden text-xs"></p>
                 </div>`;
+            const logoPreviewAttr = docSettings.logoDataUrl
+                ? String(docSettings.logoDataUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+                : '';
+            const invoiceFormatBlock = `
+                <div class="mb-6 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-5">
+                    <div class="mb-5">
+                        <h3 class="text-sm font-bold text-primary">Formato de factura</h3>
+                        <p class="mt-1 text-xs text-on-surface-variant">Plantillas de factura, logo, color y pie legal para exportar PDF desde el sistema de escritorio. No incluye envio por correo.</p>
+                    </div>
+                    <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                        <div class="space-y-4 rounded-lg border border-outline-variant/30 bg-surface-container-low/25 p-4">
+                            <h4 class="text-sm font-bold text-primary">Marca y pie</h4>
+                            <label class="block text-xs font-medium text-on-surface-variant">Logo (PNG, JPG, WebP; recomendado menor a 300 KB)
+                                <input type="file" id="doc-logo-file" accept="image/png,image/jpeg,image/webp,image/gif" class="mt-1 block w-full text-sm" />
+                            </label>
+                            <input type="hidden" id="doc-logo-data" value="" />
+                            <input type="hidden" id="doc-logo-removed" value="" />
+                            <div id="doc-logo-preview" class="flex min-h-[52px] items-center justify-start rounded border border-dashed border-outline-variant/50 bg-surface-container-lowest p-2">
+                                ${
+                                    logoPreviewAttr
+                                        ? `<img src="${logoPreviewAttr}" alt="Logo" class="max-h-16 max-w-[200px] object-contain" />`
+                                        : '<span class="text-xs text-on-surface-variant">Sin logo (opcional)</span>'
+                                }
+                            </div>
+                            <button type="button" id="doc-logo-clear" class="text-xs font-semibold text-error">Quitar logo</button>
+                            <label class="block text-xs font-medium text-on-surface-variant">Color de acento
+                                <input type="color" id="doc-accent" class="mt-1 h-10 w-full max-w-[120px] cursor-pointer rounded border border-outline-variant/40" value="${escapeHtml(docSettings.accentHex)}" />
+                            </label>
+                            <label class="block text-xs font-medium text-on-surface-variant">Nombre en documento (opcional)
+                                <input type="text" id="doc-company-name" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" value="${escapeHtml(
+                                    docSettings.companyDisplayName
+                                )}" placeholder="${escapeHtml(String(tenantRow.display_name || tenantRow.legal_name || 'Empresa'))}" />
+                            </label>
+                            <label class="block text-xs font-medium text-on-surface-variant">Pie legal / notas al pie
+                                <textarea id="doc-footer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="4" placeholder="RNC, terminos de pago, etc.">${escapeHtml(
+                                    docSettings.footerLegal
+                                )}</textarea>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm">
+                                <input type="checkbox" id="doc-show-disc" class="h-4 w-4" ${docSettings.showLineDiscounts ? 'checked' : ''} />
+                                <span>Mostrar columna descuento por linea</span>
+                            </label>
+                            <div class="flex flex-wrap gap-2">
+                                <button type="button" id="doc-branding-save" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar formato</button>
+                                <button type="button" id="doc-preview-sample" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Vista previa</button>
+                            </div>
+                            <p id="doc-branding-status" class="hidden text-xs"></p>
+                        </div>
+                        <div class="rounded-lg border border-outline-variant/30 p-4">
+                            <h4 class="mb-3 text-sm font-bold text-primary">Plantillas</h4>
+                            <div class="space-y-2">${docTemplates
+                                .map(
+                                    (t) => `
+                                <label class="flex cursor-pointer gap-3 rounded-lg border border-outline-variant/40 bg-surface-container-lowest p-3 has-[:checked]:border-primary has-[:checked]:ring-2 has-[:checked]:ring-primary/20">
+                                    <input type="radio" name="doc-template" value="${escapeHtml(t.id)}" class="mt-1" ${docSettings.templateId === t.id ? 'checked' : ''} />
+                                    <div>
+                                        <div class="text-sm font-semibold text-on-surface">${escapeHtml(t.label)}</div>
+                                        <div class="text-xs text-on-surface-variant">${escapeHtml(t.description || '')}</div>
+                                    </div>
+                                </label>`
+                                )
+                                .join('')}
+                            </div>
+                            <div class="mt-4 overflow-hidden rounded-lg border border-outline-variant/40 bg-white shadow-sm">
+                                <div class="flex items-center justify-between border-b border-outline-variant/30 bg-surface-container-low px-3 py-2">
+                                    <span class="text-xs font-semibold text-on-surface-variant">Vista previa</span>
+                                    <span class="text-[11px] text-on-surface-variant">Factura de ejemplo</span>
+                                </div>
+                                <iframe id="doc-preview-frame" title="Vista previa de factura" class="h-[520px] w-full bg-white" srcdoc="${escapeHtml(
+                                    initialPreviewHtml
+                                )}"></iframe>
+                            </div>
+                        </div>
+                    </div>
+                </div>`;
             dashboardContent.innerHTML = `
-                ${renderModuleHeader(
-                    'Configuracion',
-                    'Parametros por empresa (tenant_id). Las consultas del cliente fuerzan el tenant activo para evitar cruces de datos.'
-                )}
+                ${renderModuleHeader('Configuracion', 'Ajustes de la empresa activa')}
                 ${regionalBlock}
+                ${invoiceFormatBlock}
                 <div class="rounded-xl bg-surface-container-low p-1">
                     <div class="rounded-lg bg-surface-container-lowest p-5">
                         <h3 class="mb-2 text-sm font-semibold text-on-surface">app_settings (esta empresa)</h3>
@@ -10245,6 +10813,105 @@
                     await renderSidebar();
                     renderTenantContextBar();
                 }
+            });
+            const setDocStatus = (msg, isErr) => {
+                const el = document.getElementById('doc-branding-status');
+                if (!el) return;
+                el.textContent = msg || '';
+                el.classList.toggle('hidden', !msg);
+                el.classList.toggle('text-error', Boolean(isErr));
+                el.classList.toggle('text-primary', !isErr && Boolean(msg));
+            };
+            const readLiveDocBranding = () => {
+                const tplEl = document.querySelector('input[name="doc-template"]:checked');
+                const liveBranding = {
+                    ...docSettings,
+                    templateId: tplEl?.value || docSettings.templateId,
+                    accentHex: document.getElementById('doc-accent')?.value || docSettings.accentHex,
+                    footerLegal: document.getElementById('doc-footer')?.value || '',
+                    companyDisplayName: document.getElementById('doc-company-name')?.value || '',
+                    showLineDiscounts: Boolean(document.getElementById('doc-show-disc')?.checked),
+                    logoDataUrl: document.getElementById('doc-logo-data')?.value?.trim() || docSettings.logoDataUrl
+                };
+                if (document.getElementById('doc-logo-removed')?.value === '1') liveBranding.logoDataUrl = '';
+                return liveBranding;
+            };
+            const buildConfigPreviewHtml = () =>
+                buildInvoiceDocumentHtml({
+                    invoice: previewInvoiceSample,
+                    lines: previewLineSample,
+                    customer: previewCustomerSample,
+                    tenant: tenantRow,
+                    branding: readLiveDocBranding(),
+                    fiscalTaxLabel,
+                    isDraft: false
+                });
+            const refreshDocInlinePreview = () => {
+                const frame = document.getElementById('doc-preview-frame');
+                if (frame) frame.srcdoc = buildConfigPreviewHtml();
+            };
+            document.getElementById('doc-logo-file')?.addEventListener('change', (ev) => {
+                const f = ev.target.files?.[0];
+                const rm = document.getElementById('doc-logo-removed');
+                if (rm) rm.value = '';
+                if (!f) return;
+                if (f.size > 380000) {
+                    window.alert('Imagen demasiado grande; usa una por debajo de ~300 KB.');
+                    ev.target.value = '';
+                    return;
+                }
+                const r = new FileReader();
+                r.onload = () => {
+                    const data = typeof r.result === 'string' ? r.result : '';
+                    const hid = document.getElementById('doc-logo-data');
+                    if (hid) hid.value = data;
+                    const pv = document.getElementById('doc-logo-preview');
+                        if (pv) {
+                            const safe = data.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+                            pv.innerHTML = `<img src="${safe}" class="max-h-16 max-w-[200px] object-contain" alt="" />`;
+                        }
+                        refreshDocInlinePreview();
+                    };
+                    r.readAsDataURL(f);
+                });
+                document.getElementById('doc-logo-clear')?.addEventListener('click', () => {
+                const hid = document.getElementById('doc-logo-data');
+                if (hid) hid.value = '';
+                const rm = document.getElementById('doc-logo-removed');
+                if (rm) rm.value = '1';
+                const fi = document.getElementById('doc-logo-file');
+                if (fi) fi.value = '';
+                    const pv = document.getElementById('doc-logo-preview');
+                    if (pv) pv.innerHTML = '<span class="text-xs text-on-surface-variant">Logo se quitara al guardar.</span>';
+                    refreshDocInlinePreview();
+                });
+            ['doc-accent', 'doc-company-name', 'doc-footer', 'doc-show-disc'].forEach((id) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                el.addEventListener('input', refreshDocInlinePreview);
+                el.addEventListener('change', refreshDocInlinePreview);
+            });
+            document.querySelectorAll('input[name="doc-template"]').forEach((el) => {
+                el.addEventListener('change', refreshDocInlinePreview);
+            });
+            document.getElementById('doc-branding-save')?.addEventListener('click', async () => {
+                const docPayload = readLiveDocBranding();
+                if (document.getElementById('doc-logo-removed')?.value === '1') docPayload.logoDataUrl = null;
+                else {
+                    const nd = document.getElementById('doc-logo-data')?.value?.trim();
+                    if (nd) docPayload.logoDataUrl = nd;
+                }
+                const res = await invoiceDocumentBrandingUpsertViaDb(tid, docPayload);
+                const u = unwrapFnInvoke(res);
+                if (u.err || u.data?.error) {
+                    setDocStatus(u.err || u.data?.error || 'Error al guardar', true);
+                    return;
+                }
+                setDocStatus('Formato guardado.', false);
+            });
+            document.getElementById('doc-preview-sample')?.addEventListener('click', async () => {
+                refreshDocInlinePreview();
+                openInvoiceDocumentPreview(buildConfigPreviewHtml(), false);
             });
             zyronLog('render:config:done', { rows: (rows || []).length });
         };

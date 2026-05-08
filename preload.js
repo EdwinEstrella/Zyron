@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   maximize: () => ipcRenderer.send('window-maximize'),
   close: () => ipcRenderer.send('window-close'),
   getVersions: () => process.versions,
+  savePdfFromHtml: (payload) => ipcRenderer.invoke('desktop:save-pdf-from-html', payload),
   onWindowMaximized: (callback) => ipcRenderer.on('window-maximized', (_, isMaximized) => callback(isMaximized))
 })
 

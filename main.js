@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, nativeImage } = require('electron/main')
+const { app, BrowserWindow, ipcMain, nativeImage, dialog } = require('electron/main')
 
 /** Logs detallados de IPC/DB en main (menos overhead). Activar: ZYRON_MAIN_VERBOSE=1 */
 const mainVerboseIpc = () => process.env.ZYRON_MAIN_VERBOSE === '1'
@@ -377,6 +377,46 @@ ipcMain.on('window-maximize', () => {
 
 ipcMain.on('window-close', () => {
   if (mainWindow) mainWindow.close()
+})
+
+ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
+  let pdfWindow = null
+  try {
+    const html = typeof payload.html === 'string' ? payload.html : ''
+    if (!html.trim()) throw new Error('HTML requerido para exportar PDF')
+    const safeName = String(payload.filename || 'documento.pdf')
+      .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '_')
+      .replace(/\.html?$/i, '.pdf')
+      .replace(/\.pdf$/i, '') + '.pdf'
+    const defaultPath = path.join(app.getPath('desktop'), safeName)
+    const target = await dialog.showSaveDialog(mainWindow || undefined, {
+      title: 'Guardar PDF',
+      defaultPath,
+      filters: [{ name: 'PDF', extensions: ['pdf'] }]
+    })
+    if (target.canceled || !target.filePath) return { data: { ok: false, canceled: true }, error: null }
+    pdfWindow = new BrowserWindow({
+      show: false,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+    await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    const pdf = await pdfWindow.webContents.printToPDF({
+      printBackground: true,
+      pageSize: 'A4',
+      margins: { marginType: 'default' }
+    })
+    await fs.promises.writeFile(target.filePath, pdf)
+    return { data: { ok: true, path: target.filePath }, error: null }
+  } catch (error) {
+    zyronLog('desktop:savePdf:error', { message: error?.message || String(error) })
+    return normalizeResult(null, error)
+  } finally {
+    if (pdfWindow && !pdfWindow.isDestroyed()) pdfWindow.destroy()
+  }
 })
 
 ipcMain.handle('insforge:config', async () => {
