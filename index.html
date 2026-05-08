@@ -762,6 +762,7 @@
             roleSystemPresetsResolved: [...DEFAULT_ROLE_SYSTEM_PRESETS],
             facturasUi: { tab: 'list', openComposer: false },
             presupuestosUi: { openComposer: false },
+            configUi: { tab: 'empresa' },
             pagosUi: { tab: 'payments' },
             reportesUi: { tab: 'sales', dateFrom: '', dateTo: '' },
             fiscalUi: { tab: 'general' },
@@ -1246,11 +1247,21 @@
         };
 
         const ZYRON_TENANT_CONTEXT_KEY = 'zyron_tenant_context';
+        const ZYRON_TENANT_PREFERENCES_KEY = 'zyron_preferences';
         const defaultTenantContextObj = () => ({
             version: 1,
             defaultCurrency: 'DOP',
             defaultLocale: 'es',
             priceDisplayCurrency: null
+        });
+        const defaultTenantPreferencesObj = () => ({
+            version: 1,
+            defaultModule: 'panel',
+            interfaceDensity: 'comfortable',
+            confirmBeforeIssue: true,
+            autoOpenDocumentPreview: false,
+            invoiceDueDays: 30,
+            estimateExpiryDays: 15
         });
         const parseTenantContextRaw = (raw) => {
             if (!raw || typeof raw !== 'string') return defaultTenantContextObj();
@@ -1260,6 +1271,25 @@
                 return { ...defaultTenantContextObj(), ...j };
             } catch (_) {
                 return defaultTenantContextObj();
+            }
+        };
+        const parseTenantPreferencesRaw = (raw) => {
+            if (!raw || typeof raw !== 'string') return defaultTenantPreferencesObj();
+            try {
+                const j = JSON.parse(raw);
+                if (!j || typeof j !== 'object') return defaultTenantPreferencesObj();
+                const next = { ...defaultTenantPreferencesObj(), ...j };
+                if (!['panel', 'facturas', 'presupuestos', 'pagos', 'clientes', 'inventario', 'reportes'].includes(next.defaultModule)) {
+                    next.defaultModule = 'panel';
+                }
+                if (!['comfortable', 'compact'].includes(next.interfaceDensity)) next.interfaceDensity = 'comfortable';
+                next.confirmBeforeIssue = next.confirmBeforeIssue !== false;
+                next.autoOpenDocumentPreview = next.autoOpenDocumentPreview === true;
+                next.invoiceDueDays = Math.max(0, Math.min(365, Number(next.invoiceDueDays) || 30));
+                next.estimateExpiryDays = Math.max(0, Math.min(365, Number(next.estimateExpiryDays) || 15));
+                return next;
+            } catch (_) {
+                return defaultTenantPreferencesObj();
             }
         };
 
@@ -5765,6 +5795,87 @@
             });
         };
 
+        const appSettingJsonUpsertViaDb = async (tenantId, settingKey, nextObj, auditAction) => {
+            const { data: rows, error: selErr } = await dbSelect({
+                table: 'app_settings',
+                filters: [
+                    { op: 'eq', column: 'tenant_id', value: tenantId },
+                    { op: 'eq', column: 'setting_key', value: settingKey }
+                ],
+                limit: 1
+            });
+            if (selErr) return { data: { error: selErr.message }, error: null };
+            const existing = rows?.[0] || null;
+            const jsonStr = JSON.stringify(nextObj || {});
+            const now = new Date().toISOString();
+            let err = null;
+            if (existing?.id) {
+                let r = await dbUpdate({
+                    table: 'app_settings',
+                    values: { setting_value: jsonStr, updated_at: now },
+                    filters: [{ op: 'eq', column: 'id', value: existing.id }]
+                });
+                if (r.error && /setting_value|column .* does not exist/i.test(r.error.message || '')) {
+                    r = await dbUpdate({
+                        table: 'app_settings',
+                        values: { value: jsonStr, updated_at: now },
+                        filters: [{ op: 'eq', column: 'id', value: existing.id }]
+                    });
+                }
+                err = r.error;
+            } else {
+                let r = await dbInsert({
+                    table: 'app_settings',
+                    values: { tenant_id: tenantId, setting_key: settingKey, setting_value: jsonStr, updated_at: now }
+                });
+                if (r.error && /setting_value|column .* does not exist/i.test(r.error.message || '')) {
+                    r = await dbInsert({
+                        table: 'app_settings',
+                        values: { tenant_id: tenantId, setting_key: settingKey, value: jsonStr, updated_at: now }
+                    });
+                }
+                err = r.error;
+            }
+            if (err) return { data: { error: err.message || 'app_settings write failed' }, error: null };
+            await appendAuditLogSafe(tenantId, auditAction || 'app_setting_updated', 'app_settings', tenantId, {
+                settingKey,
+                keys: Object.keys(nextObj || {})
+            });
+            return { data: { ok: true, settings: nextObj }, error: null };
+        };
+
+        const fetchTenantPreferencesViaDb = async (tenantId) => {
+            const { data: rows, error } = await dbSelect({
+                table: 'app_settings',
+                filters: [
+                    { op: 'eq', column: 'tenant_id', value: tenantId },
+                    { op: 'eq', column: 'setting_key', value: ZYRON_TENANT_PREFERENCES_KEY }
+                ],
+                limit: 1
+            });
+            if (error) return { data: { error: error.message, preferences: defaultTenantPreferencesObj() }, error: null };
+            const rawVal = rows?.[0]?.setting_value ?? rows?.[0]?.value ?? '';
+            const raw = typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal || {});
+            return { data: { ok: true, preferences: parseTenantPreferencesRaw(raw) }, error: null };
+        };
+
+        const tenantPreferencesUpsertViaDb = async (tenantId, body) => {
+            const prevRes = await fetchTenantPreferencesViaDb(tenantId);
+            const prev = prevRes.data?.preferences || defaultTenantPreferencesObj();
+            const next = { ...prev };
+            if (body.defaultModule != null && ['panel', 'facturas', 'presupuestos', 'pagos', 'clientes', 'inventario', 'reportes'].includes(String(body.defaultModule))) {
+                next.defaultModule = String(body.defaultModule);
+            }
+            if (body.interfaceDensity != null && ['comfortable', 'compact'].includes(String(body.interfaceDensity))) {
+                next.interfaceDensity = String(body.interfaceDensity);
+            }
+            if (body.confirmBeforeIssue != null) next.confirmBeforeIssue = Boolean(body.confirmBeforeIssue);
+            if (body.autoOpenDocumentPreview != null) next.autoOpenDocumentPreview = Boolean(body.autoOpenDocumentPreview);
+            if (body.invoiceDueDays != null) next.invoiceDueDays = Math.max(0, Math.min(365, Number(body.invoiceDueDays) || 0));
+            if (body.estimateExpiryDays != null) next.estimateExpiryDays = Math.max(0, Math.min(365, Number(body.estimateExpiryDays) || 0));
+            return appSettingJsonUpsertViaDb(tenantId, ZYRON_TENANT_PREFERENCES_KEY, next, 'tenant_preferences_updated');
+        };
+
         /** upsert_context: misma logica que manage-tenant-context edge (app_settings + auditoria). */
         const tenantContextUpsertViaDb = async (tenantId, body) => {
             const { data: rows, error: selErr } = await dbSelect({
@@ -7151,10 +7262,13 @@
                                             <option value="debit_note">Nota de debito</option>
                                         </select>
                                     </label>
-                                    <label class="text-xs font-semibold text-on-surface-variant">Serie al guardar
-                                        <select id="factura-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                            ${[...seriesCodes].map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-                                        </select>
+                                    <label class="text-xs font-semibold text-on-surface-variant">Plantilla
+                                        <div class="mt-1 flex gap-2">
+                                            <select id="factura-template" class="min-w-0 flex-1 rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
+                                                ${docTemplates.map((t) => `<option value="${escapeHtml(t.id)}" ${docSettings.templateId === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
+                                            </select>
+                                            <button type="button" id="factura-template-save" class="rounded-md border border-outline-variant/50 px-3 py-2 text-xs font-semibold text-primary">Cambiar</button>
+                                        </div>
                                     </label>
                                     <label class="text-xs font-semibold text-on-surface-variant">Fecha de factura
                                         <input id="factura-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" />
@@ -7379,6 +7493,11 @@
             document.getElementById('factura-issue-btn-top')?.addEventListener('click', () => {
                 document.getElementById('factura-issue-btn')?.click();
             });
+            document.getElementById('factura-template-save')?.addEventListener('click', async () => {
+                const templateId = document.getElementById('factura-template')?.value || docSettings.templateId;
+                await persistFacturaTemplateChoice(templateId);
+                window.alert('Plantilla actualizada.');
+            });
             document.getElementById('factura-add-line')?.addEventListener('click', () => {
                 const tbody = document.getElementById('facturas-lines-tbody');
                 tbody.insertAdjacentHTML('beforeend', invoiceShelfLineRowTemplate({}));
@@ -7433,9 +7552,21 @@
                 parentInvoiceId: document.getElementById('factura-parent-id').value || null,
                 customerId: document.getElementById('factura-customer').value || null,
                 notes: document.getElementById('factura-notes').value || '',
-                series: document.getElementById('factura-issue-series').value || 'FAC',
+                series:
+                    document.getElementById('factura-inv-type').value === 'credit_note'
+                        ? 'NCC'
+                        : document.getElementById('factura-inv-type').value === 'debit_note'
+                          ? 'NDD'
+                          : document.getElementById('factura-inv-type').value === 'proforma'
+                            ? 'PRO'
+                            : 'FAC',
+                templateId: document.getElementById('factura-template')?.value || docSettings.templateId,
                 dueDate: document.getElementById('factura-due-date')?.value || null
             });
+            const persistFacturaTemplateChoice = async (templateId) => {
+                if (!templateId || templateId === docSettings.templateId) return;
+                await invoiceDocumentBrandingUpsertViaDb(tid, { ...docSettings, templateId });
+            };
 
             document.getElementById('factura-save-draft')?.addEventListener('click', async () => {
                 const items = collectLines();
@@ -7448,6 +7579,7 @@
                     window.alert('Selecciona el documento padre para NC/ND.');
                     return;
                 }
+                await persistFacturaTemplateChoice(meta.templateId);
                 const iid = document.getElementById('factura-sheet-invoice-id').value.trim();
                 if (!iid) {
                     const res = await invokeFn('create-invoice-with-stock', {
@@ -7500,6 +7632,7 @@
                     window.alert('Selecciona el documento padre para NC/ND.');
                     return;
                 }
+                await persistFacturaTemplateChoice(meta.templateId);
                 const iid = document.getElementById('factura-sheet-invoice-id').value.trim();
                 if (!iid) {
                     const res = await invokeFn('create-invoice-with-stock', {
@@ -7893,6 +8026,7 @@
             const fallbackTax = Number.isFinite(Number(fh.defaultTaxRate)) ? Number(fh.defaultTaxRate) : 18;
             const docU = unwrapFnInvoke(docRes);
             const docSettings = mergeInvoiceDocumentSettings(docU.data?.settings || {});
+            const docTemplates = Array.isArray(docU.data?.templates) && docU.data.templates.length ? docU.data.templates : documentTemplateCatalog();
             const tenantRow = (tenantRows || [])[0] || {};
             const customerById = new Map((customers || []).map((c) => [c.id, c]));
 
@@ -8113,8 +8247,13 @@
                                 <label class="text-xs font-semibold text-on-surface-variant">Fecha de expiracion
                                     <input id="estimate-expiry-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" />
                                 </label>
-                                <label class="text-xs font-semibold text-on-surface-variant sm:col-span-2">Serie al guardar
-                                    <input id="estimate-issue-series" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="COT" />
+                                <label class="text-xs font-semibold text-on-surface-variant sm:col-span-2">Plantilla
+                                    <div class="mt-1 flex gap-2">
+                                        <select id="estimate-template" class="min-w-0 flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
+                                            ${docTemplates.map((t) => `<option value="${escapeHtml(t.id)}" ${docSettings.templateId === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
+                                        </select>
+                                        <button type="button" id="estimate-template-save" class="rounded-md border border-outline-variant/50 px-3 py-2 text-xs font-semibold text-primary">Cambiar</button>
+                                    </div>
                                 </label>
                             </div>
                         </div>
@@ -8282,19 +8421,23 @@
                     items,
                     notes: document.getElementById('estimate-notes').value || '',
                     dueDate: document.getElementById('estimate-expiry-date')?.value || null,
+                    templateId: document.getElementById('estimate-template')?.value || docSettings.templateId,
                     invoiceType: 'estimate'
                 };
+                if (payload.templateId && payload.templateId !== docSettings.templateId) {
+                    await invoiceDocumentBrandingUpsertViaDb(tid, { ...docSettings, templateId: payload.templateId });
+                }
                 const res = !id
                     ? await invokeFn('create-invoice-with-stock', {
                           ...payload,
                           isDraft: !issue,
-                          series: document.getElementById('estimate-issue-series').value || 'COT'
+                          series: 'COT'
                       })
                     : await invokeFn('update-invoice', {
                           ...payload,
                           invoiceId: id,
                           action: issue ? 'issue' : 'save_draft',
-                          series: document.getElementById('estimate-issue-series').value || 'COT'
+                          series: 'COT'
                       });
                 const u = unwrapFnInvoke(res);
                 if (u.err || !u.data?.ok) {
@@ -8318,6 +8461,13 @@
             });
             document.getElementById('estimate-issue-btn-top')?.addEventListener('click', () => {
                 document.getElementById('estimate-issue-btn')?.click();
+            });
+            document.getElementById('estimate-template-save')?.addEventListener('click', async () => {
+                const templateId = document.getElementById('estimate-template')?.value || docSettings.templateId;
+                if (templateId && templateId !== docSettings.templateId) {
+                    await invoiceDocumentBrandingUpsertViaDb(tid, { ...docSettings, templateId });
+                }
+                window.alert('Plantilla actualizada.');
             });
             document.getElementById('estimate-add-line')?.addEventListener('click', () => {
                 const tbody = document.getElementById('estimates-lines-tbody');
@@ -10684,11 +10834,6 @@
                                 <option value="en" ${loc === 'en' ? 'selected' : ''}>English</option>
                             </select>
                         </label>
-                        <label class="text-xs font-medium sm:col-span-2">Moneda visual alternativa (opcional, ISO)
-                            <input id="reg-display-currency" maxlength="3" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 font-mono uppercase text-sm" value="${escapeHtml(
-                                curP
-                            )}" placeholder="USD" />
-                        </label>
                     </div>
                     <button type="button" id="reg-save-btn" class="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">${tr('iso.saveRegional')}</button>
                     <p id="reg-save-status" class="mt-2 hidden text-xs"></p>
@@ -10768,10 +10913,7 @@
                         </div>
                     </div>
                 </div>`;
-            dashboardContent.innerHTML = `
-                ${renderModuleHeader('Configuracion', 'Ajustes de la empresa activa')}
-                ${regionalBlock}
-                ${invoiceFormatBlock}
+            const appSettingsBlock = `
                 <div class="rounded-xl bg-surface-container-low p-1">
                     <div class="rounded-lg bg-surface-container-lowest p-5">
                         <h3 class="mb-2 text-sm font-semibold text-on-surface">app_settings (esta empresa)</h3>
@@ -10794,6 +10936,93 @@
                         </table>
                     </div>
                 </div>`;
+            const settingsMenu = [
+                { key: 'cuenta', icon: 'person', label: 'Cuenta' },
+                { key: 'empresa', icon: 'business', label: 'Empresa' },
+                { key: 'preferencias', icon: 'tune', label: 'Preferencias' },
+                { key: 'documentos', icon: 'description', label: 'Facturas y presupuestos' },
+                { key: 'impuestos', icon: 'request_quote', label: 'Impuestos' },
+                { key: 'pagos', icon: 'payments', label: 'Pagos' },
+                { key: 'notas', icon: 'notes', label: 'Notas' },
+                { key: 'campos', icon: 'dynamic_form', label: 'Campos personalizados' },
+                { key: 'roles', icon: 'admin_panel_settings', label: 'Roles' },
+                { key: 'correo', icon: 'mail', label: 'Correo' },
+                { key: 'archivos', icon: 'picture_as_pdf', label: 'PDF y almacenamiento' },
+                { key: 'notificaciones', icon: 'notifications', label: 'Notificaciones' },
+                { key: 'sistema', icon: 'database', label: 'Datos del sistema' }
+            ];
+            const activeSetting = settingsMenu.some((m) => m.key === state.configUi?.tab) ? state.configUi.tab : 'empresa';
+            const devCard = (title, text) => `
+                <div class="rounded-lg border border-dashed border-outline-variant/60 bg-surface-container-lowest p-5">
+                    <div class="flex items-center gap-2 text-sm font-bold text-primary">
+                        <span class="material-symbols-outlined text-lg" aria-hidden="true">construction</span>${escapeHtml(title)}
+                    </div>
+                    <p class="mt-2 text-sm text-on-surface-variant">${escapeHtml(text)}</p>
+                </div>`;
+            const shortcutCard = (title, text, btn, moduleKey) => `
+                <div class="rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-5">
+                    <h3 class="text-sm font-bold text-primary">${escapeHtml(title)}</h3>
+                    <p class="mt-2 text-sm text-on-surface-variant">${escapeHtml(text)}</p>
+                    <button type="button" data-config-open="${escapeHtml(moduleKey)}" class="mt-4 rounded-md border border-outline-variant/50 px-4 py-2 text-sm font-semibold text-primary">${escapeHtml(btn)}</button>
+                </div>`;
+            const contentBySetting = {
+                cuenta: devCard('Cuenta', 'Preferencias personales, perfil y seguridad local se agregaran a esta seccion.'),
+                empresa: regionalBlock,
+                preferencias: devCard('Preferencias', 'Idioma, moneda base y comportamiento regional viven en Empresa. Preferencias avanzadas se agregaran aqui.'),
+                documentos: invoiceFormatBlock,
+                impuestos: shortcutCard('Impuestos', 'Configura tasas, retenciones y comprobantes fiscales desde el modulo Fiscal.', 'Abrir impuestos', 'fiscal'),
+                pagos: shortcutCard('Pagos', 'Metodos de pago, cuentas por cobrar, vencimientos y conciliacion viven en Pagos y cobros.', 'Abrir pagos', 'pagos'),
+                notas: devCard('Notas', 'Plantillas de notas para documentos y clientes estaran disponibles aqui.'),
+                campos: devCard('Campos personalizados', 'Campos extra para clientes, productos y documentos se agregaran en esta seccion.'),
+                roles: shortcutCard('Roles', 'Administra permisos y puestos de trabajo por empresa.', 'Abrir roles', 'roles'),
+                correo: devCard('Correo', 'El envio por correo esta fuera del flujo actual de escritorio.'),
+                archivos: devCard('PDF y almacenamiento', 'La exportacion PDF se guarda desde el dialogo del sistema. Almacenamiento avanzado se agregara despues.'),
+                notificaciones: devCard('Notificaciones', 'En desarrollo.'),
+                sistema: appSettingsBlock
+            };
+            dashboardContent.innerHTML = `
+                ${renderModuleHeader('Configuracion', 'Ajustes de la empresa activa')}
+                <div class="w-full xl:hidden">
+                    <select id="config-mobile-select" class="w-full rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm">
+                        ${settingsMenu.map((m) => `<option value="${escapeHtml(m.key)}" ${activeSetting === m.key ? 'selected' : ''}>${escapeHtml(m.label)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="flex gap-6">
+                    <aside class="hidden w-60 shrink-0 xl:block">
+                        <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-2 shadow-sm">
+                            ${settingsMenu
+                                .map(
+                                    (m) => `
+                                <button type="button" data-config-tab="${escapeHtml(m.key)}" class="flex w-full items-center gap-3 rounded-md px-3 py-3 text-left text-sm ${
+                                        activeSetting === m.key ? 'bg-primary text-white' : 'text-on-surface hover:bg-surface-container-low'
+                                    }">
+                                    <span class="material-symbols-outlined text-lg" aria-hidden="true">${escapeHtml(m.icon)}</span>
+                                    <span>${escapeHtml(m.label)}</span>
+                                </button>`
+                                )
+                                .join('')}
+                        </div>
+                    </aside>
+                    <section class="min-w-0 flex-1">
+                        ${contentBySetting[activeSetting] || regionalBlock}
+                    </section>
+                </div>`;
+            document.querySelectorAll('[data-config-tab]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    state.configUi = { ...state.configUi, tab: btn.getAttribute('data-config-tab') || 'empresa' };
+                    await renderConfigModule();
+                });
+            });
+            document.getElementById('config-mobile-select')?.addEventListener('change', async (ev) => {
+                state.configUi = { ...state.configUi, tab: ev.target.value || 'empresa' };
+                await renderConfigModule();
+            });
+            document.querySelectorAll('[data-config-open]').forEach((btn) => {
+                btn.addEventListener('click', () => {
+                    const moduleKey = btn.getAttribute('data-config-open');
+                    if (moduleKey) void openModule(moduleKey);
+                });
+            });
             document.getElementById('reg-save-btn')?.addEventListener('click', async () => {
                 const c = String(document.getElementById('reg-def-currency')?.value || '').trim().toUpperCase();
                 const st = document.getElementById('reg-save-status');
