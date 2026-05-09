@@ -717,7 +717,6 @@
             { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
             { key: 'clientes', label: 'Clientes', icon: 'groups' },
             { key: 'reportes', label: 'Reportes', icon: 'monitoring' },
-            { key: 'fiscal', label: 'Fiscal', icon: 'gavel' },
             { key: 'config', label: 'Configuracion', icon: 'settings' }
         ]);
 
@@ -2193,7 +2192,9 @@
                 refreshSidebarSelection();
                 return;
             }
-            const allowedModules = state.isSuperAdmin ? state.navModulesSuper : filterTenantNavForRole(state.navModulesTenant);
+            const allowedModules = state.isSuperAdmin
+                ? state.navModulesSuper
+                : filterTenantNavForRole(state.navModulesTenant).filter((module) => module.key !== 'fiscal');
             for (const module of allowedModules) {
                 const link = document.createElement('a');
                 link.className = `nav-module ${module.key === state.currentModule ? 'is-active' : ''}`;
@@ -5958,7 +5959,7 @@
             }
             if (body.defaultLocale != null) {
                 const l = String(body.defaultLocale).trim().toLowerCase();
-                if (l === 'es' || l === 'en') next.defaultLocale = l;
+                if (l === 'es') next.defaultLocale = l;
             }
             if (body.priceDisplayCurrency != null) {
                 const c = body.priceDisplayCurrency === '' ? null : String(body.priceDisplayCurrency).trim().toUpperCase();
@@ -8700,6 +8701,7 @@
                 return;
             }
             const tid = state.currentTenantId;
+            const cur = state.tenantContext?.priceDisplayCurrency || state.tenantContext?.defaultCurrency || 'DOP';
             const tab = state.pagosUi?.tab || 'payments';
 
             const [pRes, mRes, arRes, logRes] = await Promise.all([
@@ -8783,6 +8785,14 @@
                 .map((m) => `<option value="${escapeHtml(m.code)}">${escapeHtml(m.label || m.code)}</option>`)
                 .join('');
 
+            const invoiceOpts = (arRows || [])
+                .map((inv) => {
+                    const doc = `${inv.series || ""}-${inv.number || ""}`.replace(/^-|-$/g, '') || String(inv.id).slice(0, 8);
+                    const bal = Number(inv.balance_due || 0);
+                    return `<option value="${escapeHtml(inv.id)}" data-balance="${escapeHtml(bal)}" data-currency="${escapeHtml(inv.currency || cur || 'DOP')}" data-customer-id="${escapeHtml(inv.customer_id || '')}">${escapeHtml(doc)} ? saldo ${money(bal)} ${escapeHtml(inv.currency || cur || 'DOP')}</option>`;
+                })
+                .join('');
+
             const arTable = (arRows || [])
                 .map(
                     (inv) => `<tr class="border-b border-outline-variant/20">
@@ -8850,9 +8860,16 @@
                 <pre id="pagos-alloc-pre" class="mt-3 hidden max-h-48 overflow-auto rounded-md bg-surface-container-high p-3 font-mono text-xs"></pre>`;
 
             const registerPanel = `
-                <p class="mb-3 text-xs text-on-surface-variant">Pagos parciales: envia <code class="rounded bg-surface-container px-1">allocations</code> como JSON array <code class="rounded bg-surface-container px-1">[{"invoiceId":"uuid","amount":100}]</code>.</p>
+                <p class="mb-3 text-xs text-on-surface-variant">Como InvoiceShelf: elegis la factura abierta, el sistema toma su saldo y registra la aplicacion del pago contra esa factura. Nada de JSON a mano: eso era deuda tecnica, no producto.</p>
                 <div class="grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
                     <label class="block text-sm sm:col-span-2">
+                        <span class="font-medium">Factura</span>
+                        <select id="pay-reg-invoice" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
+                            <option value="">Pago sin aplicar / anticipo</option>
+                            ${invoiceOpts}
+                        </select>
+                    </label>
+                    <label class="block text-sm">
                         <span class="font-medium">Monto</span>
                         <input id="pay-reg-amount" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="0.00" />
                     </label>
@@ -8864,7 +8881,7 @@
                     </label>
                     <label class="block text-sm">
                         <span class="font-medium">Moneda</span>
-                        <input id="pay-reg-currency" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="USD" />
+                        <input id="pay-reg-currency" maxlength="3" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm uppercase" value="${escapeHtml(cur || 'DOP')}" />
                     </label>
                     <label class="block text-sm">
                         <span class="font-medium">Estado pago</span>
@@ -8887,10 +8904,6 @@
                     <label class="block text-sm">
                         <span class="font-medium">Id transaccion pasarela</span>
                         <input id="pay-reg-gw-tx" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="pi_..." />
-                    </label>
-                    <label class="block text-sm sm:col-span-2">
-                        <span class="font-medium">Aplicaciones a facturas (JSON)</span>
-                        <textarea id="pay-reg-alloc-json" rows="4" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 font-mono text-xs" placeholder='[] o [{"invoiceId":"...","amount":50}]'></textarea>
                     </label>
                 </div>
                 <button type="button" id="pay-reg-submit" class="mt-4 rounded-md bg-primary px-4 py-2 text-sm text-white">Registrar pago</button>`;
@@ -8999,27 +9012,29 @@
                 btn.addEventListener('click', () => showAlloc(btn.getAttribute('data-pay-alloc')));
             });
 
+            document.getElementById('pay-reg-invoice')?.addEventListener('change', (ev) => {
+                const opt = ev.target?.selectedOptions?.[0];
+                const bal = Number(opt?.getAttribute('data-balance') || 0);
+                const curOpt = opt?.getAttribute('data-currency') || cur || 'DOP';
+                if (bal > 0) document.getElementById('pay-reg-amount').value = String(bal.toFixed(2));
+                document.getElementById('pay-reg-currency').value = curOpt;
+            });
+
             document.getElementById('pay-reg-submit')?.addEventListener('click', async () => {
                 const amount = Number(document.getElementById('pay-reg-amount')?.value || 0);
                 if (!(amount > 0)) {
                     window.alert('Indica un monto mayor a cero.');
                     return;
                 }
-                let allocations = [];
-                const raw = document.getElementById('pay-reg-alloc-json')?.value?.trim();
-                if (raw) {
-                    try {
-                        allocations = JSON.parse(raw);
-                        if (!Array.isArray(allocations)) throw new Error('allocations debe ser array');
-                    } catch (e) {
-                        window.alert(e.message || 'JSON invalido en aplicaciones.');
-                        return;
-                    }
-                }
+                const invSel = document.getElementById('pay-reg-invoice');
+                const selectedInvoiceId = invSel?.value || null;
+                const selectedOpt = invSel?.selectedOptions?.[0];
+                const allocations = selectedInvoiceId ? [{ invoiceId: selectedInvoiceId, amount }] : [];
                 const res = await paymentsCreatePaymentViaDb(tid, {
                     amount,
+                    customerId: selectedOpt?.getAttribute('data-customer-id') || null,
                     paymentMethodCode: document.getElementById('pay-reg-method')?.value || 'cash',
-                    currency: document.getElementById('pay-reg-currency')?.value || 'USD',
+                    currency: document.getElementById('pay-reg-currency')?.value || cur || 'DOP',
                     status: document.getElementById('pay-reg-status')?.value || 'completed',
                     reference: document.getElementById('pay-reg-reference')?.value?.trim() || null,
                     notes: document.getElementById('pay-reg-notes')?.value?.trim() || null,
@@ -10263,10 +10278,12 @@
             zyronLog('render:inventario:done', { tab, count: rows.length });
         };
 
-        const renderFiscalModule = async () => {
-            zyronLog('render:fiscal:start', { tenantId: state.currentTenantId });
+        const renderFiscalModule = async (opts = {}) => {
+            const target = opts.mount || dashboardContent;
+            const embedded = Boolean(opts.embedded);
+            zyronLog('render:fiscal:start', { tenantId: state.currentTenantId, embedded });
             if (!state.currentTenantId) {
-                dashboardContent.innerHTML = `${renderModuleHeader('Fiscal', 'Necesitas una empresa activa')}`;
+                target.innerHTML = `${renderModuleHeader('Fiscal', 'Necesitas una empresa activa')}`;
                 return;
             }
             const tid = state.currentTenantId;
@@ -10381,17 +10398,21 @@
                     '<label class="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" id="fisc-ack" /> Confirmo revision con asesoria contable.</label>' +
                     '<button type="button" id="fisc-ack-save" class="mt-3 rounded-md border px-3 py-2 text-sm">Registrar</button>';
             }
-            dashboardContent.innerHTML = `${renderModuleHeader(
-                'Impuestos y cumplimiento',
-                'ITBIS/IVA, precios con/sin impuesto incluido, retenciones, NCF (RD) y estado de facturacion electronica.'
-            )}<div class="mb-3 flex flex-wrap gap-2">${tabBtn('general', 'General')}${tabBtn('tasas', 'Tasas')}${tabBtn('ncf', 'NCF')}${tabBtn(
+            target.innerHTML = `${
+                embedded
+                    ? ''
+                    : renderModuleHeader(
+                          'Impuestos y cumplimiento',
+                          'ITBIS/IVA, precios con/sin impuesto incluido, retenciones, NCF (RD) y estado de facturacion electronica.'
+                      )
+            }<div class="mb-3 flex flex-wrap gap-2">${tabBtn('general', 'General')}${tabBtn('tasas', 'Tasas')}${tabBtn('ncf', 'NCF')}${tabBtn(
                 'cumplimiento',
                 'Cumplimiento'
             )}</div>${errBanner}<div class="rounded-xl bg-surface-container-low p-1"><div class="rounded-lg bg-surface-container-lowest p-5">${body}</div></div>`;
-            dashboardContent.querySelectorAll('[data-fisc-tab]').forEach((btn) => {
+            target.querySelectorAll('[data-fisc-tab]').forEach((btn) => {
                 btn.addEventListener('click', () => {
                     state.fiscalUi = { ...state.fiscalUi, tab: btn.getAttribute('data-fisc-tab') };
-                    void renderFiscalModule();
+                    void renderFiscalModule(opts);
                 });
             });
             document.getElementById('fisc-set-form')?.addEventListener('submit', async (ev) => {
@@ -10414,13 +10435,13 @@
                 });
                 const u = unwrapFnInvoke(res);
                 if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-                else void renderFiscalModule();
+                else void renderFiscalModule(opts);
             });
             document.getElementById('fisc-seed-rates')?.addEventListener('click', async () => {
                 const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'seed_tax_rates_do' });
                 const u = unwrapFnInvoke(res);
                 if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-                else void renderFiscalModule();
+                else void renderFiscalModule(opts);
             });
             document.getElementById('fisc-rate-add')?.addEventListener('click', async () => {
                 const res = await taxComplianceManageViaDb({
@@ -10433,15 +10454,15 @@
                 });
                 const u = unwrapFnInvoke(res);
                 if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-                else void renderFiscalModule();
+                else void renderFiscalModule(opts);
             });
-            dashboardContent.querySelectorAll('[data-fisc-del-rate]').forEach((btn) => {
+            target.querySelectorAll('[data-fisc-del-rate]').forEach((btn) => {
                 btn.addEventListener('click', async () => {
                     if (!window.confirm('Eliminar tasa?')) return;
                     const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'delete_tax_rate', id: btn.getAttribute('data-fisc-del-rate') });
                     const u = unwrapFnInvoke(res);
                     if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-                    else void renderFiscalModule();
+                    else void renderFiscalModule(opts);
                 });
             });
             document.getElementById('fisc-ncf-add')?.addEventListener('click', async () => {
@@ -10456,7 +10477,7 @@
                 });
                 const u = unwrapFnInvoke(res);
                 if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-                else void renderFiscalModule();
+                else void renderFiscalModule(opts);
             });
             document.getElementById('fisc-ncf-prev-btn')?.addEventListener('click', async () => {
                 const res = await taxComplianceManageViaDb({
@@ -10468,13 +10489,13 @@
                 const el = document.getElementById('fisc-ncf-prev');
                 if (el) el.textContent = u.data?.preview?.ncf || '(sin secuencia)';
             });
-            dashboardContent.querySelectorAll('[data-fisc-del-ncf]').forEach((btn) => {
+            target.querySelectorAll('[data-fisc-del-ncf]').forEach((btn) => {
                 btn.addEventListener('click', async () => {
                     if (!window.confirm('Eliminar secuencia?')) return;
                     const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'delete_ncf_sequence', id: btn.getAttribute('data-fisc-del-ncf') });
                     const u = unwrapFnInvoke(res);
                     if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-                    else void renderFiscalModule();
+                    else void renderFiscalModule(opts);
                 });
             });
             document.getElementById('fisc-ack-save')?.addEventListener('click', async () => {
@@ -10485,7 +10506,7 @@
                 const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'upsert_settings', complianceAckAt: new Date().toISOString() });
                 const u = unwrapFnInvoke(res);
                 if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-                else void renderFiscalModule();
+                else void renderFiscalModule(opts);
             });
             zyronLog('render:fiscal:done', { tab });
         };
@@ -10881,24 +10902,49 @@
                 fiscalTaxLabel,
                 isDraft: false
             });
-            const regionalBlock = `
-                <div class="mb-6 rounded-xl border border-primary/25 bg-surface-container-high/30 p-5">
-                    <h3 class="text-sm font-bold text-primary">${tr('iso.regionalTitle')}</h3>
-                    <p class="mb-4 text-xs text-on-surface-variant">${tr('iso.regionalSub')}</p>
-                    <div class="grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-2">
-                        <label class="text-xs font-medium">${tr('iso.currency')} (ISO 4217)
-                            <input id="reg-def-currency" maxlength="3" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 font-mono uppercase text-sm" value="${escapeHtml(cur)}" />
+            const companyBlock = `
+                <div class="mb-6 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm">
+                    <h3 class="text-sm font-bold text-primary">Empresa</h3>
+                    <p class="mb-4 text-xs text-on-surface-variant">Datos legales y de contacto usados en documentos y operacion.</p>
+                    <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label class="text-xs font-medium text-on-surface-variant">Nombre comercial
+                            <input id="company-display-name" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(tenantRow.display_name || '')}" />
                         </label>
-                        <label class="text-xs font-medium">${tr('iso.locale')}
-                            <select id="reg-def-locale" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                <option value="es" ${loc === 'es' ? 'selected' : ''}>Espanol</option>
-                                <option value="en" ${loc === 'en' ? 'selected' : ''}>English</option>
-                            </select>
+                        <label class="text-xs font-medium text-on-surface-variant">Razon social
+                            <input id="company-legal-name" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(tenantRow.legal_name || '')}" />
+                        </label>
+                        <label class="text-xs font-medium text-on-surface-variant">RNC / identificacion fiscal
+                            <input id="company-tax-id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(tenantRow.tax_id || '')}" />
+                        </label>
+                        <label class="text-xs font-medium text-on-surface-variant">Email
+                            <input id="company-email" type="email" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(tenantRow.email || '')}" />
+                        </label>
+                        <label class="text-xs font-medium text-on-surface-variant">Telefono
+                            <input id="company-phone" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(tenantRow.phone || '')}" />
+                        </label>
+                        <label class="text-xs font-medium text-on-surface-variant sm:col-span-2">Direccion
+                            <textarea id="company-address" rows="3" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${escapeHtml(tenantRow.address || '')}</textarea>
                         </label>
                     </div>
-                    <button type="button" id="reg-save-btn" class="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">${tr('iso.saveRegional')}</button>
+                    <button type="button" id="company-save-btn" class="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar empresa</button>
+                    <p id="company-save-status" class="mt-2 hidden text-xs"></p>
+                </div>`;
+            const regionalBlock = `
+                <div class="mb-6 rounded-xl border border-primary/25 bg-surface-container-high/30 p-5">
+                    <h3 class="text-sm font-bold text-primary">Configuracion regional</h3>
+                    <p class="mb-4 text-xs text-on-surface-variant">Moneda de la empresa. El sistema opera solo en espanol, asi que idioma no se configura ni se muestra.</p>
+                    <div class="grid max-w-xl grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label class="text-xs font-medium">Moneda (ISO 4217)
+                            <input id="reg-def-currency" maxlength="3" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 font-mono uppercase text-sm" value="${escapeHtml(cur)}" />
+                        </label>
+                        <label class="text-xs font-medium">Moneda visible alternativa (opcional)
+                            <input id="reg-display-currency" maxlength="3" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 font-mono uppercase text-sm" value="${escapeHtml(curP)}" placeholder="DOP" />
+                        </label>
+                    </div>
+                    <button type="button" id="reg-save-btn" class="mt-3 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar region</button>
                     <p id="reg-save-status" class="mt-2 hidden text-xs"></p>
                 </div>`;
+            const companySettingsBlock = `${companyBlock}${regionalBlock}`;
             const logoPreviewAttr = docSettings.logoDataUrl
                 ? String(docSettings.logoDataUrl).replace(/&/g, '&amp;').replace(/"/g, '&quot;')
                 : '';
@@ -10997,7 +11043,7 @@
                             return `Plantilla ${obj.templateId || 'classic'} ? color ${obj.accentHex || '#0f2744'}${obj.logoDataUrl ? ' ? logo guardado' : ''}`;
                         }
                         if (key === 'zyron_tenant_context') {
-                            return `Moneda ${obj.defaultCurrency || 'DOP'} ? idioma ${obj.defaultLocale || 'es'}`;
+                            return `Moneda ${obj.defaultCurrency || 'DOP'}`;
                         }
                         return Object.keys(obj).length ? Object.keys(obj).join(', ') : 'Objeto vacío';
                     } catch (_) {
@@ -11006,7 +11052,9 @@
                 }
                 return text.length > 90 ? text.slice(0, 90) + '?' : text;
             };
+            const visuallyHiddenSettingKeys = new Set(['preferences.fiscal_year', 'preferences.timezone', 'preferences.currency', 'preferences.language']);
             const appSettingsRows = (rows || [])
+                .filter((row) => !visuallyHiddenSettingKeys.has(String(row.setting_key || row.key || '')))
                 .map((row) => {
                     const key = String(row.setting_key || row.key || '');
                     const raw = row.setting_value ?? row.value ?? '';
@@ -11068,12 +11116,42 @@
                     <p class="mt-2 text-sm text-on-surface-variant">${escapeHtml(text)}</p>
                     <button type="button" data-config-open="${escapeHtml(moduleKey)}" class="mt-4 rounded-md border border-outline-variant/50 px-4 py-2 text-sm font-semibold text-primary">${escapeHtml(btn)}</button>
                 </div>`;
+            const prefRes = await fetchTenantPreferencesViaDb(tid);
+            const prefs = prefRes.data?.preferences || defaultTenantPreferencesObj();
+            const preferencesBlock = `
+                <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm">
+                    <h3 class="text-sm font-bold text-primary">Preferencias</h3>
+                    <p class="mb-4 text-xs text-on-surface-variant">Preferencias operativas. No hay tabla de idiomas: Zyron esta definido solo en espanol.</p>
+                    <div class="grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
+                        <label class="text-xs font-medium text-on-surface-variant">Modulo inicial
+                            <select id="pref-default-module" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
+                                ${['panel', 'facturas', 'presupuestos', 'pagos', 'clientes', 'inventario', 'reportes'].map((v) => `<option value="${v}" ${prefs.defaultModule === v ? 'selected' : ''}>${v}</option>`).join('')}
+                            </select>
+                        </label>
+                        <label class="text-xs font-medium text-on-surface-variant">Densidad
+                            <select id="pref-density" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
+                                <option value="comfortable" ${prefs.interfaceDensity === 'comfortable' ? 'selected' : ''}>Comoda</option>
+                                <option value="compact" ${prefs.interfaceDensity === 'compact' ? 'selected' : ''}>Compacta</option>
+                            </select>
+                        </label>
+                        <label class="text-xs font-medium text-on-surface-variant">Vencimiento factura (dias)
+                            <input id="pref-invoice-due-days" type="number" min="0" max="365" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(prefs.invoiceDueDays)}" />
+                        </label>
+                        <label class="text-xs font-medium text-on-surface-variant">Vencimiento presupuesto (dias)
+                            <input id="pref-estimate-expiry-days" type="number" min="0" max="365" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(prefs.estimateExpiryDays)}" />
+                        </label>
+                        <label class="flex items-center gap-2 text-sm"><input id="pref-confirm-before-issue" type="checkbox" class="h-4 w-4" ${prefs.confirmBeforeIssue ? 'checked' : ''} /> Confirmar antes de emitir</label>
+                        <label class="flex items-center gap-2 text-sm"><input id="pref-auto-preview" type="checkbox" class="h-4 w-4" ${prefs.autoOpenDocumentPreview ? 'checked' : ''} /> Abrir vista previa automaticamente</label>
+                    </div>
+                    <button type="button" id="pref-save-btn" class="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar preferencias</button>
+                    <p id="pref-save-status" class="mt-2 hidden text-xs"></p>
+                </div>`;
             const contentBySetting = {
                 cuenta: devCard('Cuenta', 'Preferencias personales, perfil y seguridad local se agregaran a esta seccion.'),
-                empresa: regionalBlock,
-                preferencias: devCard('Preferencias', 'Idioma, moneda base y comportamiento regional viven en Empresa. Preferencias avanzadas se agregaran aqui.'),
+                empresa: companySettingsBlock,
+                preferencias: preferencesBlock,
                 documentos: invoiceFormatBlock,
-                impuestos: shortcutCard('Impuestos', 'Configura tasas, retenciones y comprobantes fiscales desde el modulo Fiscal.', 'Abrir impuestos', 'fiscal'),
+                impuestos: '<div id="config-fiscal-mount"></div>',
                 pagos: shortcutCard('Pagos', 'Metodos de pago, cuentas por cobrar, vencimientos y conciliacion viven en Pagos y cobros.', 'Abrir pagos', 'pagos'),
                 notas: devCard('Notas', 'Plantillas de notas para documentos y clientes estaran disponibles aqui.'),
                 campos: devCard('Campos personalizados', 'Campos extra para clientes, productos y documentos se agregaran en esta seccion.'),
@@ -11113,6 +11191,9 @@
             if (activeSetting === 'roles') {
                 await renderRolesModule({ embedded: true, mount: document.getElementById('config-roles-mount') });
             }
+            if (activeSetting === 'impuestos') {
+                await renderFiscalModule({ embedded: true, mount: document.getElementById('config-fiscal-mount') });
+            }
             document.querySelectorAll('[data-config-tab]').forEach((btn) => {
                 btn.addEventListener('click', async () => {
                     state.configUi = { ...state.configUi, tab: btn.getAttribute('data-config-tab') || 'empresa' };
@@ -11129,12 +11210,54 @@
                     if (moduleKey) void openModule(moduleKey);
                 });
             });
+            document.getElementById('company-save-btn')?.addEventListener('click', async () => {
+                const st = document.getElementById('company-save-status');
+                const clean = (id) => String(document.getElementById(id)?.value || '').trim() || null;
+                const res = await dbUpdate({
+                    table: 'tenants',
+                    values: {
+                        display_name: clean('company-display-name'),
+                        legal_name: clean('company-legal-name'),
+                        tax_id: clean('company-tax-id'),
+                        email: clean('company-email'),
+                        phone: clean('company-phone'),
+                        address: clean('company-address'),
+                        updated_at: new Date().toISOString()
+                    },
+                    filters: [{ op: 'eq', column: 'id', value: tid }]
+                });
+                if (st) {
+                    st.classList.remove('hidden');
+                    st.textContent = res.error ? res.error.message || 'No se pudo guardar la empresa.' : 'Empresa guardada.';
+                    st.classList.toggle('text-error', Boolean(res.error));
+                    st.classList.toggle('text-primary', !res.error);
+                }
+                if (!res.error) await appendAuditLogSafe(tid, 'tenant_company_updated', 'tenants', tid, { section: 'company' });
+            });
+            document.getElementById('pref-save-btn')?.addEventListener('click', async () => {
+                const st = document.getElementById('pref-save-status');
+                const res = await tenantPreferencesUpsertViaDb(tid, {
+                    defaultModule: document.getElementById('pref-default-module')?.value || 'panel',
+                    interfaceDensity: document.getElementById('pref-density')?.value || 'comfortable',
+                    invoiceDueDays: Number(document.getElementById('pref-invoice-due-days')?.value || 30),
+                    estimateExpiryDays: Number(document.getElementById('pref-estimate-expiry-days')?.value || 15),
+                    confirmBeforeIssue: Boolean(document.getElementById('pref-confirm-before-issue')?.checked),
+                    autoOpenDocumentPreview: Boolean(document.getElementById('pref-auto-preview')?.checked)
+                });
+                const u = unwrapFnInvoke(res);
+                if (st) {
+                    st.classList.remove('hidden');
+                    st.textContent = u.err || u.data?.error ? u.err || u.data.error : 'Preferencias guardadas.';
+                    st.classList.toggle('text-error', Boolean(u.err || u.data?.error));
+                    st.classList.toggle('text-primary', !u.err && !u.data?.error);
+                }
+            });
             document.getElementById('reg-save-btn')?.addEventListener('click', async () => {
                 const c = String(document.getElementById('reg-def-currency')?.value || '').trim().toUpperCase();
                 const st = document.getElementById('reg-save-status');
                 const res = await tenantContextUpsertViaDb(tid, {
                     defaultCurrency: c || 'DOP',
-                    defaultLocale: document.getElementById('reg-def-locale')?.value || 'es',
+                    defaultLocale: 'es',
                     priceDisplayCurrency: String(document.getElementById('reg-display-currency')?.value || '').trim().toUpperCase()
                 });
                 const u = unwrapFnInvoke(res);
@@ -11302,6 +11425,10 @@
             } else if (!state.isSuperAdmin && moduleKey === 'roles') {
                 zyronLog('openModule:rolesAsConfigTab', { from: moduleKey });
                 state.configUi = { ...state.configUi, tab: 'roles' };
+                moduleKey = 'config';
+            } else if (!state.isSuperAdmin && moduleKey === 'fiscal') {
+                zyronLog('openModule:fiscalAsConfigTab', { from: moduleKey });
+                state.configUi = { ...state.configUi, tab: 'impuestos' };
                 moduleKey = 'config';
             }
             state.currentModule = moduleKey;
