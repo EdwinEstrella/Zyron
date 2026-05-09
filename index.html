@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html class="light" lang="es">
 <head>
     <meta charset="UTF-8">
@@ -749,6 +749,52 @@
             { role_key: 'viewer', label: 'Solo lectura', hierarchy_level: 50, permissions: ['reports.view'] }
         ]);
 
+        const getPermissionGroupLabel = (permissionKey = '') => {
+            const root = String(permissionKey).split('.')[0] || '';
+            return {
+                users: 'User',
+                roles: 'Role',
+                customers: 'Customer',
+                products: 'Item',
+                invoices: 'Invoice',
+                estimates: 'Estimate',
+                payments: 'Payment',
+                expenses: 'Expense',
+                reports: 'Common',
+                fiscal: 'TaxType',
+                settings: 'Common',
+                billing: 'Invoice',
+                inventory: 'Item',
+                recurring: 'RecurringInvoice',
+                custom_fields: 'CustomField'
+            }[root] || 'Common';
+        };
+
+        const buildPermissionCascadeMap = (permissionRows = []) => {
+            const keys = new Set((permissionRows || []).map((p) => String(p.permission_key || p.key || '').trim()).filter(Boolean));
+            const cascade = new Map();
+            keys.forEach((key) => {
+                const implied = new Set();
+                if (key.endsWith('.manage')) {
+                    const viewKey = key.replace(/\.manage$/, '.view');
+                    if (keys.has(viewKey)) implied.add(viewKey);
+                }
+                cascade.set(key, [...implied]);
+            });
+            return cascade;
+        };
+
+        const buildPermissionDependentsMap = (cascadeMap) => {
+            const dependents = new Map();
+            (cascadeMap || new Map()).forEach((children, parent) => {
+                (children || []).forEach((child) => {
+                    if (!dependents.has(child)) dependents.set(child, new Set());
+                    dependents.get(child).add(parent);
+                });
+            });
+            return dependents;
+        };
+
         const state = {
             sessionUser: null,
             appUser: null,
@@ -760,6 +806,8 @@
             navModulesTenant: [...DEFAULT_NAV_TENANT],
             permissionRowsForUi: [...DEFAULT_PERMISSION_UI],
             roleSystemPresetsResolved: [...DEFAULT_ROLE_SYSTEM_PRESETS],
+            permissionCascadeMap: buildPermissionCascadeMap(DEFAULT_PERMISSION_UI),
+            permissionDependentsMap: buildPermissionDependentsMap(buildPermissionCascadeMap(DEFAULT_PERMISSION_UI)),
             facturasUi: { tab: 'list', openComposer: false },
             presupuestosUi: { openComposer: false },
             configUi: { tab: 'empresa' },
@@ -1420,6 +1468,8 @@
                     label: p.label || p.description || p.permission_key
                 }));
             }
+            state.permissionCascadeMap = buildPermissionCascadeMap(permRows?.length ? permRows : state.permissionRowsForUi);
+            state.permissionDependentsMap = buildPermissionDependentsMap(state.permissionCascadeMap);
 
             const { data: presetRows, error: presetErr } = await dbSelect({
                 table: 'role_system_presets',
@@ -3254,73 +3304,65 @@
                 if (roleMap.has(preset.role_key)) continue;
                 const { data: inserted } = await dbInsert({
                     table: 'role_catalog',
-                    values: [{
-                        tenant_id: tenantId,
-                        role_key: preset.role_key,
-                        label: preset.label,
-                        hierarchy_level: preset.hierarchy_level,
-                        is_system: true
-                    }]
+                    values: [{ tenant_id: tenantId, role_key: preset.role_key, label: preset.label, hierarchy_level: preset.hierarchy_level, is_system: true }]
                 });
                 if (inserted?.[0]) roleMap.set(preset.role_key, inserted[0]);
             }
 
             const { data: permissionRows } = await dbSelect({ table: 'permission_catalog' });
             const permissionMap = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
+            const presetRoleIds = state.roleSystemPresetsResolved.map((preset) => roleMap.get(preset.role_key)?.id).filter(Boolean);
+            const { data: assignedRows } = presetRoleIds.length
+                ? await dbSelect({ table: 'role_permissions', filters: [{ op: 'in', column: 'role_id', value: presetRoleIds }] })
+                : { data: [] };
+            const assignedByRole = new Map();
+            for (const row of assignedRows || []) {
+                if (!assignedByRole.has(row.role_id)) assignedByRole.set(row.role_id, new Set());
+                assignedByRole.get(row.role_id).add(row.permission_id);
+            }
 
+            const missing = [];
             for (const preset of state.roleSystemPresetsResolved) {
                 const role = roleMap.get(preset.role_key);
                 if (!role) continue;
-                const { data: assignedRows } = await dbSelect({
-                    table: 'role_permissions',
-                    filters: [{ op: 'eq', column: 'role_id', value: role.id }]
-                });
-                const assignedPermissionIds = new Set((assignedRows || []).map((row) => row.permission_id));
-                for (const key of preset.permissions) {
+                const assigned = assignedByRole.get(role.id) || new Set();
+                for (const key of preset.permissions || []) {
                     const permissionId = permissionMap.get(key);
-                    if (!permissionId || assignedPermissionIds.has(permissionId)) continue;
-                    await dbInsert({
-                        table: 'role_permissions',
-                        values: [{ role_id: role.id, permission_id: permissionId }]
-                    });
+                    if (permissionId && !assigned.has(permissionId)) missing.push({ role_id: role.id, permission_id: permissionId });
                 }
             }
+            if (missing.length) await dbInsert({ table: 'role_permissions', values: missing });
         };
 
-        const renderRolesModule = async () => {
+        const renderRolesModule = async (opts = {}) => {
+            const rolesRoot = opts.mount || dashboardContent;
+            const embedded = Boolean(opts.embedded);
             zyronLog('render:roles:start', { rolesContextTenantId: state.rolesContextTenantId, currentTenantId: state.currentTenantId });
-            if (!state.isSuperAdmin) {
-                dashboardContent.innerHTML = `${renderModuleHeader('Roles', 'Acceso restringido')}
+
+            const isTenantAdmin = state.membership?.role_key === 'tenant_admin';
+            if (!state.isSuperAdmin && !isTenantAdmin) {
+                rolesRoot.innerHTML = `${renderModuleHeader('Roles', 'Acceso restringido')}
                     <div class="rounded-xl bg-surface-container-low p-1">
                         <div class="rounded-lg bg-surface-container-lowest p-6 text-sm text-on-surface-variant">
-                            Solo un <strong class="text-on-surface">superadministrador de plataforma</strong> puede abrir este modulo.
+                            Solo un <strong class="text-on-surface">administrador de empresa</strong> o superadministrador puede abrir este modulo.
                         </div>
                     </div>`;
                 zyronLog('render:roles:forbidden', { role: state.membership?.role_key });
                 return;
             }
 
-            const effectiveTenantId = state.rolesContextTenantId || state.currentTenantId;
-            if (!effectiveTenantId) {
-                const { data: tenants } = await dbSelect({
-                    table: 'tenants',
-                    order: { column: 'display_name', ascending: true },
-                    limit: 300
-                });
-                const opts = (tenants || [])
-                    .map(
-                        (t) =>
-                            `<option value="${t.id}">${escapeHtml(String(t.display_name || t.legal_name || t.slug || t.id))}</option>`
-                    )
-                    .join('');
-                dashboardContent.innerHTML = `
-                    ${renderModuleHeader('Roles', 'Elige una empresa: los roles y permisos son por tenant (role_catalog).')}
+            const effectiveTenantId = state.isSuperAdmin ? (state.rolesContextTenantId || state.currentTenantId) : state.currentTenantId;
+            if (state.isSuperAdmin && !effectiveTenantId) {
+                const { data: tenants } = await dbSelect({ table: 'tenants', order: { column: 'display_name', ascending: true }, limit: 300 });
+                const opts = (tenants || []).map((t) => `<option value="${t.id}">${escapeHtml(String(t.display_name || t.legal_name || t.slug || t.id))}</option>`).join('');
+                rolesRoot.innerHTML = `
+                    ${renderModuleHeader('Roles', 'Elige una empresa')}
                     <div class="rounded-xl bg-surface-container-low p-1">
                         <div class="rounded-lg bg-surface-container-lowest p-6 space-y-4">
                             <label class="block text-sm">
                                 <span class="font-medium text-on-surface">Empresa</span>
                                 <select id="roles-tenant-select" class="mt-2 w-full max-w-lg rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm">
-                                    <option value="">— Seleccionar —</option>
+                                    <option value="">Seleccionar</option>
                                     ${opts}
                                 </select>
                             </label>
@@ -3329,159 +3371,178 @@
                     </div>`;
                 document.getElementById('roles-tenant-open')?.addEventListener('click', async () => {
                     const v = document.getElementById('roles-tenant-select')?.value?.trim();
-                    if (!v) {
-                        window.alert('Selecciona una empresa.');
-                        return;
-                    }
+                    if (!v) return window.alert('Selecciona una empresa.');
                     state.rolesContextTenantId = v;
                     await renderRolesModule();
                 });
-                zyronLog('render:roles:picker', { tenantOptions: (tenants || []).length });
                 return;
             }
 
-            const { data: tenantRow } = await dbSelect({
-                table: 'tenants',
-                filters: [{ op: 'eq', column: 'id', value: effectiveTenantId }],
-                limit: 1
-            });
+            const { data: tenantRow } = await dbSelect({ table: 'tenants', filters: [{ op: 'eq', column: 'id', value: effectiveTenantId }], limit: 1 });
             const tenantLabel = escapeHtml((tenantRow && tenantRow[0] && (tenantRow[0].display_name || tenantRow[0].legal_name)) || effectiveTenantId);
 
             await ensureRolePresetsForTenant(effectiveTenantId);
 
-            const [{ data: roles }, { data: permissionRows }, cntRes, mxRes] = await Promise.all([
-                dbSelect({
-                    table: 'role_catalog',
-                    filters: [{ op: 'eq', column: 'tenant_id', value: effectiveTenantId }],
-                    order: { column: 'hierarchy_level', ascending: true }
-                }),
-                dbSelect({ table: 'permission_catalog' }),
-                invokeFn('manage-super-access', { action: 'role_member_counts', tenantId: effectiveTenantId }),
-                invokeFn('manage-super-access', { action: 'permission_matrix', tenantId: effectiveTenantId })
+            const [{ data: roles }, { data: permissionRows }] = await Promise.all([
+                dbSelect({ table: 'role_catalog', filters: [{ op: 'eq', column: 'tenant_id', value: effectiveTenantId }], order: { column: 'hierarchy_level', ascending: true } }),
+                dbSelect({ table: 'permission_catalog' })
             ]);
-            const permissionMap = new Map((permissionRows || []).map((perm) => [perm.id, perm.permission_key]));
-            const cntU = unwrapFnInvoke(cntRes);
-            const mxU = unwrapFnInvoke(mxRes);
-            const memberCounts = !cntU.err && cntU.data?.ok ? cntU.data.counts || {} : {};
-            const matrix = !mxU.err && mxU.data?.ok ? mxU.data.matrix || [] : [];
-            const countChips = Object.keys(memberCounts).length
-                ? Object.entries(memberCounts)
-                      .map(
-                          ([k, v]) =>
-                              `<span class="inline-flex items-center rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">${escapeHtml(k)}: ${Number(v)}</span>`
-                      )
-                      .join(' ')
-                : '<span class="text-xs text-on-surface-variant">Sin miembros activos (o despliega manage-super-access).</span>';
-            const matrixBlock =
-                matrix.length > 0
-                    ? `<details class="mb-4 rounded-lg border border-outline-variant/30 bg-surface-container-high/30 p-3"><summary class="cursor-pointer text-sm font-semibold text-primary">Matriz de permisos (solo lectura)</summary>
-                        <div class="mt-3 max-h-52 overflow-y-auto space-y-2 text-xs">${matrix
-                            .map(
-                                (row) => `<div class="rounded border border-outline-variant/20 p-2 font-mono text-[11px]"><span class="font-semibold text-on-surface">${escapeHtml(
-                                    row.role_key
-                                )}</span> · ${escapeHtml(row.label || '')}<div class="mt-1 text-on-surface-variant">${escapeHtml(
-                                    (row.permissions || []).join(', ')
-                                )}</div></div>`
-                            )
-                            .join('')}</div></details>`
-                    : '';
 
-            dashboardContent.innerHTML = `
-                ${renderModuleHeader('Roles', 'Roles de la empresa (role_catalog / role_key). Distintos del tipo de cuenta en plataforma: superadmin o usuario.')}
-                <div class="rounded-xl bg-surface-container-low p-1">
-                    <div class="rounded-lg bg-surface-container-lowest p-5">
-                        <div class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-outline-variant/30 bg-surface-container px-4 py-2 text-sm">
-                            <span class="text-on-surface">Empresa: <strong>${tenantLabel}</strong></span>
-                            <div class="flex flex-wrap items-center gap-2">
-                                <button type="button" id="roles-open-acceso" class="rounded-md border border-outline-variant/50 px-3 py-1 text-xs font-semibold text-primary">Membresías (Acceso)</button>
-                                <button type="button" id="roles-change-tenant" class="rounded-md border border-outline-variant/50 px-3 py-1 text-xs font-semibold text-primary">Cambiar empresa</button>
+            const permissionMap = new Map((permissionRows || []).map((perm) => [perm.id, perm.permission_key]));
+            const roleIds = (roles || []).map((role) => role.id).filter(Boolean);
+            const { data: allAssignedRows } = roleIds.length
+                ? await dbSelect({ table: 'role_permissions', filters: [{ op: 'in', column: 'role_id', value: roleIds }] })
+                : { data: [] };
+            const assignedKeysByRole = new Map();
+            for (const row of allAssignedRows || []) {
+                const key = permissionMap.get(row.permission_id);
+                if (!key) continue;
+                if (!assignedKeysByRole.has(row.role_id)) assignedKeysByRole.set(row.role_id, new Set());
+                assignedKeysByRole.get(row.role_id).add(key);
+            }
+            const roleById = new Map((roles || []).map((role) => [String(role.id), role]));
+
+            const groupedPermissions = {};
+            (permissionRows || []).forEach((permission) => {
+                const groupLabel = getPermissionGroupLabel(permission.permission_key);
+                if (!groupedPermissions[groupLabel]) groupedPermissions[groupLabel] = [];
+                groupedPermissions[groupLabel].push(permission);
+            });
+            Object.values(groupedPermissions).forEach((list) => list.sort((a, b) => String(a.permission_key || '').localeCompare(String(b.permission_key || ''))));
+
+            const renderPermissionGrid = (roleId) => Object.entries(groupedPermissions)
+                .filter(([_, list]) => list.length > 0)
+                .map(([group, list]) => `
+                    <div class="min-w-[150px]">
+                        <h5 class="mb-2 border-b border-outline-variant/25 pb-1 text-sm font-medium text-on-surface-variant">${group}</h5>
+                        <div class="space-y-2">
+                            ${list.map((permission) => {
+                                const implied = state.permissionCascadeMap?.get(permission.permission_key) || [];
+                                const impliedAttr = implied.length ? ` data-implies="${escapeHtml(implied.join('|'))}"` : '';
+                                return `
+                                    <label class="flex cursor-pointer items-center gap-2 text-sm text-on-surface-variant hover:text-primary">
+                                        <input type="checkbox" class="h-4 w-4 rounded border-outline/40 text-primary focus:ring-primary/20" data-role-perm-role="${roleId}" data-role-perm-key="${permission.permission_key}"${impliedAttr} />
+                                        <span>${escapeHtml(permission.label || permission.permission_key)}</span>
+                                    </label>`;
+                            }).join('')}
+                        </div>
+                    </div>`).join('');
+
+            const applyPermissionSelection = (scopeRoot, permissionKey, checked) => {
+                if (!scopeRoot || !permissionKey) return;
+                const selector = `[data-role-perm-role="${scopeRoot}"][data-role-perm-key="${permissionKey}"]`;
+                const checkbox = rolesRoot.querySelector(selector) || modal?.querySelector(selector) || editModal?.querySelector(selector);
+                if (!checkbox) return;
+                checkbox.checked = checked;
+                if (checked) {
+                    (state.permissionCascadeMap?.get(permissionKey) || []).forEach((impliedKey) => {
+                        if (impliedKey !== permissionKey) applyPermissionSelection(scopeRoot, impliedKey, true);
+                    });
+                    return;
+                }
+                (state.permissionDependentsMap?.get(permissionKey) ? [...state.permissionDependentsMap.get(permissionKey)] : []).forEach((dependentKey) => {
+                    const dependentSelector = `[data-role-perm-role="${scopeRoot}"][data-role-perm-key="${dependentKey}"]`;
+                    const dependentCheckbox = rolesRoot.querySelector(dependentSelector) || modal?.querySelector(dependentSelector) || editModal?.querySelector(dependentSelector);
+                    if (dependentCheckbox?.checked) dependentCheckbox.checked = false;
+                });
+            };
+
+            const formatRoleCreatedAt = (value) => {
+                if (!value) return '-';
+                try { return new Intl.DateTimeFormat('es', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date(value)); }
+                catch (_) { return String(value).slice(0, 10); }
+            };
+
+            rolesRoot.innerHTML = `
+                ${embedded ? '' : renderModuleHeader('Roles', 'Configura los roles y permisos de esta empresa.')}
+                <div class="mx-auto w-full max-w-6xl pb-12">
+                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-6 shadow-sm">
+                        <div class="mb-8 flex items-start justify-between gap-4">
+                            <div>
+                                <h3 class="text-xl font-semibold text-on-surface">Roles</h3>
+                                <p class="mt-2 text-sm text-on-surface-variant">Configura los roles y permisos de esta empresa</p>
+                                <p class="mt-1 text-xs text-on-surface-variant">Empresa: <strong class="text-on-surface">${tenantLabel}</strong></p>
                             </div>
+                            <button type="button" id="roles-create-btn" class="inline-flex items-center gap-2 rounded-lg border border-primary px-4 py-2 text-sm font-medium text-primary hover:bg-primary/5"><span class="text-lg leading-none">+</span>Añadir nuevo rol</button>
                         </div>
-                        <div class="mb-3 flex flex-wrap gap-2 rounded-lg border border-outline-variant/25 bg-surface-container-lowest px-3 py-2">
-                            <span class="w-full text-[10px] font-bold uppercase tracking-wide text-on-surface-variant">Miembros activos por role_key</span>
-                            <div class="flex flex-wrap gap-2">${countChips}</div>
-                        </div>
-                        ${matrixBlock}
-                        <p class="mb-4 text-sm text-on-surface-variant">No se crean roles manuales. Usa presets y ajusta permisos especificos. El administrador de empresa suele ser <code class="rounded bg-surface-container px-1 text-xs">tenant_admin</code>; el dueño lleva ademas <code class="rounded bg-surface-container px-1 text-xs">is_owner</code> en la membresia.</p>
-                        <div class="space-y-4">
-                            ${(roles || []).map((role) => `
-                                <div class="rounded-lg border border-outline-variant/30 p-4">
-                                    <div class="mb-3 flex items-center justify-between">
-                                        <div>
-                                            <h4 class="font-semibold text-primary">${role.label}</h4>
-                                            <p class="text-xs text-on-surface-variant">${role.role_key} · nivel ${role.hierarchy_level}</p>
-                                        </div>
-                                        <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white" data-role-save="${role.id}">Guardar permisos</button>
-                                    </div>
-                                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                                        ${state.permissionRowsForUi.map((permission) => `
-                                            <label class="flex items-center gap-2 text-sm">
-                                                <input type="checkbox" class="h-4 w-4" data-role-perm-role="${role.id}" data-role-perm-key="${permission.key}" />
-                                                <span>${permission.label}</span>
-                                            </label>
-                                        `).join('')}
-                                    </div>
-                                </div>
-                            `).join('')}
+                        <div class="overflow-hidden rounded-lg border border-outline-variant/25 bg-surface-container-lowest">
+                            <div class="grid grid-cols-[1fr_180px_80px] border-b border-outline-variant/25 bg-surface-container-low px-6 py-3 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                                <span>Nombre del rol</span><span>Añadido el</span><span class="text-right">Acción</span>
+                            </div>
+                            ${(roles || []).map((role) => {
+                                const isOwnerRole = role.role_key === 'tenant_admin';
+                                return `<div class="grid grid-cols-[1fr_180px_80px] items-center border-b border-outline-variant/15 px-6 py-4 last:border-b-0 hover:bg-surface-container-low/40">
+                                    <div class="min-w-0"><div class="flex items-center gap-2"><span class="truncate font-semibold text-on-surface">${escapeHtml(role.label)}</span>${isOwnerRole ? '<span class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">Dueño de acceso total</span>' : ''}</div>${isOwnerRole ? '<p class="mt-1 text-xs text-on-surface-variant">Este perfil no se edita: siempre tiene todos los permisos.</p>' : ''}</div>
+                                    <div class="text-sm text-on-surface-variant">${formatRoleCreatedAt(role.created_at)}</div>
+                                    <div class="text-right">${isOwnerRole ? '<span class="text-xs text-on-surface-variant">-</span>' : `<button type="button" class="rounded-md px-3 py-1 text-xl leading-none text-on-surface-variant hover:bg-surface-container" data-role-edit="${role.id}" title="Administrar permisos">...</button>`}</div>
+                                </div>`;
+                            }).join('')}
                         </div>
                     </div>
-                </div>
-            `;
+                    <div id="roles-create-modal" class="fixed inset-0 z-[100] flex items-center justify-center bg-scrim/35 p-4 hidden"><div class="w-full max-w-5xl rounded-lg bg-surface-container-lowest shadow-2xl"><div class="flex items-center justify-between border-b border-outline-variant/25 px-6 py-4"><h3 class="text-lg font-semibold text-on-surface">Añadir rol</h3><button type="button" id="roles-create-cancel-top" class="rounded-md px-2 py-1 text-2xl leading-none text-on-surface-variant hover:bg-surface-container">?</button></div><div class="max-h-[72vh] overflow-y-auto px-8 py-7"><label class="block"><span class="text-sm font-semibold text-on-surface-variant">Nombre <span class="text-error">*</span></span><input type="text" id="roles-new-label" class="mt-2 w-full rounded-md border border-outline-variant bg-surface-container-lowest px-4 py-3 text-sm focus:border-primary focus:outline-none" /></label><label class="mt-5 block"><span class="text-sm font-semibold text-on-surface-variant">Copiar permisos de</span><select id="roles-new-template" class="mt-2 w-full rounded-md border border-outline-variant bg-surface-container-lowest px-4 py-3 text-sm"><option value="">En blanco</option>${state.roleSystemPresetsResolved.map(p => `<option value="${p.role_key}">${escapeHtml(p.label)}</option>`).join('')}</select></label><div class="mt-8"><div class="mb-4 flex items-center justify-between border-b border-outline-variant/25 pb-2"><h4 class="text-sm font-semibold text-on-surface">Permisos <span class="text-error">*</span></h4><div class="flex items-center gap-2 text-sm"><button type="button" id="roles-new-select-all" class="text-primary hover:underline">Seleccionar todo</button><span class="text-on-surface-variant">/</span><button type="button" id="roles-new-clear-all" class="text-primary hover:underline">Ninguno</button></div></div><div class="grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-2 xl:grid-cols-4" id="roles-new-perm-grid">${renderPermissionGrid('new')}</div></div></div><div class="flex items-center justify-end gap-3 border-t border-outline-variant/25 px-6 py-4"><button type="button" id="roles-create-cancel" class="rounded-md border border-outline-variant px-5 py-2 text-sm font-medium text-primary hover:bg-primary/5">Cancelar</button><button type="button" id="roles-create-confirm" class="rounded-md bg-primary px-6 py-2 text-sm font-semibold text-white hover:opacity-90">Guardar</button></div></div></div>
+                    <div id="roles-edit-modal" class="fixed inset-0 z-[100] flex items-center justify-center bg-scrim/35 p-4 hidden"><div class="w-full max-w-5xl rounded-lg bg-surface-container-lowest shadow-2xl"><div class="flex items-center justify-between border-b border-outline-variant/25 px-6 py-4"><h3 id="roles-edit-title" class="text-lg font-semibold text-on-surface">Administrar permisos</h3><button type="button" id="roles-edit-cancel-top" class="rounded-md px-2 py-1 text-2xl leading-none text-on-surface-variant hover:bg-surface-container">?</button></div><div class="max-h-[72vh] overflow-y-auto px-8 py-7"><div class="mb-4 flex items-center justify-between border-b border-outline-variant/25 pb-2"><h4 class="text-sm font-semibold text-on-surface">Permisos</h4><div class="flex items-center gap-2 text-sm"><button type="button" id="roles-edit-select-all" class="text-primary hover:underline">Seleccionar todo</button><span class="text-on-surface-variant">/</span><button type="button" id="roles-edit-clear-all" class="text-primary hover:underline">Ninguno</button></div></div><div class="grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-2 xl:grid-cols-4" id="roles-edit-perm-grid">${renderPermissionGrid('edit')}</div></div><div class="flex items-center justify-end gap-3 border-t border-outline-variant/25 px-6 py-4"><button type="button" id="roles-edit-cancel" class="rounded-md border border-outline-variant px-5 py-2 text-sm font-medium text-primary hover:bg-primary/5">Cancelar</button><button type="button" id="roles-edit-confirm" class="rounded-md bg-primary px-6 py-2 text-sm font-semibold text-white hover:opacity-90">Guardar</button></div></div></div>
+                </div>`;
 
-            document.getElementById('roles-change-tenant')?.addEventListener('click', async () => {
-                state.rolesContextTenantId = null;
-                await renderRolesModule();
+            const modal = document.getElementById('roles-create-modal');
+            const editModal = document.getElementById('roles-edit-modal');
+            const editTitle = document.getElementById('roles-edit-title');
+            const confirmBtn = document.getElementById('roles-create-confirm');
+            const editConfirmBtn = document.getElementById('roles-edit-confirm');
+            const toggleModal = (show) => { modal?.classList.toggle('hidden', !show); if (show) document.getElementById('roles-new-label')?.focus(); };
+            const toggleEditModal = (show, roleId = '') => { editModal?.classList.toggle('hidden', !show); if (show) editModal?.setAttribute('data-edit-role-id', roleId); else editModal?.removeAttribute('data-edit-role-id'); };
+            document.getElementById('roles-create-btn')?.addEventListener('click', () => toggleModal(true));
+            document.getElementById('roles-create-cancel')?.addEventListener('click', () => toggleModal(false));
+            document.getElementById('roles-create-cancel-top')?.addEventListener('click', () => toggleModal(false));
+            document.getElementById('roles-edit-cancel')?.addEventListener('click', () => toggleEditModal(false));
+            document.getElementById('roles-edit-cancel-top')?.addEventListener('click', () => toggleEditModal(false));
+            document.getElementById('roles-new-select-all')?.addEventListener('click', () => modal?.querySelectorAll('[data-role-perm-role="new"]').forEach((checkbox) => applyPermissionSelection('new', checkbox.getAttribute('data-role-perm-key'), true)));
+            document.getElementById('roles-new-clear-all')?.addEventListener('click', () => modal?.querySelectorAll('[data-role-perm-role="new"]').forEach((checkbox) => { checkbox.checked = false; }));
+            document.getElementById('roles-new-template')?.addEventListener('change', (event) => {
+                modal?.querySelectorAll('[data-role-perm-role="new"]').forEach((checkbox) => { checkbox.checked = false; });
+                const preset = state.roleSystemPresetsResolved.find((p) => p.role_key === event.target.value);
+                (preset?.permissions || []).forEach((key) => applyPermissionSelection('new', key, true));
             });
-            document.getElementById('roles-open-acceso')?.addEventListener('click', async () => {
-                if (!state.superAccessUi) state.superAccessUi = { tab: 'platform', memTenantId: '', memEmailQ: '', memStatus: '', platformQ: '' };
-                state.superAccessUi.tab = 'memberships';
-                state.superAccessUi.memTenantId = effectiveTenantId;
-                await openModule('acceso');
+            modal?.querySelectorAll('[data-role-perm-role="new"]').forEach((checkbox) => checkbox.addEventListener('change', (event) => applyPermissionSelection('new', event.target.getAttribute('data-role-perm-key'), event.target.checked)));
+            confirmBtn?.addEventListener('click', async () => {
+                const label = document.getElementById('roles-new-label')?.value?.trim();
+                if (!label) return window.alert('Ingresa un nombre para el rol.');
+                const roleKey = slugifyTenant(label).replace(/-/g, '_');
+                const selectedKeys = Array.from(modal.querySelectorAll('[data-role-perm-role="new"]:checked')).map((checkbox) => checkbox.getAttribute('data-role-perm-key'));
+                confirmBtn.disabled = true; confirmBtn.textContent = 'Guardando...';
+                const { data: inserted, error: roleError } = await dbInsert({ table: 'role_catalog', values: [{ tenant_id: effectiveTenantId, role_key: roleKey, label, hierarchy_level: 50, is_system: false }] });
+                if (roleError) { window.alert('Error al crear el rol: ' + (roleError.message || String(roleError))); confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; return; }
+                if (inserted?.[0] && selectedKeys.length > 0) {
+                    const permissionByKey = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
+                    const payload = selectedKeys.map((key) => permissionByKey.get(key)).filter(Boolean).map((permissionId) => ({ role_id: inserted[0].id, permission_id: permissionId }));
+                    if (payload.length > 0) await dbInsert({ table: 'role_permissions', values: payload });
+                }
+                toggleModal(false); await renderRolesModule();
             });
-
-            for (const role of roles || []) {
-                const { data: assignedRows } = await dbSelect({
-                    table: 'role_permissions',
-                    filters: [{ op: 'eq', column: 'role_id', value: role.id }]
-                });
-                const assignedKeys = new Set((assignedRows || []).map((row) => permissionMap.get(row.permission_id)).filter(Boolean));
-                dashboardContent.querySelectorAll(`[data-role-perm-role="${role.id}"]`).forEach((checkbox) => {
-                    const key = checkbox.getAttribute('data-role-perm-key');
-                    checkbox.checked = assignedKeys.has(key);
-                });
-            }
-
-            dashboardContent.querySelectorAll('[data-role-save]').forEach((button) => {
-                button.addEventListener('click', async () => {
-                    const roleId = button.getAttribute('data-role-save');
-                    const selectedKeys = Array.from(dashboardContent.querySelectorAll(`[data-role-perm-role="${roleId}"]`))
-                        .filter((checkbox) => checkbox.checked)
-                        .map((checkbox) => checkbox.getAttribute('data-role-perm-key'));
-
-                    const { data: existingRows } = await dbSelect({
-                        table: 'role_permissions',
-                        filters: [{ op: 'eq', column: 'role_id', value: roleId }]
-                    });
-                    for (const row of existingRows || []) {
-                        await dbDelete({
-                            table: 'role_permissions',
-                            filters: [{ op: 'eq', column: 'id', value: row.id }]
-                        });
-                    }
-
-                    const { data: allPermissions } = await dbSelect({ table: 'permission_catalog' });
-                    const permissionByKey = new Map((allPermissions || []).map((perm) => [perm.permission_key, perm.id]));
-                    const payload = selectedKeys
-                        .map((key) => permissionByKey.get(key))
-                        .filter(Boolean)
-                        .map((permissionId) => ({ role_id: roleId, permission_id: permissionId }));
-                    if (payload.length > 0) {
-                        await dbInsert({
-                            table: 'role_permissions',
-                            values: payload
-                        });
-                    }
-                });
+            rolesRoot.querySelectorAll('[data-role-edit]').forEach((button) => button.addEventListener('click', () => {
+                const roleId = button.getAttribute('data-role-edit');
+                const role = roleById.get(String(roleId));
+                if (!role || role.role_key === 'tenant_admin') return;
+                editTitle.textContent = 'Permisos de ' + role.label;
+                editModal?.querySelectorAll('[data-role-perm-role="edit"]').forEach((checkbox) => { checkbox.checked = false; });
+                [...(assignedKeysByRole.get(role.id) || new Set())].forEach((key) => applyPermissionSelection('edit', key, true));
+                toggleEditModal(true, role.id);
+            }));
+            editModal?.querySelectorAll('[data-role-perm-role="edit"]').forEach((checkbox) => checkbox.addEventListener('change', (event) => applyPermissionSelection('edit', event.target.getAttribute('data-role-perm-key'), event.target.checked)));
+            document.getElementById('roles-edit-select-all')?.addEventListener('click', () => editModal?.querySelectorAll('[data-role-perm-role="edit"]').forEach((checkbox) => applyPermissionSelection('edit', checkbox.getAttribute('data-role-perm-key'), true)));
+            document.getElementById('roles-edit-clear-all')?.addEventListener('click', () => editModal?.querySelectorAll('[data-role-perm-role="edit"]').forEach((checkbox) => { checkbox.checked = false; }));
+            editConfirmBtn?.addEventListener('click', async () => {
+                const roleId = editModal?.getAttribute('data-edit-role-id');
+                const role = roleById.get(String(roleId));
+                if (!role || role.role_key === 'tenant_admin') return;
+                const selectedKeys = Array.from(editModal.querySelectorAll('[data-role-perm-role="edit"]:checked')).map((checkbox) => checkbox.getAttribute('data-role-perm-key'));
+                editConfirmBtn.disabled = true; editConfirmBtn.textContent = 'Guardando...';
+                const existingRows = (allAssignedRows || []).filter((row) => String(row.role_id) === String(roleId));
+                for (const row of existingRows) await dbDelete({ table: 'role_permissions', filters: [{ op: 'eq', column: 'id', value: row.id }] });
+                const permissionByKey = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
+                const payload = selectedKeys.map((key) => permissionByKey.get(key)).filter(Boolean).map((permissionId) => ({ role_id: roleId, permission_id: permissionId }));
+                if (payload.length > 0) await dbInsert({ table: 'role_permissions', values: payload });
+                editConfirmBtn.disabled = false; editConfirmBtn.textContent = 'Guardar';
+                toggleEditModal(false); await renderRolesModule();
             });
             zyronLog('render:roles:done', { roleCount: (roles || []).length });
         };
@@ -10913,27 +10974,69 @@
                         </div>
                     </div>
                 </div>`;
+            const formatSettingName = (key) =>
+                ({
+                    'preferences.fiscal_year': 'Año fiscal',
+                    'preferences.timezone': 'Zona horaria',
+                    'preferences.currency': 'Moneda',
+                    'preferences.language': 'Idioma',
+                    invoice_document_branding: 'Formato de documentos',
+                    zyron_tenant_context: 'Contexto regional'
+                }[key] || key);
+            const summarizeSettingValue = (key, raw) => {
+                let value = raw;
+                if (value && typeof value === 'object') value = JSON.stringify(value);
+                const text = String(value ?? '');
+                if (!text) return 'Sin valor';
+                if (text.startsWith('data:image/')) return 'Imagen guardada';
+                if (text.length > 80 && /^[A-Za-z0-9+/=]+$/.test(text)) return 'Dato binario guardado';
+                if (text.trim().startsWith('{')) {
+                    try {
+                        const obj = JSON.parse(text);
+                        if (key === 'invoice_document_branding') {
+                            return `Plantilla ${obj.templateId || 'classic'} ? color ${obj.accentHex || '#0f2744'}${obj.logoDataUrl ? ' ? logo guardado' : ''}`;
+                        }
+                        if (key === 'zyron_tenant_context') {
+                            return `Moneda ${obj.defaultCurrency || 'DOP'} ? idioma ${obj.defaultLocale || 'es'}`;
+                        }
+                        return Object.keys(obj).length ? Object.keys(obj).join(', ') : 'Objeto vacío';
+                    } catch (_) {
+                        return 'JSON guardado';
+                    }
+                }
+                return text.length > 90 ? text.slice(0, 90) + '?' : text;
+            };
+            const appSettingsRows = (rows || [])
+                .map((row) => {
+                    const key = String(row.setting_key || row.key || '');
+                    const raw = row.setting_value ?? row.value ?? '';
+                    const rawString = typeof raw === 'string' ? raw : JSON.stringify(raw || {});
+                    return `
+                        <details class="group border-b border-outline-variant/15 px-5 py-4 last:border-b-0">
+                            <summary class="grid cursor-pointer list-none grid-cols-[1fr_1.5fr_120px_24px] items-center gap-4">
+                                <div>
+                                    <div class="font-semibold text-on-surface">${escapeHtml(formatSettingName(key))}</div>
+                                    <div class="mt-0.5 font-mono text-[11px] text-on-surface-variant">${escapeHtml(key)}</div>
+                                </div>
+                                <div class="text-sm text-on-surface-variant">${escapeHtml(summarizeSettingValue(key, raw))}</div>
+                                <div class="text-xs text-on-surface-variant">${escapeHtml(toDateString(row.updated_at))}</div>
+                                <span class="material-symbols-outlined text-on-surface-variant transition-transform group-open:rotate-180">expand_more</span>
+                            </summary>
+                            <pre class="mt-3 max-h-56 overflow-auto rounded-md bg-surface-container-low p-3 text-xs text-on-surface-variant">${escapeHtml(rawString.length > 2500 ? rawString.slice(0, 2500) + '\n? truncado' : rawString)}</pre>
+                        </details>`;
+                })
+                .join('');
             const appSettingsBlock = `
-                <div class="rounded-xl bg-surface-container-low p-1">
-                    <div class="rounded-lg bg-surface-container-lowest p-5">
-                        <h3 class="mb-2 text-sm font-semibold text-on-surface">app_settings (esta empresa)</h3>
-                        <table class="w-full text-left text-sm">
-                            <thead><tr class="border-b border-outline-variant/30">
-                                <th class="py-2">Clave</th><th class="py-2">Valor</th><th class="py-2">Actualizado</th>
-                            </tr></thead>
-                            <tbody>
-                                ${(rows || [])
-                                    .map(
-                                        (row) => `
-                                    <tr class="border-b border-outline-variant/20">
-                                        <td class="py-3 font-mono text-xs">${escapeHtml(String(row.setting_key || row.key || ''))}</td>
-                                        <td class="py-3 max-w-md truncate">${escapeHtml(String(row.setting_value ?? row.value ?? '').slice(0, 240))}</td>
-                                        <td class="py-3 text-xs">${escapeHtml(toDateString(row.updated_at))}</td>
-                                    </tr>`
-                                    )
-                                    .join('') || '<tr><td colspan="3" class="py-4 text-on-surface-variant">Sin filas.</td></tr>'}
-                            </tbody>
-                        </table>
+                <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest shadow-sm">
+                    <div class="border-b border-outline-variant/25 px-5 py-4">
+                        <h3 class="text-sm font-semibold text-on-surface">Datos del sistema</h3>
+                        <p class="mt-1 text-xs text-on-surface-variant">Resumen técnico de ajustes guardados para esta empresa. Abre una fila solo si necesitas inspeccionar el valor raw.</p>
+                    </div>
+                    <div class="grid grid-cols-[1fr_1.5fr_120px_24px] gap-4 bg-surface-container-low px-5 py-3 text-[11px] font-bold uppercase tracking-wider text-on-surface-variant">
+                        <span>Clave</span><span>Resumen</span><span>Actualizado</span><span></span>
+                    </div>
+                    <div>
+                        ${appSettingsRows || '<div class="px-5 py-6 text-sm text-on-surface-variant">Sin datos del sistema.</div>'}
                     </div>
                 </div>`;
             const settingsMenu = [
@@ -10974,7 +11077,7 @@
                 pagos: shortcutCard('Pagos', 'Metodos de pago, cuentas por cobrar, vencimientos y conciliacion viven en Pagos y cobros.', 'Abrir pagos', 'pagos'),
                 notas: devCard('Notas', 'Plantillas de notas para documentos y clientes estaran disponibles aqui.'),
                 campos: devCard('Campos personalizados', 'Campos extra para clientes, productos y documentos se agregaran en esta seccion.'),
-                roles: shortcutCard('Roles', 'Administra permisos y puestos de trabajo por empresa.', 'Abrir roles', 'roles'),
+                roles: '<div id="config-roles-mount"></div>',
                 correo: devCard('Correo', 'El envio por correo esta fuera del flujo actual de escritorio.'),
                 archivos: devCard('PDF y almacenamiento', 'La exportacion PDF se guarda desde el dialogo del sistema. Almacenamiento avanzado se agregara despues.'),
                 notificaciones: devCard('Notificaciones', 'En desarrollo.'),
@@ -11007,6 +11110,9 @@
                         ${contentBySetting[activeSetting] || regionalBlock}
                     </section>
                 </div>`;
+            if (activeSetting === 'roles') {
+                await renderRolesModule({ embedded: true, mount: document.getElementById('config-roles-mount') });
+            }
             document.querySelectorAll('[data-config-tab]').forEach((btn) => {
                 btn.addEventListener('click', async () => {
                     state.configUi = { ...state.configUi, tab: btn.getAttribute('data-config-tab') || 'empresa' };
@@ -11189,10 +11295,14 @@
                 }
             } else if (
                 !state.isSuperAdmin &&
-                (moduleKey === 'acceso' || moduleKey === 'usuarios' || moduleKey === 'roles' || moduleKey === 'solicitudes' || moduleKey === 'empresas')
+                (moduleKey === 'acceso' || moduleKey === 'usuarios' || moduleKey === 'solicitudes' || moduleKey === 'empresas')
             ) {
                 zyronLog('openModule:superOnlyModule', { from: moduleKey });
                 moduleKey = 'panel';
+            } else if (!state.isSuperAdmin && moduleKey === 'roles') {
+                zyronLog('openModule:rolesAsConfigTab', { from: moduleKey });
+                state.configUi = { ...state.configUi, tab: 'roles' };
+                moduleKey = 'config';
             }
             state.currentModule = moduleKey;
             refreshSidebarSelection();

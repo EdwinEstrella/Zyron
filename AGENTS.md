@@ -131,3 +131,15 @@ Available languages:
 - Storage: Upload files to buckets, store URLs in database
 - AI operations are OpenAI-compatible
 - **EXTRA IMPORTANT**: Use Tailwind CSS 3.4 (do not upgrade to v4). Lock these dependencies in `package.json`
+
+## Preferences & RBAC Implementation
+
+Zyron uses a multi-tenant preference and RBAC system implemented via InsForge PostgreSQL RLS:
+
+- **Preferences**: Stored in `public.app_settings` with `tenant_id`. Defaults are automatically seeded via a database trigger on new tenant creation. Use `preferences.*` keys.
+- **RBAC**:
+  - **Permissions**: Defined in `public.permission_catalog`.
+  - **Roles**: System presets in `public.role_system_presets`. Tenants use `public.role_catalog`.
+  - **Enforcement**: Row Level Security (RLS) is enabled on core tables. Policies use `public.check_user_permission(tenant_id, permission_key)` to authorize access.
+  - **Security Definer**: Helper functions use `SECURITY DEFINER` to avoid infinite recursion during policy evaluation.
+  - **Tenant Isolation**: Users only see data where `tenant_id` matches their `tenant_memberships`.
