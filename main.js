@@ -303,6 +303,7 @@ const isOptionalPlainObject = (value) => value == null || isPlainObject(value)
 const VALID_FILTER_OPS = new Set(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'in', 'like', 'ilike', 'is'])
 const VALID_FUNCTION_METHODS = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'])
 const SAFE_CHANNEL_RE = /^(tenant:[A-Za-z0-9_-]+:(alerts|domain-events)|super-admin:alerts)$/
+const SAFE_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
 
 const validateEmailPassword = (payload) => {
   if (!isPlainObject(payload)) return validationError('Payload de autenticacion invalido.')
@@ -385,6 +386,31 @@ const validateFunctionInvokePayload = (payload) => {
   if (!VALID_FUNCTION_METHODS.has(method)) return validationError('Metodo HTTP no permitido.')
   if (!isOptionalPlainObject(payload.headers)) return validationError('headers debe ser un objeto.')
   return null
+}
+
+const validateAccountingListPayload = (payload, options = {}) => {
+  if (!isPlainObject(payload)) return validationError('Payload contable invalido.')
+  if (!SAFE_UUID_RE.test(String(payload.tenantId || '').trim())) return validationError('tenantId contable invalido.')
+  if (options.requiresJournalEntryId && !SAFE_UUID_RE.test(String(payload.journalEntryId || '').trim())) {
+    return validationError('journalEntryId contable invalido.')
+  }
+  if (payload.limit != null && (!Number.isInteger(payload.limit) || payload.limit < 1 || payload.limit > 500)) {
+    return validationError('limit contable debe ser un entero entre 1 y 500.')
+  }
+  return null
+}
+
+const selectAccountingRows = async (scope, table, payload, configureQuery) => {
+  const { tenantId, limit = 100 } = payload || {}
+  return runInsforgeOperation(scope, async (client) => {
+    let query = client.database
+      .from(table)
+      .select('*')
+      .eq('tenant_id', tenantId)
+      .limit(limit)
+    query = configureQuery ? configureQuery(query) : query
+    return query
+  })
 }
 
 const validateChannel = (channel) => {
@@ -954,6 +980,28 @@ ipcMain.handle('insforge:db:rpc', async (_event, payload) => {
     if (result?.error) zyronLog('db:rpc:error', { functionName, error: result.error })
     else if (mainVerboseIpc()) zyronLog('db:rpc:ok', { functionName, hasData: result?.data != null })
     return result
+  })
+})
+
+ipcMain.handle('accounting:accounts:list', async (_event, payload) => {
+  const invalid = validateAccountingListPayload(payload)
+  if (invalid) return invalid
+  return selectAccountingRows('accounting:accounts:list', 'accounting_accounts', payload, (query) => query.order('code', { ascending: true }))
+})
+
+ipcMain.handle('accounting:journal-entries:list', async (_event, payload) => {
+  const invalid = validateAccountingListPayload(payload)
+  if (invalid) return invalid
+  return selectAccountingRows('accounting:journal-entries:list', 'accounting_journal_entries', payload, (query) => {
+    return query.order('entry_date', { ascending: false }).order('created_at', { ascending: false })
+  })
+})
+
+ipcMain.handle('accounting:journal-lines:list', async (_event, payload) => {
+  const invalid = validateAccountingListPayload(payload, { requiresJournalEntryId: true })
+  if (invalid) return invalid
+  return selectAccountingRows('accounting:journal-lines:list', 'accounting_journal_lines', payload, (query) => {
+    return query.eq('journal_entry_id', payload.journalEntryId).order('line_no', { ascending: true })
   })
 })
 

@@ -19,6 +19,12 @@ function exists(file) {
   return fs.existsSync(path.join(root, file))
 }
 
+function findMigration(pattern) {
+  const dir = path.join(root, 'migrations')
+  if (!fs.existsSync(dir)) return null
+  return fs.readdirSync(dir).find((file) => pattern.test(file)) || null
+}
+
 function listFunctions() {
   const dir = path.join(root, 'insforge-functions')
   if (!fs.existsSync(dir)) return []
@@ -61,6 +67,13 @@ const preloadContent = readText('preload.js')
 const realtimeSql = readText('insforge-sql/realtime_domain_events_foundation.sql')
 const packageJson = JSON.parse(readText('package.json'))
 const forgeConfig = readText('forge.config.js')
+const accountingMigration = findMigration(/accounting-ledger-foundation\.sql$/)
+
+if (!accountingMigration) {
+  fail('Accounting ledger foundation migration is missing.')
+}
+
+const accountingSql = readText(`migrations/${accountingMigration}`)
 
 const forbiddenIndexMarkers = [
   'cdn.tailwindcss.com',
@@ -93,6 +106,23 @@ const missingAuthRealtimeMarkers = requiredAuthRealtimeMarkers.filter((marker) =
 })
 if (missingAuthRealtimeMarkers.length > 0) {
   fail('Auth/realtime foundation markers are missing:', missingAuthRealtimeMarkers)
+}
+
+const requiredAccountingMarkers = [
+  'accounting_accounts',
+  'accounting_journal_entries',
+  'accounting_journal_lines',
+  'accounting_posting_rules',
+  'zyron_assert_journal_entry_balanced',
+  'accounting:accounts:list',
+  'accounting.ledger.view',
+  'accounting.ledger.manage'
+]
+const missingAccountingMarkers = requiredAccountingMarkers.filter((marker) => {
+  return !mainContent.includes(marker) && !preloadContent.includes(marker) && !accountingSql.includes(marker)
+})
+if (missingAccountingMarkers.length > 0) {
+  fail('Accounting ledger foundation markers are missing:', missingAccountingMarkers)
 }
 
 if (packageJson.devDependencies?.tailwindcss !== '3.4.17') {

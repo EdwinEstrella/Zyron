@@ -38,6 +38,11 @@ contextBridge.exposeInMainWorld('insforgeAPI', {
     delete: (payload) => ipcRenderer.invoke('insforge:db:delete', payload),
     rpc: (payload) => ipcRenderer.invoke('insforge:db:rpc', payload)
   },
+  accounting: {
+    listAccounts: (payload) => ipcRenderer.invoke('accounting:accounts:list', payload),
+    listJournalEntries: (payload) => ipcRenderer.invoke('accounting:journal-entries:list', payload),
+    listJournalLines: (payload) => ipcRenderer.invoke('accounting:journal-lines:list', payload)
+  },
   functions: {
     invoke: (payload) => ipcRenderer.invoke('insforge:functions:invoke', payload)
   },

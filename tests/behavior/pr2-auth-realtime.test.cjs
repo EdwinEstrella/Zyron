@@ -218,3 +218,66 @@ test('packaged runtime can still discover .env beside executable or resources', 
   assert.match(mainJs, /path\.dirname\(process\.execPath\)/)
   assert.match(mainJs, /process\.resourcesPath/)
 })
+
+test('accounting foundation SQL declares ledger tables, RLS, and deferred balance guards', () => {
+  const migrationsDir = path.join(root, 'migrations')
+  const migrationFile = fs.readdirSync(migrationsDir).find((file) => /accounting-ledger-foundation\.sql$/.test(file))
+  assert.ok(migrationFile, 'accounting ledger migration file should exist')
+
+  const sql = fs.readFileSync(path.join(migrationsDir, migrationFile), 'utf8')
+
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS public\.accounting_accounts/i)
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS public\.accounting_journal_entries/i)
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS public\.accounting_journal_lines/i)
+  assert.match(sql, /CREATE TABLE IF NOT EXISTS public\.accounting_posting_rules/i)
+  assert.match(sql, /accounting\.ledger\.view/)
+  assert.match(sql, /accounting\.ledger\.manage/)
+  assert.match(sql, /ENABLE ROW LEVEL SECURITY/i)
+  assert.match(sql, /CREATE CONSTRAINT TRIGGER tr_accounting_lines_assert_balance[\s\S]*DEFERRABLE INITIALLY DEFERRED/i)
+  assert.match(sql, /zyron_assert_journal_entry_balanced/)
+  assert.doesNotMatch(sql, /^\s*(BEGIN|COMMIT|ROLLBACK)\s*;/im)
+})
+
+test('accounting list IPC validates tenant id before touching InsForge', async () => {
+  const { handlers } = loadMainForBehaviorTest()
+  const result = await handlers.get('accounting:accounts:list')(null, { tenantId: 'not-a-uuid' })
+
+  assert.equal(result.data, null)
+  assert.equal(result.error.code, 'IPC_INVALID_PAYLOAD')
+  assert.match(result.error.message, /tenantId contable invalido/i)
+})
+
+test('accounting list IPC exposes tenant-scoped ledger reads', async () => {
+  const { handlers } = loadMainForBehaviorTest()
+  const calls = []
+  const rows = [{ code: '1100', name: 'Accounts receivable' }]
+  const query = makeSelectQuery([{ data: rows, error: null }])
+  query.select = function () { return this }
+  for (const method of ['select', 'eq', 'limit', 'order']) {
+    const original = query[method]
+    query[method] = function (...args) {
+      calls.push([method, ...args])
+      return original.apply(this, args)
+    }
+  }
+
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    auth: {},
+    database: { from: (table) => { calls.push(['from', table]); return query } },
+    realtime: { on: () => {} }
+  }
+
+  const result = await handlers.get('accounting:accounts:list')(null, {
+    tenantId: '11111111-1111-4111-8111-111111111111',
+    limit: 25
+  })
+
+  assert.deepEqual(result, { data: rows, error: null })
+  assert.deepEqual(calls.slice(0, 4), [
+    ['from', 'accounting_accounts'],
+    ['select', '*'],
+    ['eq', 'tenant_id', '11111111-1111-4111-8111-111111111111'],
+    ['limit', 25]
+  ])
+  assert.deepEqual(calls.at(-1), ['order', 'code', { ascending: true }])
+})
