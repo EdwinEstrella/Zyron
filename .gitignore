@@ -4,6 +4,8 @@ release/
 # Build output
 out/
 dist/
+.generated/
+test-results/
 
 # Debug logs
 *.log

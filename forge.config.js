@@ -6,6 +6,13 @@ module.exports = {
   packagerConfig: {
     asar: true,
     icon: path.join(__dirname, 'logo.ico'),
+    extraResource: [path.join(__dirname, '.generated', 'insforge.json')],
+    ignore: [
+      /^\/\.env(?:\..*)?$/,
+      /(^|[\/\\])\.env(?:\..*)?$/,
+      /(^|[\/\\]).*credentials.*\.json$/i,
+      /(^|[\/\\]).*secret.*\.json$/i
+    ],
     // Insforge: en runtime `main.js` busca `insforge.json` en userData, junto al .exe (portable) y en resources.
   },
   rebuildConfig: {},
