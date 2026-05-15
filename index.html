@@ -3,52 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <title>Zyron | Acceder</title>
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self' https://cdn.tailwindcss.com" />
-    <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: blob:; connect-src 'self'" />
+    <link rel="stylesheet" href="public/tailwind.css" />
     <link rel="stylesheet" href="components/paint-first.css" />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
     <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0" rel="stylesheet" />
-    <script>
-        tailwind.config = {
-            darkMode: 'class',
-            theme: {
-                extend: {
-                    colors: {
-                        surface: '#f4f7fb',
-                        'on-surface': '#0f172a',
-                        'on-surface-variant': '#475569',
-                        primary: '#0f2744',
-                        'primary-container': '#1e4976',
-                        'on-primary-container': '#bfdbfe',
-                        outline: '#64748b',
-                        'outline-variant': '#cbd5e1',
-                        'surface-container': '#e8eef6',
-                        'surface-container-low': '#f1f5f9',
-                        'surface-container-lowest': '#ffffff',
-                        'surface-container-high': '#dce7f4',
-                        tertiary: '#0f766e',
-                        'tertiary-container': '#115e59',
-                        'tertiary-fixed': '#ccfbf1',
-                        'tertiary-fixed-dim': '#5eead4',
-                        'on-tertiary-fixed-variant': '#134e4a',
-                        error: '#b91c1c',
-                        'error-container': '#fecaca',
-                        'on-error-container': '#7f1d1d',
-                        'surface-tint': '#3d5e80',
-                        'surface-dim': '#e2e8f0',
-                        'on-primary-fixed-variant': '#1e3a5f',
-                        'on-primary-fixed': '#0f172a',
-                        'secondary-fixed': '#bfdbfe',
-                        'on-secondary-fixed': '#1e3a8a',
-                    },
-                    fontFamily: {
-                        headline: ['Inter', 'system-ui', 'sans-serif'],
-                        body: ['Inter', 'system-ui', 'sans-serif'],
-                    },
-                },
-            },
-        };
-    </script>
     <style>
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
