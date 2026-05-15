@@ -168,3 +168,10 @@ test('realtime SQL foundation declares enabled tenant domain-event channel contr
   assert.match(sql, /can_use_tenant_realtime_channel/)
   assert.doesNotMatch(sql, /tenant_fiscal_profiles|journal_entries|journal_lines/i)
 })
+
+test('packaged runtime can still discover .env beside executable or resources', () => {
+  const mainJs = fs.readFileSync(path.join(root, 'main.js'), 'utf8')
+
+  assert.match(mainJs, /path\.dirname\(process\.execPath\)/)
+  assert.match(mainJs, /process\.resourcesPath/)
+})

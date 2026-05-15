@@ -13,11 +13,21 @@ const mainVerboseIpc = () => process.env.ZYRON_MAIN_VERBOSE === '1'
 const fs = require('node:fs')
 const path = require('node:path')
 
-/** Carga `.env` desde cwd o subiendo desde __dirname (raiz del repo con Forge). */
+/** Carga `.env` desde dev root y desde ubicaciones runtime del ejecutable empaquetado. */
 const loadEnvFromDotEnvFiles = () => {
   try {
     const dotenv = require('dotenv')
     const roots = new Set([process.cwd(), __dirname])
+    try {
+      roots.add(path.dirname(process.execPath))
+    } catch (_) {
+      /* process.execPath puede no estar disponible en algunos contextos de test */
+    }
+    try {
+      if (process.resourcesPath) roots.add(process.resourcesPath)
+    } catch (_) {
+      /* resourcesPath solo existe en Electron empaquetado */
+    }
     let d = __dirname
     for (let i = 0; i < 28; i++) {
       roots.add(d)
