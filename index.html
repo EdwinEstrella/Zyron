@@ -777,6 +777,8 @@
             membershipsList: [],
             /** Canal realtime suscrito para la empresa activa (desuscribir al cambiar workspace). */
             _rtTenantChannel: null,
+            /** Estado resumido de realtime administrado por main.js. */
+            realtimeStatus: { degraded: false, channels: [] },
             /** Super admin: modulo Acceso (cuentas, membresías, auditoría). */
             superAccessUi: { tab: 'platform', memTenantId: '', memEmailQ: '', memStatus: '', platformQ: '' },
             clientesUi: {
@@ -885,6 +887,11 @@
 
         const updateSessionNoticeBanner = () => {
             if (!sessionNoticeBanner) return;
+            if (state.realtimeStatus?.degraded && state.appUser && !isTenantPendingApproval()) {
+                sessionNoticeBanner.textContent = 'Realtime esta en modo degradado. La app sigue funcionando y reintentara la conexion automaticamente.';
+                sessionNoticeBanner.classList.remove('hidden');
+                return;
+            }
             sessionNoticeBanner.textContent = '';
             sessionNoticeBanner.classList.add('hidden');
         };
@@ -1045,6 +1052,9 @@
                 const ms = typeof performance !== 'undefined' ? Math.round(performance.now() - t0) : 0;
                 if (result && typeof result === 'object' && result.error) {
                     console.warn(`[Zyron:ipc:!!] ${debugLabel} (${ms}ms)`, result.error, summarizeInsforgeResult(result));
+                    if (result.error.reauthRequired || result.error.code === 'AUTH_RELOGIN_REQUIRED') {
+                        await handleSessionExpired(result.error);
+                    }
                 } else if (!quiet) {
                     console.log(`[Zyron:ipc:<<] ${debugLabel} (${ms}ms)`, summarizeInsforgeResult(result));
                 }
@@ -1057,6 +1067,39 @@
             }
         };
 
+        const handleSessionExpired = async (error = {}) => {
+            zyronLog('auth:sessionExpired', { code: error.code, message: error.message });
+            state.sessionUser = null;
+            state.appUser = null;
+            state.membership = null;
+            state.membershipsList = [];
+            state.currentTenantId = null;
+            state.isSuperAdmin = false;
+            state._rtTenantChannel = null;
+            state.realtimeStatus = { degraded: false, channels: [] };
+            showLogin();
+            setStatus(loginStatus, error.message || 'Tu sesion expiro. Vuelve a iniciar sesion para continuar.', true);
+        };
+
+        window.insforgeAPI?.auth?.onSessionExpired?.((payload) => {
+            void handleSessionExpired(payload || {});
+        });
+
+        window.insforgeAPI?.realtime?.onStatusChanged?.((payload) => {
+            const channels = Array.isArray(payload?.channels) ? payload.channels : [];
+            state.realtimeStatus = {
+                degraded: Boolean(payload?.error || channels.some((ch) => ch.degraded || ch.status === 'degraded')),
+                channels
+            };
+            updateSessionNoticeBanner();
+        });
+
+        window.insforgeAPI?.realtime?.onDomainEvent?.((event) => {
+            zyronLog('realtime:domainEvent', event);
+            if (!state.appUser || isTenantPendingApproval()) return;
+            void openModule(state.currentModule, { skipHistory: true, replaceHistory: true });
+        });
+
         const dbSelect = (payload) =>
             safeCall(
                 () => window.insforgeAPI.database.select(enforceTenantScopeOnSelect(payload)),
@@ -1064,7 +1107,11 @@
             );
         const dbInsert = (payload) =>
             safeCall(
-                () => window.insforgeAPI.database.insert(enforceTenantScopeOnInsert(payload)),
+                () => {
+                    const scoped = enforceTenantScopeOnInsert(payload);
+                    const values = Array.isArray(scoped?.values) ? scoped.values : [scoped?.values].filter(Boolean);
+                    return window.insforgeAPI.database.insert({ ...scoped, values });
+                },
                 `db.insert:${payload?.table || '?'}`
             );
         const dbUpdate = (payload) =>
@@ -1344,7 +1391,7 @@
             } catch (_) {
                 /* */
             }
-            const ch = `tenant:${row.tenant_id}:alerts`;
+            const ch = `tenant:${row.tenant_id}:domain-events`;
             await safeCall(() => window.insforgeAPI.realtime.subscribe(ch), `realtime.subscribe:${ch}`);
             state._rtTenantChannel = ch;
             await loadTenantContext(row.tenant_id);
@@ -1899,7 +1946,7 @@
             if (!TENANT_SCOPED_TABLES.has(String(payload.table)) || payload.values == null) return payload;
             const vals = Array.isArray(payload.values) ? payload.values : [payload.values];
             const next = vals.map((v) => (v && typeof v === 'object' ? { ...v, tenant_id: state.currentTenantId } : v));
-            return { ...payload, values: Array.isArray(payload.values) ? next : next[0] };
+            return { ...payload, values: next };
         };
 
         const applyRememberedCredentials = () => {
@@ -2089,7 +2136,7 @@
                     if (state.isSuperAdmin) {
                         await safeCall(() => window.insforgeAPI.realtime.subscribe('super-admin:alerts'), 'realtime.subscribe:super-admin');
                     } else if (state.currentTenantId) {
-                        const ch = `tenant:${state.currentTenantId}:alerts`;
+                        const ch = `tenant:${state.currentTenantId}:domain-events`;
                         await safeCall(() => window.insforgeAPI.realtime.subscribe(ch), `realtime.subscribe:${ch}`);
                         state._rtTenantChannel = ch;
                     }

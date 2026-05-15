@@ -38,7 +38,8 @@ const requiredFiles = [
   'styles/tailwind.css',
   'public/tailwind.css',
   'playwright.config.cjs',
-  'scripts/write-insforge-config.cjs'
+  'scripts/write-insforge-config.cjs',
+  'insforge-sql/realtime_domain_events_foundation.sql'
 ]
 
 const requiredFunctions = [
@@ -55,6 +56,9 @@ if (missing.length > 0) {
 }
 
 const indexContent = readText('index.html')
+const mainContent = readText('main.js')
+const preloadContent = readText('preload.js')
+const realtimeSql = readText('insforge-sql/realtime_domain_events_foundation.sql')
 const packageJson = JSON.parse(readText('package.json'))
 const forgeConfig = readText('forge.config.js')
 
@@ -75,6 +79,20 @@ const requiredIndexMarkers = [
 const missingIndexMarkers = requiredIndexMarkers.filter((marker) => !indexContent.includes(marker))
 if (missingIndexMarkers.length > 0) {
   fail('Renderer production readiness markers are missing:', missingIndexMarkers)
+}
+
+const requiredAuthRealtimeMarkers = [
+  'AUTH_RELOGIN_REQUIRED',
+  'validateDbInsertPayload',
+  'requestAuthRecovery',
+  'realtimeRegistry',
+  'tenant:*:domain-events'
+]
+const missingAuthRealtimeMarkers = requiredAuthRealtimeMarkers.filter((marker) => {
+  return !mainContent.includes(marker) && !preloadContent.includes(marker) && !realtimeSql.includes(marker)
+})
+if (missingAuthRealtimeMarkers.length > 0) {
+  fail('Auth/realtime foundation markers are missing:', missingAuthRealtimeMarkers)
 }
 
 if (packageJson.devDependencies?.tailwindcss !== '3.4.17') {
