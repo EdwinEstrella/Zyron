@@ -1,7 +1,7 @@
 {
-  "name": "test-electron",
-  "version": "1.0.0",
-  "description": "Mi primera app de Electron",
+  "name": "zyron",
+  "version": "1.0.1",
+  "description": "Aplicacion para facturacion",
   "author": "Edwin",
   "main": "main.js",
   "scripts": {
@@ -10,7 +10,9 @@
     "make": "electron-forge make",
     "make:win": "electron-forge make --platform=win32",
     "make:win:icon": "npm run make:win && node ./scripts/after-pack-exe-icon.cjs",
-    "qa:saas": "node ./scripts/smoke-saas.cjs"
+    "qa:saas": "node ./scripts/smoke-saas.cjs",
+    "dist:win": "electron-builder --win",
+    "release:win": "electron-builder --win --publish always"
   },
   "devDependencies": {
     "@electron-forge/cli": "^7.11.1",
@@ -23,10 +25,69 @@
     "@electron/fuses": "^1.8.0",
     "@insforge/cli": "^0.1.70",
     "electron": "^41.1.1",
+    "electron-builder": "^26.8.1",
     "rcedit": "^5.0.2"
   },
   "dependencies": {
     "@insforge/sdk": "^1.2.5",
     "dotenv": "^16.6.1"
+  },
+  "build": {
+    "appId": "com.edwin.zyron",
+    "productName": "Zyron",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "index.html",
+      "package.json",
+      "logo.ico",
+      "logo.png",
+      ".env",
+      "components/**/*",
+      "fragments/**/*",
+      "public/**/*",
+      "node_modules/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "logo.ico",
+        "to": "logo.ico"
+      }
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "logo.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "artifactName": "Zyron-Install.${ext}",
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": true,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "logo.ico",
+      "uninstallerIcon": "logo.ico",
+      "installerHeaderIcon": "logo.ico",
+      "runAfterFinish": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "deleteAppDataOnUninstall": false,
+      "warningsAsErrors": false
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "EdwinEstrella",
+        "repo": "Zyron",
+        "releaseType": "release",
+        "vPrefixedTagName": true
+      }
+    ]
   }
 }

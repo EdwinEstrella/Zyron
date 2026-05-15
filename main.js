@@ -340,7 +340,10 @@ function createWindow () {
   })
 
   mainWindow.once('ready-to-show', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.maximize()
+      mainWindow.show()
+    }
   })
 
   mainWindow.webContents.once('did-fail-load', (_e, code, desc) => {

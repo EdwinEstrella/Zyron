@@ -1,6 +1,6 @@
 # Dependencies
 node_modules/
-
+release/
 # Build output
 out/
 dist/
@@ -36,6 +36,7 @@ insforge.local.json
 # package-lock.json
 # yarn.lock
 # InsForge & AI agent skills
+.atl
 .insforge
 .agent
 .agents
