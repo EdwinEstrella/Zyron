@@ -27,3 +27,19 @@ test('renderer uses bundled Tailwind output instead of CDN runtime', () => {
   expect(indexHtml).not.toContain('tailwind.config =')
   expect(fs.existsSync(path.join(root, 'public/tailwind.css'))).toBe(true)
 })
+
+test('auth IPC and realtime foundation are present', () => {
+  const mainJs = fs.readFileSync(path.join(root, 'main.js'), 'utf8')
+  const preloadJs = fs.readFileSync(path.join(root, 'preload.js'), 'utf8')
+  const realtimeSql = fs.readFileSync(path.join(root, 'insforge-sql/realtime_domain_events_foundation.sql'), 'utf8')
+
+  expect(mainJs).toContain('AUTH_RELOGIN_REQUIRED')
+  expect(mainJs).toContain('requestAuthRecovery')
+  expect(mainJs).toContain('validateDbInsertPayload')
+  expect(mainJs).toContain('realtimeRegistry')
+  expect(preloadJs).not.toContain('exposeInMainWorld(\'ipcRenderer\'')
+  expect(preloadJs).toContain('onSessionExpired')
+  expect(preloadJs).toContain('onStatusChanged')
+  expect(realtimeSql).toContain('tenant:*:domain-events')
+  expect(realtimeSql).toContain('realtime.domain_events.view')
+})
