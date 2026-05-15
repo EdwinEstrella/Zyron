@@ -1,4 +1,12 @@
 const { app, BrowserWindow, ipcMain, nativeImage, dialog } = require('electron/main')
+const { autoUpdater } = require('electron-updater')
+const log = require('electron-log')
+
+// Configure logging for auto-updater
+log.transports.file.level = 'info'
+autoUpdater.logger = log
+autoUpdater.autoDownload = true
+autoUpdater.autoInstallOnAppQuit = true
 
 /** Logs detallados de IPC/DB en main (menos overhead). Activar: ZYRON_MAIN_VERBOSE=1 */
 const mainVerboseIpc = () => process.env.ZYRON_MAIN_VERBOSE === '1'
@@ -726,6 +734,11 @@ ipcMain.handle('insforge:realtime:disconnect', async () => {
 
 app.whenReady().then(() => {
   createWindow()
+
+  // Check for updates like Cyberbistro
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify()
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

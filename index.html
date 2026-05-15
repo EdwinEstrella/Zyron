@@ -4640,6 +4640,7 @@
                 if (action === 'upsert_settings') {
                     const { data: existingRows } = await dbSelect({
                         table: 'tenant_fiscal_settings',
+                        filters: [{ column: 'tenant_id', op: 'eq', value: tenantId }],
                         limit: 1
                     });
                     const cur = existingRows?.[0] || {};
@@ -4684,13 +4685,13 @@
                             : fiscalNumOr(cur.withholding_itbis_on_tax_pct, 0),
                         updated_at: new Date().toISOString()
                     };
-                    const { data: ex } = await dbSelect({ table: 'tenant_fiscal_settings', columns: 'id', limit: 1 });
+                    const { data: ex } = await dbSelect({ table: 'tenant_fiscal_settings', columns: 'id', filters: [{ column: 'tenant_id', op: 'eq', value: tenantId }], limit: 1 });
                     let out;
                     if (ex?.length) {
                         const r = await dbUpdate({
                             table: 'tenant_fiscal_settings',
                             values: row,
-                            filters: []
+                            filters: [{ column: 'tenant_id', op: 'eq', value: tenantId }]
                         });
                         const row0 = Array.isArray(r.data) ? r.data[0] : r.data;
                         if (r.error || !row0) return { data: { error: r.error?.message || 'update failed' }, error: null };

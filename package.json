@@ -30,7 +30,9 @@
   },
   "dependencies": {
     "@insforge/sdk": "^1.2.5",
-    "dotenv": "^16.6.1"
+    "dotenv": "^16.6.1",
+    "electron-log": "^5.4.4",
+    "electron-updater": "^6.8.3"
   },
   "build": {
     "appId": "com.edwin.zyron",
