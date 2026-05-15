@@ -67,6 +67,7 @@ let mainWindow = null
 let insforgeClientPromise = null
 let authRecoveryPromise = null
 let realtimeForwardersInstalled = false
+let currentRefreshToken = null
 
 const realtimeRegistry = new Map()
 
@@ -113,6 +114,13 @@ const applyAuthSessionFromPayload = (client, raw) => {
       csrfToken
     })
   }
+  if (accessToken && user && typeof client.tokenManager?.saveSession === 'function') {
+    client.tokenManager.saveSession({ accessToken, user })
+  } else {
+    if (accessToken && typeof client.tokenManager?.setAccessToken === 'function') client.tokenManager.setAccessToken(accessToken)
+    if (user && typeof client.tokenManager?.setUser === 'function') client.tokenManager.setUser(user)
+  }
+  if (refreshToken) currentRefreshToken = refreshToken
   if (refreshToken && typeof client.getHttpClient === 'function') {
     client.getHttpClient().setRefreshToken(refreshToken)
   }
@@ -409,7 +417,7 @@ const requestAuthRecovery = async (client, reason) => {
     try {
       zyronLog('auth:recovery:start', { reason })
       if (typeof client.auth?.refreshSession !== 'function') throw new Error('refreshSession no disponible')
-      const result = await client.auth.refreshSession()
+      const result = await client.auth.refreshSession(currentRefreshToken ? { refreshToken: currentRefreshToken } : undefined)
       if (result?.error) throw result.error
       if (result?.data) applyAuthSessionFromPayload(client, result.data)
       notifyRenderer('auth-session-recovered', { code: AUTH_RECOVERED })
@@ -418,6 +426,7 @@ const requestAuthRecovery = async (client, reason) => {
     } catch (error) {
       zyronLog('auth:recovery:failed', serializeError(error, AUTH_RELOGIN_REQUIRED))
       try { client.auth?.signOut?.() } catch (_) {}
+      currentRefreshToken = null
       notifyRenderer('auth-session-expired', {
         code: AUTH_RELOGIN_REQUIRED,
         message: 'Tu sesion expiro. Vuelve a iniciar sesion para continuar.'
@@ -1025,6 +1034,7 @@ if (process.env.ZYRON_MAIN_TEST_HOOKS === '1') {
         insforgeClientPromise = null
         authRecoveryPromise = null
         realtimeForwardersInstalled = false
+        currentRefreshToken = null
       }
     }
   }

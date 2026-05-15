@@ -102,14 +102,20 @@ test('401/AUTH_UNAUTHORIZED refreshes once and retries without surfacing re-logi
   ]
   let refreshCount = 0
   let selectCount = 0
+  let refreshOptions = null
 
   global.__ZYRON_TEST_INSFORGE_CLIENT = {
     auth: {
-      refreshSession: async () => {
+      refreshSession: async (options) => {
         refreshCount += 1
+        refreshOptions = options
         return { data: { accessToken: 'new-token', user: { id: 'user-1' } }, error: null }
       },
       saveSessionFromResponse: () => {}
+    },
+    tokenManager: {
+      saveSession: () => {},
+      getAccessToken: () => 'old-token'
     },
     getHttpClient: () => ({ setRefreshToken: () => {} }),
     database: {
@@ -127,7 +133,44 @@ test('401/AUTH_UNAUTHORIZED refreshes once and retries without surfacing re-logi
 
   assert.deepEqual(result, { data: [{ id: 'invoice-1' }], error: null })
   assert.equal(refreshCount, 1)
+  assert.equal(refreshOptions, undefined)
   assert.equal(selectCount, 2)
+})
+
+test('sign in persists SDK token manager session so bootstrap getCurrentUser returns user', async () => {
+  const { handlers } = loadMainForBehaviorTest()
+  let savedSession = null
+
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    auth: {
+      signInWithPassword: async () => ({
+        data: {
+          accessToken: 'access-token',
+          refreshToken: 'refresh-token',
+          user: { id: 'user-1', email: 'test@test.com' }
+        },
+        error: null
+      }),
+      getCurrentUser: async () => ({ data: { user: savedSession?.user ?? null }, error: null }),
+      saveSessionFromResponse: () => {}
+    },
+    tokenManager: {
+      saveSession: (session) => { savedSession = session },
+      getAccessToken: () => savedSession?.accessToken ?? null
+    },
+    getHttpClient: () => ({ setRefreshToken: () => {} }),
+    realtime: { on: () => {} }
+  }
+
+  const signIn = await handlers.get('insforge:auth:signInWithPassword')(null, {
+    email: 'test@test.com',
+    password: 'secret123'
+  })
+  const current = await handlers.get('insforge:auth:getCurrentUser')()
+
+  assert.equal(signIn.error, null)
+  assert.equal(savedSession.accessToken, 'access-token')
+  assert.equal(current.data.user.id, 'user-1')
 })
 
 test('failed realtime subscription enters degraded state and schedules backoff', async () => {
