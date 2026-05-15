@@ -6,12 +6,21 @@
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
+    "build:css": "tailwindcss -c ./tailwind.config.cjs -i ./styles/tailwind.css -o ./public/tailwind.css --minify",
+    "build:runtime-config": "node ./scripts/write-insforge-config.cjs",
+    "build:runtime-config:required": "node ./scripts/write-insforge-config.cjs --require",
+    "prepackage": "npm run build:css && npm run build:runtime-config:required",
     "package": "electron-forge package",
+    "premake": "npm run build:css && npm run build:runtime-config:required",
     "make": "electron-forge make",
     "make:win": "electron-forge make --platform=win32",
     "make:win:icon": "npm run make:win && node ./scripts/after-pack-exe-icon.cjs",
-    "qa:saas": "node ./scripts/smoke-saas.cjs",
+    "qa:saas": "npm run build:css && node ./scripts/smoke-saas.cjs",
+    "test:e2e": "playwright test",
+    "ci": "npm run qa:saas && npm run test:e2e",
+    "predist:win": "npm run build:css && npm run build:runtime-config:required",
     "dist:win": "electron-builder --win",
+    "prerelease:win": "npm run build:css && npm run build:runtime-config:required",
     "release:win": "electron-builder --win --publish always"
   },
   "devDependencies": {
@@ -24,9 +33,13 @@
     "@electron-forge/plugin-fuses": "^7.11.1",
     "@electron/fuses": "^1.8.0",
     "@insforge/cli": "^0.1.70",
+    "@playwright/test": "1.56.1",
+    "@tailwindcss/container-queries": "0.1.1",
+    "@tailwindcss/forms": "0.5.10",
     "electron": "^41.1.1",
     "electron-builder": "^26.8.1",
-    "rcedit": "^5.0.2"
+    "rcedit": "^5.0.2",
+    "tailwindcss": "3.4.17"
   },
   "dependencies": {
     "@insforge/sdk": "^1.2.5",
@@ -47,16 +60,26 @@
       "package.json",
       "logo.ico",
       "logo.png",
-      ".env",
+      "!.env",
+      "!.env.*",
+      "!**/.env",
+      "!**/.env.*",
+      "!**/*credentials*.json",
+      "!**/*secret*.json",
       "components/**/*",
       "fragments/**/*",
       "public/**/*",
+      ".generated/insforge.json",
       "node_modules/**/*"
     ],
     "extraResources": [
       {
         "from": "logo.ico",
         "to": "logo.ico"
+      },
+      {
+        "from": ".generated/insforge.json",
+        "to": "insforge.json"
       }
     ],
     "asar": true,
