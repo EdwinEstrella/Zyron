@@ -1,0 +1,38 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build CSS & Config
+        run: |
+          npm run build:css
+          npm run build:runtime-config
+        env:
+          INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL }}
+          INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
+
+      - name: Build and Publish Release
+        run: npm run release:win
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL }}
+          INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
