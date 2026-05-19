@@ -57,6 +57,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "renderer.js",
       "index.html",
       "package.json",
       "logo.ico",
@@ -70,6 +71,7 @@
       "components/**/*",
       "fragments/**/*",
       "public/**/*",
+      "!public/zyron-legacy.html",
       ".generated/insforge.json",
       "node_modules/**/*"
     ],

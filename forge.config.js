@@ -11,7 +11,8 @@ module.exports = {
       /^\/\.env(?:\..*)?$/,
       /(^|[\/\\])\.env(?:\..*)?$/,
       /(^|[\/\\]).*credentials.*\.json$/i,
-      /(^|[\/\\]).*secret.*\.json$/i
+      /(^|[\/\\]).*secret.*\.json$/i,
+      /(^|[\/\\])public[\/\\]zyron-legacy\.html$/i
     ],
     // Insforge: en runtime `main.js` busca `insforge.json` en userData, junto al .exe (portable) y en resources.
   },

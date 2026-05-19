@@ -714,6 +714,7 @@ function createWindow () {
       nodeIntegration: false
     }
   })
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
 
   mainWindow.once('ready-to-show', () => {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -758,6 +759,44 @@ ipcMain.on('window-close', () => {
   if (mainWindow) mainWindow.close()
 })
 
+const sanitizePreviewTitle = (title) => {
+  const value = typeof title === 'string' ? title : 'Vista previa'
+  return value.replace(/[<>:"/\\|?*\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Vista previa'
+}
+
+ipcMain.handle('desktop:open-html-preview', async (_event, payload = {}) => {
+  try {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Payload invalido')
+    const html = typeof payload.html === 'string' ? payload.html : ''
+    if (!html.trim()) throw new Error('HTML requerido para vista previa')
+    const title = sanitizePreviewTitle(payload.title)
+    const autoPrint = typeof payload.autoPrint === 'boolean' ? payload.autoPrint : false
+
+    const previewWindow = new BrowserWindow({
+      width: 900,
+      height: 720,
+      minWidth: 640,
+      minHeight: 480,
+      title,
+      parent: mainWindow || undefined,
+      webPreferences: {
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+    previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    await previewWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+    if (autoPrint && !previewWindow.isDestroyed()) {
+      previewWindow.webContents.print({ printBackground: true })
+    }
+    return { data: { ok: true }, error: null }
+  } catch (error) {
+    zyronLog('desktop:openHtmlPreview:error', { message: error?.message || String(error) })
+    return normalizeResult(null, error)
+  }
+})
+
 ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
   let pdfWindow = null
   try {
@@ -782,6 +821,7 @@ ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
         nodeIntegration: false
       }
     })
+    pdfWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
     const pdf = await pdfWindow.webContents.printToPDF({
       printBackground: true,

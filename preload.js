@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   close: () => ipcRenderer.send('window-close'),
   getVersions: () => process.versions,
   savePdfFromHtml: (payload) => ipcRenderer.invoke('desktop:save-pdf-from-html', payload),
+  openHtmlPreview: (payload) => ipcRenderer.invoke('desktop:open-html-preview', payload),
   onWindowMaximized: (callback) => onMainEvent('window-maximized', callback)
 })
 
