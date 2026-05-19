@@ -8,6 +8,12 @@ on:
 jobs:
   production-readiness:
     runs-on: ubuntu-latest
+    env:
+      INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL }}
+      INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
+      TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
+      TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
+      
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -18,11 +24,20 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Install system dependencies for Electron
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgbm-dev libxshmfence-dev libgtk-3-0 libnss3 libasound2
+
       - name: Install dependencies
         run: npm ci
 
       - name: Run smoke checks
-        run: npm run qa:saas
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npm run qa:saas
+
+      - name: Run behavior tests
+        run: npm run test:behavior
 
       - name: Run Playwright baseline
-        run: npm run test:e2e
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npm run test:e2e
+
