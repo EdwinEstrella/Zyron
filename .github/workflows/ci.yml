@@ -13,7 +13,7 @@ jobs:
       INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
       TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
       TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}
-      
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,6 +35,12 @@ jobs:
       - name: Audit dependency risk
         run: npm audit --audit-level=high
 
+      - name: Run lint
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
       - name: Run smoke checks
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npm run qa:saas
 
@@ -43,4 +49,3 @@ jobs:
 
       - name: Run Playwright baseline
         run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" npm run test:e2e
-

@@ -6,6 +6,10 @@
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
+    "lint": "eslint .",
+    "format:check": "prettier . --check",
+    "format": "prettier . --write",
+    "prepare": "husky",
     "build:css": "tailwindcss -c ./tailwind.config.cjs -i ./styles/tailwind.css -o ./public/tailwind.css --minify",
     "build:runtime-config": "node ./scripts/write-insforge-config.cjs",
     "build:runtime-config:required": "node ./scripts/write-insforge-config.cjs --require",
@@ -33,12 +37,19 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.11.1",
     "@electron-forge/plugin-fuses": "^7.11.1",
     "@electron/fuses": "^1.8.0",
+    "@eslint/js": "^10.0.1",
     "@insforge/cli": "^0.1.81",
     "@playwright/test": "1.56.1",
     "@tailwindcss/container-queries": "0.1.1",
     "@tailwindcss/forms": "0.5.10",
     "electron": "^41.6.1",
     "electron-builder": "^26.8.1",
+    "eslint": "^10.4.0",
+    "eslint-plugin-security": "^4.0.0",
+    "globals": "^17.6.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.4.0",
+    "prettier": "^3.8.3",
     "rcedit": "^5.0.2",
     "tailwindcss": "3.4.17"
   },
@@ -47,6 +58,13 @@
     "dotenv": "^16.6.1",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3"
+  },
+  "lint-staged": {
+    "*.{js,cjs,mjs}": [
+      "eslint --fix --no-warn-ignored",
+      "prettier --write --ignore-unknown"
+    ],
+    "*.{json,md,yml,yaml,css,html}": "prettier --write --ignore-unknown"
   },
   "overrides": {
     "@electron/rebuild": "4.0.4",
