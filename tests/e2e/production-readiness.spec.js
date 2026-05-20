@@ -43,3 +43,12 @@ test('auth IPC and realtime foundation are present', () => {
   expect(realtimeSql).toContain('tenant:*:domain-events')
   expect(realtimeSql).toContain('realtime.domain_events.view')
 })
+
+test('invoice and customer forms do not expose duplicate create controls', () => {
+  const rendererJs = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8')
+
+  expect(rendererJs.match(/id="factura-new-btn/g) || []).toHaveLength(1)
+  expect(rendererJs.match(/id="estimate-new-btn/g) || []).toHaveLength(1)
+  expect(rendererJs.match(/id="cli-new-btn/g) || []).toHaveLength(1)
+  expect(rendererJs).not.toContain('const lineRowTemplate =')
+})
