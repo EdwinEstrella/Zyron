@@ -6367,50 +6367,6 @@ const renderFacturasModule = async () => {
     const seriesCodes = new Set(['FAC', 'PRO', 'NCC', 'NDD', ...seriesRows.map((r) => r.code).filter(Boolean)]);
     const fallbackTax = Number.isFinite(Number(fh.defaultTaxRate)) ? Number(fh.defaultTaxRate) : 18;
 
-    const lineRowTemplate = (line = {}) => {
-        const kind = line.lineKind || (line.productId ? 'product' : 'service');
-        const defTx = Number(fh.defaultTaxRate);
-        const rowFallbackTax = Number.isFinite(defTx) ? defTx : fallbackTax;
-        const opts = (products || [])
-            .map((p) => {
-                const tx = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : rowFallbackTax;
-                const dc = p.discount_default != null && p.discount_default !== '' ? Number(p.discount_default) : 0;
-                const ik = String(p.item_kind || 'product').toLowerCase();
-                const st = ik === 'service' ? 'srv' : Number(p.stock ?? 0);
-                return `<option value="${p.id}" data-price="${Number(p.price || 0)}" data-tax="${tx}" data-disc="${dc}" data-item-kind="${escapeHtml(
-                    ik
-                )}" data-label="${escapeHtml(p.name || p.sku || '')}">${escapeHtml(p.name || p.sku || p.id)} · ${ik === 'service' ? 'servicio' : `stock ${st}`}</option>`;
-            })
-            .join('');
-        return `<tr data-inv-line class="border-b border-outline-variant/15 align-top">
-            <td class="py-2 pr-2">
-                <select data-fld="kind" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs">
-                    <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
-                    <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
-                </select>
-            </td>
-            <td class="py-2 pr-2 hidden" data-product-cell>
-                <select data-fld="product" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs"><option value="">—</option>${opts}</select>
-            </td>
-            <td class="py-2 pr-2"><input data-fld="desc" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${escapeHtml(
-                line.description || ''
-            )}" placeholder="Descripcion" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="qty" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.quantity ?? 1
-            )}" /></td>
-            <td class="py-2 pr-2 w-24"><input data-fld="price" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.unitPrice ?? 0
-            )}" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="tax" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.taxRate != null && line.taxRate !== '' ? line.taxRate : rowFallbackTax
-            )}" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="disc" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.discount ?? 0
-            )}" /></td>
-            <td class="py-2"><button type="button" data-remove-line class="text-xs text-error">Quitar</button></td>
-        </tr>`;
-    };
-
     const invoiceShelfLineRowTemplate = (line = {}) => {
         const kind = line.lineKind || (line.productId ? 'product' : 'service');
         const defTx = Number(fh.defaultTaxRate);
@@ -6554,12 +6510,7 @@ const renderFacturasModule = async () => {
                 <button type="button" id="factura-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
             </div>
         </div>
-        <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-2">
-                <button type="button" id="factura-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
-            </div>
-            <p class="text-xs text-on-surface-variant">Abre el editor de factura aqui. Borradores BOR; al emitir queda lista para cobro.</p>
-        </div>
+        <p class="mb-3 text-xs text-on-surface-variant">Abre el editor desde el boton principal. Borradores BOR; al emitir queda lista para cobro.</p>
         <div id="facturas-table-wrap" class="overflow-x-auto">
             <table class="w-full min-w-[820px] text-left text-sm">
                 <thead>
@@ -6959,13 +6910,6 @@ const renderFacturasModule = async () => {
         });
     });
 
-    document.getElementById('factura-new-btn')?.addEventListener('click', () => {
-        openSheet({
-            mode: 'create',
-            invoiceId: null,
-            lines: [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }]
-        });
-    });
     document.getElementById('factura-new-btn-top')?.addEventListener('click', () => {
         openSheet({
             mode: 'create',
@@ -7525,47 +7469,6 @@ const renderPresupuestosModule = async () => {
     const tenantRow = (tenantRows || [])[0] || {};
     const customerById = new Map((customers || []).map((c) => [c.id, c]));
 
-    const lineRowTemplate = (line = {}) => {
-        const kind = line.lineKind || (line.productId ? 'product' : 'service');
-        const opts = (products || [])
-            .map((p) => {
-                const tax = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : fallbackTax;
-                const disc = p.discount_default != null && p.discount_default !== '' ? Number(p.discount_default) : 0;
-                const itemKind = String(p.item_kind || 'product').toLowerCase();
-                return `<option value="${p.id}" data-price="${Number(p.price || 0)}" data-tax="${tax}" data-disc="${disc}" data-item-kind="${escapeHtml(
-                    itemKind
-                )}" data-label="${escapeHtml(p.name || p.sku || '')}">${escapeHtml(p.name || p.sku || p.id)}</option>`;
-            })
-            .join('');
-        return `<tr data-est-line class="border-b border-outline-variant/15 align-top">
-            <td class="py-2 pr-2">
-                <select data-fld="kind" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs">
-                    <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
-                    <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
-                </select>
-            </td>
-            <td class="py-2 pr-2 hidden" data-product-cell>
-                <select data-fld="product" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs"><option value="">-</option>${opts}</select>
-            </td>
-            <td class="py-2 pr-2"><input data-fld="desc" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${escapeHtml(
-                line.description || ''
-            )}" placeholder="Descripcion" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="qty" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.quantity ?? 1
-            )}" /></td>
-            <td class="py-2 pr-2 w-24"><input data-fld="price" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.unitPrice ?? 0
-            )}" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="tax" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.taxRate != null && line.taxRate !== '' ? line.taxRate : fallbackTax
-            )}" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="disc" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.discount ?? 0
-            )}" /></td>
-            <td class="py-2"><button type="button" data-remove-est-line class="text-xs text-error">Quitar</button></td>
-        </tr>`;
-    };
-
     const estimateShelfLineRowTemplate = (line = {}) => {
         const kind = line.lineKind || (line.productId ? 'product' : 'service');
         const opts = (products || [])
@@ -7686,10 +7589,7 @@ const renderPresupuestosModule = async () => {
                         <button type="button" id="estimate-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear presupuesto</button>
                     </div>
                 </div>
-                <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <button type="button" id="estimate-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear presupuesto</button>
-                    <p class="text-xs text-on-surface-variant">Emitir marca el presupuesto como pendiente. Aceptar/Rechazar actualiza estado; Convertir crea una factura borrador.</p>
-                </div>
+                <p class="mb-3 text-xs text-on-surface-variant">Emitir marca el presupuesto como pendiente. Aceptar/Rechazar actualiza estado; Convertir crea una factura borrador.</p>
                 <div id="presupuestos-table-wrap" class="overflow-x-auto">
                     <table class="w-full min-w-[840px] text-left text-sm">
                         <thead>
@@ -7944,7 +7844,6 @@ const renderPresupuestosModule = async () => {
         await renderPresupuestosModule();
     };
 
-    document.getElementById('estimate-new-btn')?.addEventListener('click', () => openSheet({}));
     document.getElementById('estimate-new-btn-top')?.addEventListener('click', () => openSheet({}));
     if (state.presupuestosUi?.openComposer) {
         state.presupuestosUi = { ...state.presupuestosUi, openComposer: false };
@@ -8697,7 +8596,6 @@ const renderClientesModule = async () => {
             <select id="cli-filter-seg" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${segmentFilterOpts}</select>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="cli-filter-inactive" ${includeInactive ? 'checked' : ''} /> Incluir inactivos</label>
             <button type="button" id="cli-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
-            <button type="button" id="cli-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar cliente</button>
             <button type="button" id="cli-export-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Exportar CSV</button>
         </div>
         <div class="overflow-x-auto">
@@ -8880,10 +8778,6 @@ const renderClientesModule = async () => {
         void renderClientesModule();
     });
 
-    document.getElementById('cli-new-btn')?.addEventListener('click', () => {
-        state.clientesUi = { ...state.clientesUi, sheet: 'form', editId: null };
-        void renderClientesModule();
-    });
     document.getElementById('cli-new-btn-top')?.addEventListener('click', () => {
         state.clientesUi = { ...state.clientesUi, sheet: 'form', editId: null };
         void renderClientesModule();
