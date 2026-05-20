@@ -70,6 +70,9 @@ let realtimeForwardersInstalled = false
 let currentRefreshToken = null
 
 const realtimeRegistry = new Map()
+const REALTIME_RETRY_BASE_MS = 750
+const REALTIME_RETRY_MAX_MS = 45000
+const REALTIME_PENDING_EVENT_LIMIT = 50
 
 const AUTH_RELOGIN_REQUIRED = 'AUTH_RELOGIN_REQUIRED'
 const AUTH_RECOVERED = 'AUTH_RECOVERED'
@@ -550,7 +553,10 @@ const getRealtimeEntry = (channel) => {
       attempts: 0,
       degraded: false,
       lastError: null,
-      timer: null
+      timer: null,
+      nextRetryAt: null,
+      retryDelayMs: null,
+      pendingEvents: []
     })
   }
   return realtimeRegistry.get(key)
@@ -561,18 +567,51 @@ const realtimeSnapshot = () => [...realtimeRegistry.values()].map((entry) => ({
   status: entry.status,
   attempts: entry.attempts,
   degraded: entry.degraded,
-  lastError: entry.lastError
+  lastError: entry.lastError,
+  nextRetryAt: entry.nextRetryAt,
+  retryDelayMs: entry.retryDelayMs,
+  queuedEvents: entry.pendingEvents.length
 }))
 
 const publishRealtimeStatus = () => notifyRenderer('realtime-status-changed', { channels: realtimeSnapshot() })
 
 const scheduleRealtimeRetry = (client, entry) => {
   if (!entry || entry.timer || entry.status !== 'degraded') return
-  const delay = Math.min(30000, 1000 * 2 ** Math.min(entry.attempts, 5))
+  const exponential = REALTIME_RETRY_BASE_MS * 2 ** Math.min(entry.attempts, 6)
+  const jitter = Math.floor(Math.random() * Math.min(1000, exponential * 0.2))
+  const delay = Math.min(REALTIME_RETRY_MAX_MS, exponential + jitter)
+  entry.retryDelayMs = delay
+  entry.nextRetryAt = new Date(Date.now() + delay).toISOString()
   entry.timer = setTimeout(async () => {
     entry.timer = null
+    entry.nextRetryAt = null
+    entry.retryDelayMs = null
     await subscribeRealtimeChannel(client, entry.channel, { isRetry: true })
   }, delay)
+  if (typeof entry.timer.unref === 'function') entry.timer.unref()
+  publishRealtimeStatus()
+}
+
+const queueRealtimeEvent = (entry, event, payload) => {
+  if (entry.pendingEvents.length >= REALTIME_PENDING_EVENT_LIMIT) entry.pendingEvents.shift()
+  entry.pendingEvents.push({ event, payload, queuedAt: new Date().toISOString() })
+}
+
+const flushRealtimeQueue = async (client, entry) => {
+  if (!entry.pendingEvents.length) return { flushed: 0, remaining: 0 }
+  const pending = entry.pendingEvents.splice(0)
+  let flushed = 0
+  for (const item of pending) {
+    try {
+      await client.realtime.publish(entry.channel, item.event, item.payload)
+      flushed += 1
+    } catch (error) {
+      queueRealtimeEvent(entry, item.event, item.payload)
+      entry.lastError = serializeError(error, 'REALTIME_QUEUE_FLUSH_FAILED', { realtimeDegraded: true })
+      break
+    }
+  }
+  return { flushed, remaining: entry.pendingEvents.length }
 }
 
 const subscribeRealtimeChannel = async (client, channel, options = {}) => {
@@ -591,16 +630,52 @@ const subscribeRealtimeChannel = async (client, channel, options = {}) => {
     entry.attempts = 0
     if (entry.timer) clearTimeout(entry.timer)
     entry.timer = null
+    entry.nextRetryAt = null
+    entry.retryDelayMs = null
+    const queue = await flushRealtimeQueue(client, entry)
     publishRealtimeStatus()
-    return { data: { ok: true, channel, registry: realtimeSnapshot() }, error: null }
+    return { data: { ok: true, channel, queue, registry: realtimeSnapshot() }, error: null }
   } catch (error) {
     entry.status = 'degraded'
     entry.degraded = true
     entry.attempts += 1
-    entry.lastError = serializeError(error)
+    entry.lastError = serializeError(error, 'REALTIME_DEGRADED', { realtimeDegraded: true })
     publishRealtimeStatus()
     scheduleRealtimeRetry(client, entry)
     return { data: { ok: false, channel, degraded: true, registry: realtimeSnapshot() }, error: entry.lastError }
+  }
+}
+
+const retryRealtimeChannel = async (client, channel) => {
+  const entry = getRealtimeEntry(channel)
+  if (entry.timer) clearTimeout(entry.timer)
+  entry.timer = null
+  entry.nextRetryAt = null
+  entry.retryDelayMs = null
+  return subscribeRealtimeChannel(client, channel, { isRetry: true, isManual: true })
+}
+
+const publishRealtimeEvent = async (client, payload) => {
+  const { channel, event, body, payload: eventPayload } = payload || {}
+  const entry = getRealtimeEntry(channel)
+  const eventBody = body ?? eventPayload
+  if (entry.degraded || entry.status !== 'subscribed') {
+    queueRealtimeEvent(entry, event, eventBody)
+    publishRealtimeStatus()
+    return { data: { ok: true, queued: true, channel, queuedEvents: entry.pendingEvents.length, registry: realtimeSnapshot() }, error: null }
+  }
+  try {
+    const result = await client.realtime.publish(channel, event, eventBody)
+    return { data: result || { ok: true }, error: null }
+  } catch (error) {
+    queueRealtimeEvent(entry, event, eventBody)
+    entry.status = 'degraded'
+    entry.degraded = true
+    entry.attempts += 1
+    entry.lastError = serializeError(error, 'REALTIME_PUBLISH_DEGRADED', { realtimeDegraded: true })
+    publishRealtimeStatus()
+    scheduleRealtimeRetry(client, entry)
+    return { data: { ok: true, queued: true, channel, queuedEvents: entry.pendingEvents.length, registry: realtimeSnapshot() }, error: null }
   }
 }
 
@@ -1084,14 +1159,16 @@ ipcMain.handle('insforge:realtime:unsubscribe', async (_event, channel) => {
   return runInsforgeOperation('realtime:unsubscribe', (client) => unsubscribeRealtimeChannel(client, channel))
 })
 
+ipcMain.handle('insforge:realtime:retry', async (_event, channel) => {
+  const invalid = validateChannel(channel)
+  if (invalid) return invalid
+  return runInsforgeOperation('realtime:retry', (client) => retryRealtimeChannel(client, channel))
+})
+
 ipcMain.handle('insforge:realtime:publish', async (_event, payload) => {
   const invalid = validatePublishPayload(payload)
   if (invalid) return invalid
-  return runInsforgeOperation('realtime:publish', async (client) => {
-    const { channel, event, body, payload: eventPayload } = payload || {}
-    const result = await client.realtime.publish(channel, event, body ?? eventPayload)
-    return result || { ok: true }
-  })
+  return runInsforgeOperation('realtime:publish', (client) => publishRealtimeEvent(client, payload))
 })
 
 ipcMain.handle('insforge:realtime:disconnect', async () => {
