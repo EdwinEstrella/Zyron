@@ -96,7 +96,6 @@
       "components/**/*",
       "fragments/**/*",
       "public/**/*",
-      "!public/zyron-legacy.html",
       ".generated/insforge.json",
       "node_modules/**/*"
     ],

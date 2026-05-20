@@ -69,12 +69,6 @@ function extractCspDirectives (html) {
   }).filter(([name]) => Boolean(name)))
 }
 
-function builderIncludesLegacyHtml (packageJson) {
-  const files = packageJson.build?.files || []
-  if (files.includes('!public/zyron-legacy.html')) return false
-  return files.some((entry) => entry === 'public/**/*' || entry === 'public/**')
-}
-
 test('BrowserWindow instances use secure webPreferences baseline', () => {
   const mainJs = read('main.js')
   const windows = extractBrowserWindowOptions(mainJs)
@@ -134,14 +128,12 @@ test('active packaged HTML uses a strict script CSP', () => {
   }
 })
 
-test('packaging excludes legacy Tailwind CDN runtime when legacy HTML still contains it', () => {
+test('legacy Tailwind CDN runtime artifact is removed from packaged sources', () => {
   const packageJson = JSON.parse(read('package.json'))
-  const legacyHtml = read('public/zyron-legacy.html')
-  const legacyHasTailwindRuntime = /cdn\.tailwindcss\.com|tailwind\.config\s*=|@tailwindcss\/browser/.test(legacyHtml)
   const forgeConfig = read('forge.config.js')
 
-  if (!legacyHasTailwindRuntime) return
-
-  assert.equal(builderIncludesLegacyHtml(packageJson), false)
-  assert.match(forgeConfig, /zyron-legacy\\?\.html/)
+  assert.equal(fs.existsSync(path.join(root, 'public/zyron-legacy.html')), false)
+  assert.equal(fs.existsSync(path.join(root, 'plantilla')), false)
+  assert.doesNotMatch(JSON.stringify(packageJson.build?.files || []), /zyron-legacy\.html/)
+  assert.doesNotMatch(forgeConfig, /zyron-legacy\\?\.html/)
 })
