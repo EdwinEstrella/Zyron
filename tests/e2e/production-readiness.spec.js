@@ -52,3 +52,17 @@ test('invoice and customer forms do not expose duplicate create controls', () =>
   expect(rendererJs.match(/id="cli-new-btn/g) || []).toHaveLength(1)
   expect(rendererJs).not.toContain('const lineRowTemplate =')
 })
+
+test('tenant settings are loaded from database preferences and applied at runtime', () => {
+  const rendererJs = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8')
+
+  expect(rendererJs).toContain("const ZYRON_TENANT_PREFERENCES_KEY = 'zyron_preferences'")
+  expect(rendererJs).toContain('tenantPreferences:')
+  expect(rendererJs).toContain('await loadTenantPreferences(state.currentTenantId)')
+  expect(rendererJs).toContain('await loadTenantPreferences(row.tenant_id)')
+  expect(rendererJs).toContain("state.tenantPreferences?.defaultModule || 'panel'")
+  expect(rendererJs).toContain('state.tenantPreferences?.invoiceDueDays')
+  expect(rendererJs).toContain('state.tenantPreferences?.estimateExpiryDays')
+  expect(rendererJs).toContain('state.tenantPreferences?.confirmBeforeIssue !== false')
+  expect(rendererJs).toContain('applyTenantPreferencesToDom()')
+})
