@@ -282,9 +282,7 @@ const filterTenantNavForRole = (modules) => {
 const updateSessionNoticeBanner = () => {
     if (!sessionNoticeBanner) return;
     if (state.realtimeStatus?.degraded && state.appUser && !isTenantPendingApproval()) {
-        sessionNoticeBanner.textContent = 'Realtime esta en modo degradado. La app sigue funcionando y reintentara la conexion automaticamente.';
-        sessionNoticeBanner.classList.remove('hidden');
-        return;
+        zyronLog('realtime:degraded_silent', 'Realtime is in degraded mode. Connection will be retried automatically.');
     }
     sessionNoticeBanner.textContent = '';
     sessionNoticeBanner.classList.add('hidden');
@@ -695,12 +693,77 @@ const loadActiveMembershipsDetailed = async (appUserId) => {
 
 const ZYRON_TENANT_CONTEXT_KEY = 'zyron_tenant_context';
 const ZYRON_TENANT_PREFERENCES_KEY = 'zyron_preferences';
+const BILLING_COUNTRY_CATALOG = Object.freeze({
+    AR: Object.freeze({
+        code: 'AR',
+        label: 'Argentina',
+        currency: 'ARS',
+        locale: 'es',
+        taxLabel: 'IVA',
+        defaultTaxRate: 21,
+        ncfEnabled: false,
+        authority: 'ARCA / AFIP',
+        fiscalIdLabel: 'CUIT',
+        withholdingTaxLabel: 'IVA',
+        timezone: 'America/Argentina/Buenos_Aires',
+        taxRates: [
+            { code: 'iva_21', label: 'IVA tasa general 21%', rate_percent: 21, sort_order: 10, is_default: true },
+            { code: 'iva_105', label: 'IVA tasa reducida 10.5%', rate_percent: 10.5, sort_order: 20, is_default: false },
+            { code: 'iva_27', label: 'IVA tasa incrementada 27%', rate_percent: 27, sort_order: 30, is_default: false },
+            { code: 'exento', label: 'Exento 0%', rate_percent: 0, sort_order: 40, is_default: false }
+        ]
+    }),
+    DO: Object.freeze({
+        code: 'DO',
+        label: 'Republica Dominicana',
+        currency: 'DOP',
+        locale: 'es',
+        taxLabel: 'ITBIS',
+        defaultTaxRate: 18,
+        ncfEnabled: true,
+        authority: 'DGII',
+        fiscalIdLabel: 'RNC',
+        withholdingTaxLabel: 'ITBIS',
+        timezone: 'America/Santo_Domingo',
+        taxRates: [
+            { code: 'itbis_18', label: 'ITBIS tasa general 18%', rate_percent: 18, sort_order: 10, is_default: true },
+            { code: 'itbis_16', label: 'ITBIS tasa reducida 16%', rate_percent: 16, sort_order: 20, is_default: false },
+            { code: 'exento', label: 'Exento 0%', rate_percent: 0, sort_order: 30, is_default: false }
+        ]
+    })
+});
+const normalizeBillingCountryCode = (value) => {
+    const code = String(value || '').trim().toUpperCase();
+    return BILLING_COUNTRY_CATALOG[code] ? code : null;
+};
+const billingCountryConfig = (value) => BILLING_COUNTRY_CATALOG[normalizeBillingCountryCode(value)] || BILLING_COUNTRY_CATALOG.DO;
 const defaultTenantContextObj = () => ({
     version: 1,
     defaultCurrency: 'DOP',
     defaultLocale: 'es',
-    priceDisplayCurrency: null
+    priceDisplayCurrency: null,
+    billingCountryCode: 'DO',
+    taxLabel: 'ITBIS',
+    defaultTaxRate: 18,
+    ncfEnabled: true,
+    authorityLabel: 'DGII',
+    fiscalIdLabel: 'RNC'
 });
+const defaultTenantContextForCountry = (countryCode) => {
+    const cfg = billingCountryConfig(countryCode);
+    return {
+        version: 1,
+        defaultCurrency: cfg.currency,
+        defaultLocale: cfg.locale,
+        priceDisplayCurrency: null,
+        billingCountryCode: cfg.code,
+        taxLabel: cfg.taxLabel,
+        defaultTaxRate: cfg.defaultTaxRate,
+        ncfEnabled: cfg.ncfEnabled,
+        authorityLabel: cfg.authority,
+        fiscalIdLabel: cfg.fiscalIdLabel
+    };
+};
 const defaultTenantPreferencesObj = () => ({
     version: 1,
     defaultModule: 'panel',
@@ -710,14 +773,16 @@ const defaultTenantPreferencesObj = () => ({
     invoiceDueDays: 30,
     estimateExpiryDays: 15
 });
-const parseTenantContextRaw = (raw) => {
-    if (!raw || typeof raw !== 'string') return defaultTenantContextObj();
+const parseTenantContextRaw = (raw, countryCode = null) => {
+    const defaults = countryCode ? defaultTenantContextForCountry(countryCode) : defaultTenantContextObj();
+    if (!raw || typeof raw !== 'string') return defaults;
     try {
         const j = JSON.parse(raw);
-        if (!j || typeof j !== 'object') return defaultTenantContextObj();
-        return { ...defaultTenantContextObj(), ...j };
+        if (!j || typeof j !== 'object') return defaults;
+        const code = normalizeBillingCountryCode(j.billingCountryCode || j.billing_country_code || countryCode);
+        return { ...(code ? defaultTenantContextForCountry(code) : defaults), ...j, billingCountryCode: code || defaults.billingCountryCode };
     } catch (_) {
-        return defaultTenantContextObj();
+        return defaults;
     }
 };
 const parseTenantPreferencesRaw = (raw) => {
@@ -743,9 +808,12 @@ const parseTenantPreferencesRaw = (raw) => {
 /** get_context vía dbSelect (misma fuente que manage-tenant-context en edge). */
 const loadTenantContext = async (tenantId) => {
     if (!tenantId || state.isSuperAdmin) {
-        state.tenantContext = { defaultCurrency: 'DOP', defaultLocale: 'es', priceDisplayCurrency: null };
+        state.tenantContext = defaultTenantContextObj();
         return;
     }
+    const tenantRow = state.membershipsList.find((m) => String(m.tenant_id) === String(tenantId))?.tenant || null;
+    const tenantCountry = normalizeBillingCountryCode(tenantRow?.billing_country_code);
+    const defaults = defaultTenantContextForCountry(tenantCountry || 'DO');
     const { data: rows, error } = await dbSelect({
         table: 'app_settings',
         filters: [
@@ -755,20 +823,86 @@ const loadTenantContext = async (tenantId) => {
         limit: 1
     });
     if (error || !rows?.length) {
-        state.tenantContext = { defaultCurrency: 'DOP', defaultLocale: 'es', priceDisplayCurrency: null };
+        state.tenantContext = defaults;
         return;
     }
     const rawVal = rows[0]?.setting_value ?? rows[0]?.value ?? '';
-    const c = parseTenantContextRaw(typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal || {}));
-    const cur = String(c.defaultCurrency || 'DOP').toUpperCase();
+    const c = parseTenantContextRaw(typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal || {}), tenantCountry);
+    const cfg = billingCountryConfig(c.billingCountryCode || tenantCountry);
+    const cur = String(c.defaultCurrency || cfg.currency).toUpperCase();
     state.tenantContext = {
-        defaultCurrency: /^[A-Z]{3}$/.test(cur) ? cur : 'DOP',
+        ...defaultTenantContextForCountry(cfg.code),
+        ...c,
+        billingCountryCode: cfg.code,
+        defaultCurrency: /^[A-Z]{3}$/.test(cur) ? cur : cfg.currency,
         defaultLocale: c.defaultLocale === 'en' ? 'en' : 'es',
         priceDisplayCurrency:
             c.priceDisplayCurrency && /^[A-Z]{3}$/.test(String(c.priceDisplayCurrency).toUpperCase())
                 ? String(c.priceDisplayCurrency).toUpperCase()
                 : null
     };
+};
+
+const buildTenantContextForCountry = (countryCode, prev = {}) => {
+    const cfg = billingCountryConfig(countryCode);
+    return {
+        ...defaultTenantContextForCountry(cfg.code),
+        ...(prev && typeof prev === 'object' ? prev : {}),
+        defaultCurrency: cfg.currency,
+        defaultLocale: cfg.locale,
+        priceDisplayCurrency: null,
+        billingCountryCode: cfg.code,
+        taxLabel: cfg.taxLabel,
+        defaultTaxRate: cfg.defaultTaxRate,
+        ncfEnabled: cfg.ncfEnabled,
+        authorityLabel: cfg.authority,
+        fiscalIdLabel: cfg.fiscalIdLabel
+    };
+};
+
+const seedTenantCountryDefaultsViaDb = async (tenantId, countryCode) => {
+    const cfg = billingCountryConfig(countryCode);
+    const now = new Date().toISOString();
+    const { data: fiscalRows } = await dbSelect({
+        table: 'tenant_fiscal_settings',
+        filters: [{ op: 'eq', column: 'tenant_id', value: tenantId }],
+        limit: 1
+    });
+    const fiscalPatch = {
+        tenant_id: tenantId,
+        country_code: cfg.code,
+        tax_label: cfg.taxLabel,
+        default_tax_rate: cfg.defaultTaxRate,
+        prices_tax_inclusive: false,
+        ncf_enabled: cfg.ncfEnabled,
+        electronic_invoicing_requested: false,
+        updated_at: now
+    };
+    let err = null;
+    if (fiscalRows?.[0]?.id) {
+        const upd = await dbUpdate({
+            table: 'tenant_fiscal_settings',
+            values: fiscalPatch,
+            filters: [{ op: 'eq', column: 'id', value: fiscalRows[0].id }]
+        });
+        err = upd.error;
+    } else {
+        const ins = await dbInsert({ table: 'tenant_fiscal_settings', values: [fiscalPatch] });
+        err = ins.error;
+    }
+    if (err) return { data: { error: err.message || 'No se pudo guardar configuracion fiscal.' }, error: null };
+    for (const rate of cfg.taxRates || []) {
+        const ins = await dbInsert({ table: 'tax_rates_catalog', values: [{ tenant_id: tenantId, ...rate, is_active: true }] });
+        const msg = ins.error?.message || '';
+        if (ins.error && !/duplicate|unique/i.test(msg)) return { data: { error: msg }, error: null };
+    }
+    const prevContext = state.tenantContext || defaultTenantContextObj();
+    return appSettingJsonUpsertViaDb(
+        tenantId,
+        ZYRON_TENANT_CONTEXT_KEY,
+        buildTenantContextForCountry(cfg.code, prevContext),
+        'tenant_billing_country_defaults_seeded'
+    );
 };
 
 const switchWorkspaceTenant = async (tenantId) => {
@@ -811,6 +945,7 @@ const renderTenantContextBar = () => {
     const label = tn?.tenant?.display_name || tn?.tenant?.legal_name || state.currentTenantId;
     const cur = state.tenantContext?.defaultCurrency || 'DOP';
     const loc = (state.tenantContext?.defaultLocale || 'es').toUpperCase();
+    const countryCfg = billingCountryConfig(tn?.tenant?.billing_country_code || state.tenantContext?.billingCountryCode);
     const sw =
         state.membershipsList.length > 1
             ? `<label class="sr-only" for="tenant-workspace-select">${tr('iso.switch')}</label><select id="tenant-workspace-select" class="max-w-[220px] rounded-md border border-outline-variant/50 bg-surface-container-lowest px-2 py-1 text-xs font-medium">${state.membershipsList
@@ -829,6 +964,7 @@ const renderTenantContextBar = () => {
         ${sw}
         <span class="shrink-0 rounded bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary" title="${tr('iso.currency')}">${escapeHtml(cur)}</span>
         <span class="shrink-0 rounded bg-surface-container-high px-1.5 py-0.5 font-mono text-[10px]" title="${tr('iso.locale')}">${escapeHtml(loc)}</span>
+        <span class="shrink-0 rounded bg-surface-container-high px-1.5 py-0.5 text-[10px]" title="Pais fiscal">${escapeHtml(countryCfg.label)}</span>
     </div>`;
     document.getElementById('tenant-workspace-select')?.addEventListener('change', async (e) => {
         const v = e.target.value;
@@ -919,7 +1055,8 @@ const normalizeAccessRequestRow = (row) => {
         full_name: row?.full_name || payload.full_name || row?.username || '',
         company_name: row?.company_name || payload.company_name || '',
         phone: row?.phone || payload.phone || '',
-        notes: row?.notes || payload.notes || ''
+        notes: row?.notes || payload.notes || '',
+        billing_country_code: normalizeBillingCountryCode(row?.billing_country_code || payload.billing_country_code || payload.billingCountryCode)
     };
 };
 const normalizeAccessRequestRows = (rows) => (rows || []).map(normalizeAccessRequestRow);
@@ -1097,6 +1234,8 @@ const approveAccessRequestViaDb = async (requestId, action) => {
     if (action !== 'approve') return { data: null, error: { message: 'Accion invalida.' } };
     const email = String(req.requested_email || '').trim().toLowerCase();
     if (!email) return { data: null, error: { message: 'La solicitud no tiene correo.' } };
+    const billingCountryCode = normalizeBillingCountryCode(req.billing_country_code);
+    if (!billingCountryCode) return { data: null, error: { message: 'La solicitud no tiene pais de facturacion.' } };
 
     let { data: appRows } = await dbSelect({
         table: 'app_users',
@@ -1142,6 +1281,7 @@ const approveAccessRequestViaDb = async (requestId, action) => {
                 display_name: req.company_name || 'Empresa',
                 legal_name: req.company_name || 'Empresa',
                 email,
+                billing_country_code: billingCountryCode,
                 status: 'active',
                 created_by: appUser.id
             }
@@ -1149,6 +1289,11 @@ const approveAccessRequestViaDb = async (requestId, action) => {
     });
     if (ten.error || !ten.data?.length) return { data: null, error: ten.error || { message: 'No se pudo crear empresa.' } };
     const tenant = ten.data[0];
+    const seedCountry = await seedTenantCountryDefaultsViaDb(tenant.id, billingCountryCode);
+    const seedCountryBody = unwrapFnInvoke(seedCountry);
+    if (seedCountryBody.err || seedCountryBody.data?.error) {
+        return { data: null, error: { message: seedCountryBody.err || seedCountryBody.data?.error || 'No se pudo configurar el pais fiscal.' } };
+    }
 
     const mem = await dbInsert({
         table: 'tenant_memberships',
@@ -1314,8 +1459,11 @@ const tr = (key) => {
     return pack[key] || ZYRON_I18N.es[key] || key;
 };
 
-const getTenantNumberLocale = () => (state.tenantContext?.defaultLocale === 'en' ? 'en-US' : 'es-DO');
-const getTenantDateLocale = () => (state.tenantContext?.defaultLocale === 'en' ? 'en-US' : 'es-DO');
+const getTenantNumberLocale = () => {
+    if (state.tenantContext?.defaultLocale === 'en') return 'en-US';
+    return state.tenantContext?.billingCountryCode === 'AR' ? 'es-AR' : 'es-DO';
+};
+const getTenantDateLocale = () => getTenantNumberLocale();
 
 const enforceTenantScopeOnSelect = (payload) => {
     if (!payload?.table || state.isSuperAdmin || !state.currentTenantId) return payload;
@@ -1434,6 +1582,96 @@ const upsertAppUser = async (authUser) => {
     return { appUser: insertedRows && insertedRows[0], error: insertError };
 };
 
+const tenantNeedsBillingCountry = () =>
+    Boolean(!state.isSuperAdmin && state.currentTenantId && !normalizeBillingCountryCode(state.membership?.tenant?.billing_country_code));
+
+const setTenantBillingCountryOnceViaDb = async (tenantId, countryCode) => {
+    const normalized = normalizeBillingCountryCode(countryCode);
+    if (!tenantId || !normalized) return { data: { error: 'Pais de facturacion invalido.' }, error: null };
+    const rpc = await dbRpc('set_tenant_billing_country_once', {
+        p_tenant_id: tenantId,
+        p_country_code: normalized
+    });
+    if (!rpc.error) return { data: { ok: true, via: 'rpc' }, error: null };
+
+    const upd = await dbUpdate({
+        table: 'tenants',
+        values: { billing_country_code: normalized, updated_at: new Date().toISOString() },
+        filters: [
+            { op: 'eq', column: 'id', value: tenantId },
+            { op: 'is', column: 'billing_country_code', value: null }
+        ]
+    });
+    if (upd.error) return { data: { error: rpc.error.message || upd.error.message || 'No se pudo guardar el pais fiscal.' }, error: null };
+    if (!upd.data?.length) return { data: { error: 'El pais fiscal ya fue definido o no tenes permisos para modificar esta empresa.' }, error: null };
+    const seed = await seedTenantCountryDefaultsViaDb(tenantId, normalized);
+    const u = unwrapFnInvoke(seed);
+    if (u.err || u.data?.error) return { data: { error: u.err || u.data.error }, error: null };
+    return { data: { ok: true, via: 'direct' }, error: null };
+};
+
+const renderBillingCountryGate = async () => {
+    zyronLog('render:billingCountryGate', { tenantId: state.currentTenantId });
+    state.currentModule = 'billing-country-gate';
+    sidebarToggleBtn?.classList.add('pointer-events-none', 'opacity-40');
+    refreshSidebarSelection();
+    dashboardContent.innerHTML = `
+        <div class="mx-auto flex w-full max-w-xl flex-col gap-6 rounded-2xl border border-outline-variant/30 bg-surface-container-lowest p-8 shadow-sm">
+            <div class="text-center">
+                <span class="material-symbols-outlined text-5xl text-primary/80" aria-hidden="true">public</span>
+                <h2 class="mt-3 text-xl font-bold text-primary">Define el país de facturación</h2>
+                <p class="mt-3 text-sm leading-relaxed text-on-surface-variant">Esta empresa fue creada antes de activar la configuración fiscal por país. Elegí la jurisdicción correcta una sola vez: Zyron usará esa base para impuestos, moneda y módulos fiscales.</p>
+            </div>
+            <label class="text-sm font-semibold text-on-surface">País fiscal
+                <select id="billing-country-gate-select" class="mt-2 w-full rounded-md border border-outline-variant/40 bg-white px-3 py-2 text-sm">
+                    <option value="">Selecciona una opción</option>
+                    <option value="AR">Argentina · ARCA / IVA / ARS</option>
+                    <option value="DO">República Dominicana · DGII / NCF / DOP</option>
+                </select>
+            </label>
+            <p class="rounded-lg bg-surface-container-low px-3 py-2 text-xs leading-relaxed text-on-surface-variant">Importante: por integridad fiscal, esta opción no se podrá modificar después de guardarla.</p>
+            <div class="flex flex-wrap justify-end gap-2">
+                <button type="button" id="billing-country-logout" class="rounded-lg border border-outline-variant/50 bg-surface-container px-4 py-2 text-sm font-semibold text-primary">Cerrar sesión</button>
+                <button type="button" id="billing-country-save" class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar país fiscal</button>
+            </div>
+            <p id="billing-country-status" class="hidden text-sm" role="status" aria-live="polite"></p>
+        </div>`;
+    document.getElementById('billing-country-logout')?.addEventListener('click', () => performLogout());
+    document.getElementById('billing-country-save')?.addEventListener('click', async () => {
+        const btn = document.getElementById('billing-country-save');
+        const st = document.getElementById('billing-country-status');
+        const country = normalizeBillingCountryCode(document.getElementById('billing-country-gate-select')?.value);
+        if (!country) {
+            if (st) {
+                st.classList.remove('hidden');
+                st.classList.add('text-error');
+                st.textContent = 'Selecciona Argentina o República Dominicana.';
+            }
+            return;
+        }
+        if (btn) btn.disabled = true;
+        const res = await setTenantBillingCountryOnceViaDb(state.currentTenantId, country);
+        const u = unwrapFnInvoke(res);
+        if (u.err || u.data?.error) {
+            if (st) {
+                st.classList.remove('hidden');
+                st.classList.add('text-error');
+                st.textContent = u.err || u.data.error || 'No se pudo guardar el país fiscal.';
+            }
+            if (btn) btn.disabled = false;
+            return;
+        }
+        state.membershipsList = await loadActiveMembershipsDetailed(state.appUser.id);
+        state.membership = state.membershipsList.find((m) => String(m.tenant_id) === String(state.currentTenantId)) || state.membership;
+        await loadTenantContext(state.currentTenantId);
+        await loadUiCatalogsFromDb();
+        sidebarToggleBtn?.classList.remove('pointer-events-none', 'opacity-40');
+        await renderSidebar();
+        renderTenantContextBar();
+        await openModule('panel', { replaceHistory: true });
+    });
+};
+
 const bootstrapSession = async () => {
     zyronLog('bootstrapSession:start', {});
     const { data: currentUserData, error: userError } = await safeCall(
@@ -1543,6 +1781,9 @@ const bootstrapSession = async () => {
     if (pendingGate) {
         await renderPendingApprovalScreen();
         zyronLog('bootstrapSession:success', { module: 'pending-gate' });
+    } else if (tenantNeedsBillingCountry()) {
+        await renderBillingCountryGate();
+        zyronLog('bootstrapSession:success', { module: 'billing-country-gate' });
     } else {
         const firstSuper = state.navModulesSuper[0]?.key || 'empresas';
         const defaultMod = state.isSuperAdmin ? firstSuper : 'panel';
@@ -1662,6 +1903,135 @@ const fmtMoneyPanel = (n, currencyCode = null) => {
     }
 };
 
+const renderCuentasContablesModule = async () => {
+    paintDashboardSkeleton('cuentas_contables');
+    state.currentModule = 'cuentas_contables';
+    dashboardContent.innerHTML = '<div class="p-6 text-center text-sm text-on-surface-variant">Cargando cuentas contables...</div>';
+    
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = emptyStateContainer('business_center', 'Selecciona una empresa', 'Debes estar operando bajo una empresa para ver sus cuentas contables.');
+        return;
+    }
+
+    const { data: accounts, error } = await dbSelect({
+        table: 'accounting_accounts',
+        filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
+        order: { column: 'code', ascending: true },
+        limit: 1000
+    });
+
+    if (error) {
+        dashboardContent.innerHTML = emptyStateContainer('error', 'Error al cargar', 'No se pudieron cargar las cuentas contables. Asegúrate de haber ejecutado el script SQL.');
+        return;
+    }
+
+    if (!accounts || accounts.length === 0) {
+        dashboardContent.innerHTML = `<div class="p-6 max-w-4xl mx-auto">
+            <div class="flex items-center justify-between mb-8">
+                <div>
+                    <h2 class="text-2xl font-bold tracking-tight text-on-surface">Cuentas Contables</h2>
+                    <p class="text-sm text-on-surface-variant mt-1">Nomenclatura y plan de cuentas para tu empresa.</p>
+                </div>
+            </div>
+            ${emptyStateContainer('account_tree', 'Sin cuentas contables', 'No tienes cuentas configuradas. Puedes inicializar la nomenclatura estándar o crearlas manualmente.')}
+            <div class="mt-4 flex justify-center">
+                <button type="button" id="btn-init-accounts" class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary hover:bg-primary/90">
+                    Inicializar Nomenclatura Estándar
+                </button>
+            </div>
+        </div>`;
+
+        setTimeout(() => {
+            document.getElementById('btn-init-accounts')?.addEventListener('click', async () => {
+                // Fetch the text file and parse it
+                try {
+                    const response = await fetch('/Nomenclatura-de-Cuentas.txt');
+                    const text = await response.text();
+                    
+                    // Simple parser for 1.1.1 Format
+                    const lines = text.split('\n');
+                    const values = [];
+                    const codeRegex = /^(\d+(?:\.\d+)*)\s+(.*)$/;
+                    
+                    for (const line of lines) {
+                        const m = line.trim().match(codeRegex);
+                        if (m) {
+                            let type = 'expense';
+                            if (m[1].startsWith('1.')) type = 'asset';
+                            else if (m[1].startsWith('2.')) type = 'liability';
+                            else if (m[1].startsWith('3.')) type = 'equity';
+                            else if (m[1].startsWith('4.')) type = 'revenue';
+                            
+                            values.push({
+                                tenant_id: state.currentTenantId,
+                                code: m[1],
+                                name: m[2].trim(),
+                                account_type: type
+                            });
+                        }
+                    }
+
+                    if (values.length > 0) {
+                        document.getElementById('btn-init-accounts').textContent = 'Insertando...';
+                        document.getElementById('btn-init-accounts').disabled = true;
+                        
+                        // Insert in chunks of 50 to avoid payload limits
+                        for(let i = 0; i < values.length; i += 50) {
+                             const chunk = values.slice(i, i + 50);
+                             await dbInsert({ table: 'accounting_accounts', values: chunk });
+                        }
+                        await renderCuentasContablesModule();
+                    }
+                } catch(e) {
+                    console.error('Error init accounts', e);
+                    alert('Error inicializando cuentas: ' + e.message);
+                }
+            });
+        }, 100);
+        return;
+    }
+
+    const rowsHtml = accounts.map(acc => `
+        <tr class="border-b border-outline-variant/30 hover:bg-on-surface/5">
+            <td class="whitespace-nowrap px-4 py-3 font-medium text-on-surface">${escapeHtml(acc.code)}</td>
+            <td class="px-4 py-3 text-on-surface">${escapeHtml(acc.name)}</td>
+            <td class="px-4 py-3 text-on-surface-variant">${escapeHtml(acc.account_type)}</td>
+            <td class="px-4 py-3 text-right">
+                <button type="button" class="text-primary hover:text-primary/80">Editar</button>
+            </td>
+        </tr>
+    `).join('');
+
+    dashboardContent.innerHTML = `<div class="p-6 max-w-6xl mx-auto">
+        <div class="flex items-center justify-between mb-8">
+            <div>
+                <h2 class="text-2xl font-bold tracking-tight text-on-surface">Cuentas Contables</h2>
+                <p class="text-sm text-on-surface-variant mt-1">Nomenclatura y plan de cuentas para tu empresa.</p>
+            </div>
+            <button type="button" class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-on-primary hover:bg-primary/90 shadow-sm">
+                <span class="material-symbols-outlined text-[1.125rem]" aria-hidden="true">add</span>
+                Nueva cuenta
+            </button>
+        </div>
+        <div class="overflow-x-auto rounded-xl border border-outline-variant/30 bg-surface-container-lowest shadow-sm">
+            <table class="w-full min-w-[800px] text-left text-sm">
+                <thead class="bg-surface-container-low/50">
+                    <tr class="border-b border-outline-variant/30 text-on-surface-variant">
+                        <th class="px-4 py-3 font-semibold">Código</th>
+                        <th class="px-4 py-3 font-semibold">Nombre de la cuenta</th>
+                        <th class="px-4 py-3 font-semibold">Tipo</th>
+                        <th class="px-4 py-3 text-right font-semibold">Acciones</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+        </div>
+    </div>`;
+};
+
+
 const renderPanelModule = async () => {
     zyronLog('render:panel:start', { isSuperAdmin: state.isSuperAdmin, tenantId: state.currentTenantId });
     if (state.isSuperAdmin) {
@@ -1735,7 +2105,7 @@ const renderPanelModule = async () => {
         dbSelect({
             table: 'payments',
             filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
-            order: { column: 'paid_at', ascending: false },
+            order: { column: 'payment_date', ascending: false },
             limit: 250
         }),
         dbSelect({
@@ -1790,7 +2160,7 @@ const renderPanelModule = async () => {
         if (d && d.getFullYear() === currentYear) monthSales[d.getMonth()] += Number(inv.total || 0);
     });
     payments.forEach((pay) => {
-        const d = pay.paid_at ? new Date(pay.paid_at) : pay.created_at ? new Date(pay.created_at) : null;
+        const d = pay.payment_date ? new Date(pay.payment_date) : pay.created_at ? new Date(pay.created_at) : null;
         if (d && d.getFullYear() === currentYear) monthReceipts[d.getMonth()] += Number(pay.amount || 0);
     });
     const maxMonthly = Math.max(1, ...monthSales, ...monthReceipts);
@@ -2729,7 +3099,7 @@ const ensureRolePresetsForTenant = async (tenantId) => {
         const assigned = assignedByRole.get(role.id) || new Set();
         for (const key of preset.permissions || []) {
             const permissionId = permissionMap.get(key);
-            if (permissionId && !assigned.has(permissionId)) missing.push({ role_id: role.id, permission_id: permissionId });
+            if (permissionId && !assigned.has(permissionId)) missing.push({ role_id: role.id, permission_id: permissionId, tenant_id: state.rolesContextTenantId || state.currentTenantId });
         }
     }
     if (missing.length) await dbInsert({ table: 'role_permissions', values: missing });
@@ -2914,7 +3284,7 @@ const renderRolesModule = async (opts = {}) => {
         if (roleError) { window.alert('Error al crear el rol: ' + (roleError.message || String(roleError))); confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; return; }
         if (inserted?.[0] && selectedKeys.length > 0) {
             const permissionByKey = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
-            const payload = selectedKeys.map((key) => permissionByKey.get(key)).filter(Boolean).map((permissionId) => ({ role_id: inserted[0].id, permission_id: permissionId }));
+            const payload = selectedKeys.map((key) => permissionByKey.get(key)).filter(Boolean).map((permissionId) => ({ role_id: inserted[0].id, permission_id: permissionId, tenant_id: effectiveTenantId }));
             if (payload.length > 0) await dbInsert({ table: 'role_permissions', values: payload });
         }
         toggleModal(false); await renderRolesModule();
@@ -2940,7 +3310,7 @@ const renderRolesModule = async (opts = {}) => {
         const existingRows = (allAssignedRows || []).filter((row) => String(row.role_id) === String(roleId));
         for (const row of existingRows) await dbDelete({ table: 'role_permissions', filters: [{ op: 'eq', column: 'id', value: row.id }] });
         const permissionByKey = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
-        const payload = selectedKeys.map((key) => permissionByKey.get(key)).filter(Boolean).map((permissionId) => ({ role_id: roleId, permission_id: permissionId }));
+        const payload = selectedKeys.map((key) => permissionByKey.get(key)).filter(Boolean).map((permissionId) => ({ role_id: roleId, permission_id: permissionId, tenant_id: role.tenant_id || state.rolesContextTenantId || state.currentTenantId }));
         if (payload.length > 0) await dbInsert({ table: 'role_permissions', values: payload });
         editConfirmBtn.disabled = false; editConfirmBtn.textContent = 'Guardar';
         toggleEditModal(false); await renderRolesModule();
@@ -4044,14 +4414,18 @@ const taxComplianceManageViaDb = async (body) => {
                 limit: 1
             });
             const cur = existingRows?.[0] || {};
+            const tenantCountry = normalizeBillingCountryCode(
+                state.membershipsList.find((m) => String(m.tenant_id) === String(tenantId))?.tenant?.billing_country_code
+            );
+            const lockedCountry = tenantCountry || normalizeBillingCountryCode(cur.country_code);
             const has = (a, b) => body[a] !== undefined || body[b] !== undefined;
             const row = {
                 tenant_id: tenantId,
-                country_code: has('countryCode', 'country_code')
+                country_code: lockedCountry || (has('countryCode', 'country_code')
                     ? String(body.countryCode || body.country_code || 'DO')
                           .slice(0, 2)
                           .toUpperCase()
-                    : cur.country_code || 'DO',
+                    : cur.country_code || 'DO'),
                 tax_label: has('taxLabel', 'tax_label')
                     ? String(body.taxLabel || body.tax_label || 'ITBIS').slice(0, 40)
                     : cur.tax_label || 'ITBIS',
@@ -4097,7 +4471,7 @@ const taxComplianceManageViaDb = async (body) => {
                 if (r.error || !row0) return { data: { error: r.error?.message || 'update failed' }, error: null };
                 out = row0;
             } else {
-                const r = await dbInsert({ table: 'tenant_fiscal_settings', values: row });
+                const r = await dbInsert({ table: 'tenant_fiscal_settings', values: [row] });
                 const row0 = Array.isArray(r.data) ? r.data[0] : r.data;
                 if (r.error || !row0) return { data: { error: r.error?.message || 'insert failed' }, error: null };
                 out = row0;
@@ -4153,7 +4527,7 @@ const taxComplianceManageViaDb = async (body) => {
                 if (r.error || !row0) return { data: { error: r.error?.message || 'update failed' }, error: null };
                 return { data: { ok: true, rate: row0 }, error: null };
             }
-            const r = await dbInsert({ table: 'tax_rates_catalog', values: row });
+            const r = await dbInsert({ table: 'tax_rates_catalog', values: [row] });
             const row0 = Array.isArray(r.data) ? r.data[0] : r.data;
             if (r.error || !row0) return { data: { error: r.error?.message || 'insert failed' }, error: null };
             return { data: { ok: true, rate: row0 }, error: null };
@@ -4180,7 +4554,7 @@ const taxComplianceManageViaDb = async (body) => {
             for (const s of seeds) {
                 const ins = await dbInsert({
                     table: 'tax_rates_catalog',
-                    values: {
+                    values: [{
                         tenant_id: tenantId,
                         code: s.code,
                         label: s.label,
@@ -4188,7 +4562,7 @@ const taxComplianceManageViaDb = async (body) => {
                         sort_order: s.sort_order,
                         is_default: s.is_default,
                         is_active: true
-                    }
+                    }]
                 });
                 const msg = ins.error?.message || '';
                 if (ins.error && !/duplicate|unique/i.test(msg)) {
@@ -4362,8 +4736,8 @@ const reportsRunDataset = async (tenantId, key, range) => {
         { op: 'lte', column: 'created_at', value: toISO }
     ];
     const payDateFilters = [
-        { op: 'gte', column: 'paid_at', value: fromISO },
-        { op: 'lte', column: 'paid_at', value: toISO }
+        { op: 'gte', column: 'payment_date', value: fromISO },
+        { op: 'lte', column: 'payment_date', value: toISO }
     ];
     if (key === 'sales') {
         const { data: invs, error } = await dbSelect({
@@ -4413,9 +4787,9 @@ const reportsRunDataset = async (tenantId, key, range) => {
     if (key === 'income') {
         const { data: pays, error } = await dbSelect({
             table: 'payments',
-            columns: 'id,amount,currency,payment_method,payment_method_code,paid_at,customer_id,status,reference,notes',
+            columns: 'id,amount,currency,payment_method,payment_method_code,payment_date,customer_id,status,reference,notes',
             filters: payDateFilters,
-            order: { column: 'paid_at', ascending: false },
+            order: { column: 'payment_date', ascending: false },
             limit: 2500
         });
         if (error) return { ok: false, error: error.message, rows: [], summary: {} };
@@ -4424,7 +4798,7 @@ const reportsRunDataset = async (tenantId, key, range) => {
             const c = p.customer_id ? custMap.get(p.customer_id) : null;
             return {
                 id: p.id,
-                fecha: p.paid_at,
+                fecha: p.payment_date,
                 monto: reportsNumOr(p.amount, 0),
                 moneda: p.currency || 'USD',
                 metodo: p.payment_method_code || p.payment_method || '',
@@ -5064,7 +5438,7 @@ const paymentsCreatePaymentViaDb = async (tenantId, body) => {
         tenant_id: tenantId,
         amount,
         status: String(body.status || 'completed').toLowerCase() === 'pending' ? 'pending' : 'completed',
-        paid_at: body.paidAt || new Date().toISOString(),
+        payment_date: body.paidAt || new Date().toISOString(),
         payment_method: code,
         payment_method_code: code,
         currency: String(body.currency || 'USD'),
@@ -5086,7 +5460,7 @@ const paymentsCreatePaymentViaDb = async (tenantId, body) => {
                 tenant_id: tenantId,
                 amount,
                 status: insertPayment.status,
-                paid_at: insertPayment.paid_at,
+                payment_date: insertPayment.payment_date,
                 payment_method: code
             }
         });
@@ -5289,12 +5663,12 @@ const appSettingJsonUpsertViaDb = async (tenantId, settingKey, nextObj, auditAct
     } else {
         let r = await dbInsert({
             table: 'app_settings',
-            values: { tenant_id: tenantId, setting_key: settingKey, setting_value: jsonStr, updated_at: now }
+            values: [{ tenant_id: tenantId, setting_key: settingKey, setting_value: jsonStr, updated_at: now }]
         });
         if (r.error && /setting_value|column .* does not exist/i.test(r.error.message || '')) {
             r = await dbInsert({
                 table: 'app_settings',
-                values: { tenant_id: tenantId, setting_key: settingKey, value: jsonStr, updated_at: now }
+                values: [{ tenant_id: tenantId, setting_key: settingKey, value: jsonStr, updated_at: now }]
             });
         }
         err = r.error;
@@ -5367,6 +5741,10 @@ const tenantContextUpsertViaDb = async (tenantId, body) => {
         if (c == null) next.priceDisplayCurrency = null;
         else if (/^[A-Z]{3}$/.test(c)) next.priceDisplayCurrency = c;
     }
+    if (body.billingCountryCode != null || body.billing_country_code != null) {
+        const countryCode = normalizeBillingCountryCode(body.billingCountryCode || body.billing_country_code);
+        if (countryCode) next.billingCountryCode = countryCode;
+    }
     const jsonStr = JSON.stringify(next);
     const now = new Date().toISOString();
     let err = null;
@@ -5387,22 +5765,22 @@ const tenantContextUpsertViaDb = async (tenantId, body) => {
     } else {
         let r = await dbInsert({
             table: 'app_settings',
-            values: {
+            values: [{
                 tenant_id: tenantId,
                 setting_key: ZYRON_TENANT_CONTEXT_KEY,
                 setting_value: jsonStr,
                 updated_at: now
-            }
+            }]
         });
         if (r.error && /setting_value|column .* does not exist/i.test(r.error.message || '')) {
             r = await dbInsert({
                 table: 'app_settings',
-                values: {
+                values: [{
                     tenant_id: tenantId,
                     setting_key: ZYRON_TENANT_CONTEXT_KEY,
                     value: jsonStr,
                     updated_at: now
-                }
+                }]
             });
         }
         err = r.error;
@@ -5483,22 +5861,22 @@ const invoiceDocumentBrandingUpsertViaDb = async (tenantId, body) => {
     } else {
         let r = await dbInsert({
             table: 'app_settings',
-            values: {
+            values: [{
                 tenant_id: tenantId,
                 setting_key: INVOICE_DOC_SETTINGS_KEY,
                 setting_value: jsonStr,
                 updated_at: now
-            }
+            }]
         });
         if (r.error && /setting_value|column .* does not exist/i.test(r.error.message || '')) {
             r = await dbInsert({
                 table: 'app_settings',
-                values: {
+                values: [{
                     tenant_id: tenantId,
                     setting_key: INVOICE_DOC_SETTINGS_KEY,
                     value: jsonStr,
                     updated_at: now
-                }
+                }]
             });
         }
         err = r.error;
@@ -6332,50 +6710,7 @@ const renderFacturasModule = async () => {
     const seriesCodes = new Set(['FAC', 'PRO', 'NCC', 'NDD', ...seriesRows.map((r) => r.code).filter(Boolean)]);
     const fallbackTax = Number.isFinite(Number(fh.defaultTaxRate)) ? Number(fh.defaultTaxRate) : 18;
 
-    const lineRowTemplate = (line = {}) => {
-        const kind = line.lineKind || (line.productId ? 'product' : 'service');
-        const defTx = Number(fh.defaultTaxRate);
-        const rowFallbackTax = Number.isFinite(defTx) ? defTx : fallbackTax;
-        const opts = (products || [])
-            .map((p) => {
-                const tx = p.tax_rate_default != null && p.tax_rate_default !== '' ? Number(p.tax_rate_default) : rowFallbackTax;
-                const dc = p.discount_default != null && p.discount_default !== '' ? Number(p.discount_default) : 0;
-                const ik = String(p.item_kind || 'product').toLowerCase();
-                const st = ik === 'service' ? 'srv' : Number(p.stock ?? 0);
-                return `<option value="${p.id}" data-price="${Number(p.price || 0)}" data-tax="${tx}" data-disc="${dc}" data-item-kind="${escapeHtml(
-                    ik
-                )}" data-label="${escapeHtml(p.name || p.sku || '')}">${escapeHtml(p.name || p.sku || p.id)} · ${ik === 'service' ? 'servicio' : `stock ${st}`}</option>`;
-            })
-            .join('');
-        return `<tr data-inv-line class="border-b border-outline-variant/15 align-top">
-            <td class="py-2 pr-2">
-                <select data-fld="kind" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs">
-                    <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
-                    <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
-                </select>
-            </td>
-            <td class="py-2 pr-2 hidden" data-product-cell>
-                <select data-fld="product" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs"><option value="">—</option>${opts}</select>
-            </td>
-            <td class="py-2 pr-2"><input data-fld="desc" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${escapeHtml(
-                line.description || ''
-            )}" placeholder="Descripcion" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="qty" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.quantity ?? 1
-            )}" /></td>
-            <td class="py-2 pr-2 w-24"><input data-fld="price" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.unitPrice ?? 0
-            )}" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="tax" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.taxRate != null && line.taxRate !== '' ? line.taxRate : rowFallbackTax
-            )}" /></td>
-            <td class="py-2 pr-2 w-20"><input data-fld="disc" type="number" step="0.01" class="w-full rounded border border-outline-variant/40 px-2 py-1 text-xs" value="${Number(
-                line.discount ?? 0
-            )}" /></td>
-            <td class="py-2"><button type="button" data-remove-line class="text-xs text-error">Quitar</button></td>
-        </tr>`;
-    };
-
+    
     const invoiceShelfLineRowTemplate = (line = {}) => {
         const kind = line.lineKind || (line.productId ? 'product' : 'service');
         const defTx = Number(fh.defaultTaxRate);
@@ -6520,10 +6855,7 @@ const renderFacturasModule = async () => {
             </div>
         </div>
         <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-            <div class="flex flex-wrap items-center gap-2">
-                <button type="button" id="factura-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
-            </div>
-            <p class="text-xs text-on-surface-variant">Abre el editor de factura aqui. Borradores BOR; al emitir queda lista para cobro.</p>
+            <p class="text-xs text-on-surface-variant">Abre el editor desde el boton superior. Borradores BOR; al emitir queda lista para cobro.</p>
         </div>
         <div id="facturas-table-wrap" class="overflow-x-auto">
             <table class="w-full min-w-[820px] text-left text-sm">
@@ -6639,7 +6971,7 @@ const renderFacturasModule = async () => {
                     )}" placeholder="${escapeHtml(String(tenantRow.display_name || tenantRow.legal_name || 'Empresa'))}" />
                 </label>
                 <label class="block text-xs font-medium text-on-surface-variant">Pie legal / notas al pie
-                    <textarea id="doc-footer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="4" placeholder="RNC, terminos de pago, etc.">${escapeHtml(
+                    <textarea id="doc-footer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="4" placeholder="${escapeHtml(state.tenantContext?.fiscalIdLabel || 'ID fiscal')}, terminos de pago, etc.">${escapeHtml(
                         docSettings.footerLegal
                     )}</textarea>
                 </label>
@@ -6694,8 +7026,8 @@ const renderFacturasModule = async () => {
                         </div>
                         <div class="flex flex-wrap gap-2">
                             <button type="button" id="factura-sheet-close" class="rounded-md border border-outline-variant/50 bg-white px-4 py-2 text-sm font-semibold text-primary">Cerrar</button>
-                            <button type="button" id="factura-save-draft-top" class="rounded-md border border-outline-variant/50 bg-white px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
-                            <button type="button" id="factura-issue-btn-top" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar factura</button>
+                            <button type="button" id="factura-save-draft" class="rounded-md border border-outline-variant/50 bg-white px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
+                            <button type="button" id="factura-issue-btn" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar factura</button>
                         </div>
                     </div>
                 </div>
@@ -6722,14 +7054,7 @@ const renderFacturasModule = async () => {
                                     <option value="debit_note">Nota de debito</option>
                                 </select>
                             </label>
-                            <label class="text-xs font-semibold text-on-surface-variant">Plantilla
-                                <div class="mt-1 flex gap-2">
-                                    <select id="factura-template" class="min-w-0 flex-1 rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                        ${docTemplates.map((t) => `<option value="${escapeHtml(t.id)}" ${docSettings.templateId === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
-                                    </select>
-                                    <button type="button" id="factura-template-save" class="rounded-md border border-outline-variant/50 px-3 py-2 text-xs font-semibold text-primary">Cambiar</button>
-                                </div>
-                            </label>
+                            
                             <label class="text-xs font-semibold text-on-surface-variant">Fecha de factura
                                 <input id="factura-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" />
                             </label>
@@ -6790,10 +7115,6 @@ const renderFacturasModule = async () => {
                                 <span id="factura-grand-total" class="text-xl font-bold text-primary">${fmtMoneyPanel(0)}</span>
                             </div>
                         </div>
-                    </div>
-                    <div class="mt-6 flex flex-wrap justify-end gap-2">
-                        <button type="button" id="factura-save-draft" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
-                        <button type="button" id="factura-issue-btn" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar factura</button>
                     </div>
                 </div>
             </div>
@@ -6924,13 +7245,6 @@ const renderFacturasModule = async () => {
         });
     });
 
-    document.getElementById('factura-new-btn')?.addEventListener('click', () => {
-        openSheet({
-            mode: 'create',
-            invoiceId: null,
-            lines: [{ lineKind: 'service', description: '', quantity: 1, unitPrice: 0, taxRate: fallbackTax, discount: 0 }]
-        });
-    });
     document.getElementById('factura-new-btn-top')?.addEventListener('click', () => {
         openSheet({
             mode: 'create',
@@ -6947,17 +7261,7 @@ const renderFacturasModule = async () => {
         });
     }
     document.getElementById('factura-sheet-close')?.addEventListener('click', closeSheet);
-    document.getElementById('factura-save-draft-top')?.addEventListener('click', () => {
-        document.getElementById('factura-save-draft')?.click();
-    });
-    document.getElementById('factura-issue-btn-top')?.addEventListener('click', () => {
-        document.getElementById('factura-issue-btn')?.click();
-    });
-    document.getElementById('factura-template-save')?.addEventListener('click', async () => {
-        const templateId = document.getElementById('factura-template')?.value || docSettings.templateId;
-        await persistFacturaTemplateChoice(templateId);
-        window.alert('Plantilla actualizada.');
-    });
+    
     document.getElementById('factura-add-line')?.addEventListener('click', () => {
         const tbody = document.getElementById('facturas-lines-tbody');
         tbody.insertAdjacentHTML('beforeend', invoiceShelfLineRowTemplate({}));
@@ -7020,7 +7324,7 @@ const renderFacturasModule = async () => {
                   : document.getElementById('factura-inv-type').value === 'proforma'
                     ? 'PRO'
                     : 'FAC',
-        templateId: document.getElementById('factura-template')?.value || docSettings.templateId,
+        templateId: docSettings.templateId,
         dueDate: document.getElementById('factura-due-date')?.value || null
     });
     const persistFacturaTemplateChoice = async (templateId) => {
@@ -7652,7 +7956,6 @@ const renderPresupuestosModule = async () => {
                     </div>
                 </div>
                 <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-                    <button type="button" id="estimate-new-btn" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear presupuesto</button>
                     <p class="text-xs text-on-surface-variant">Emitir marca el presupuesto como pendiente. Aceptar/Rechazar actualiza estado; Convertir crea una factura borrador.</p>
                 </div>
                 <div id="presupuestos-table-wrap" class="overflow-x-auto">
@@ -7682,8 +7985,8 @@ const renderPresupuestosModule = async () => {
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <button type="button" id="estimate-sheet-close" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Cerrar</button>
-                        <button type="button" id="estimate-save-draft-top" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
-                        <button type="button" id="estimate-issue-btn-top" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar presupuesto</button>
+                        <button type="button" id="estimate-save-draft" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
+                        <button type="button" id="estimate-issue-btn" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar presupuesto</button>
                     </div>
                 </div>
                 </div>
@@ -7707,14 +8010,7 @@ const renderPresupuestosModule = async () => {
                         <label class="text-xs font-semibold text-on-surface-variant">Fecha de expiracion
                             <input id="estimate-expiry-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" />
                         </label>
-                        <label class="text-xs font-semibold text-on-surface-variant sm:col-span-2">Plantilla
-                            <div class="mt-1 flex gap-2">
-                                <select id="estimate-template" class="min-w-0 flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
-                                    ${docTemplates.map((t) => `<option value="${escapeHtml(t.id)}" ${docSettings.templateId === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
-                                </select>
-                                <button type="button" id="estimate-template-save" class="rounded-md border border-outline-variant/50 px-3 py-2 text-xs font-semibold text-primary">Cambiar</button>
-                            </div>
-                        </label>
+                        
                     </div>
                 </div>
                 <div class="overflow-x-auto rounded-md border border-outline-variant/30 bg-white shadow-sm">
@@ -7756,10 +8052,6 @@ const renderPresupuestosModule = async () => {
                             <span id="estimate-grand-total" class="text-xl font-bold text-primary">${fmtMoneyPanel(0)}</span>
                         </div>
                     </div>
-                </div>
-                <div class="mt-6 flex flex-wrap justify-end gap-2">
-                    <button type="button" id="estimate-save-draft" class="rounded-md border border-outline-variant/40 px-4 py-2 text-sm font-semibold text-primary">Guardar borrador</button>
-                    <button type="button" id="estimate-issue-btn" class="rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar presupuesto</button>
                 </div>
             </div>
         </div>
@@ -7909,19 +8201,12 @@ const renderPresupuestosModule = async () => {
         await renderPresupuestosModule();
     };
 
-    document.getElementById('estimate-new-btn')?.addEventListener('click', () => openSheet({}));
     document.getElementById('estimate-new-btn-top')?.addEventListener('click', () => openSheet({}));
     if (state.presupuestosUi?.openComposer) {
         state.presupuestosUi = { ...state.presupuestosUi, openComposer: false };
         openSheet({});
     }
     document.getElementById('estimate-sheet-close')?.addEventListener('click', closeSheet);
-    document.getElementById('estimate-save-draft-top')?.addEventListener('click', () => {
-        document.getElementById('estimate-save-draft')?.click();
-    });
-    document.getElementById('estimate-issue-btn-top')?.addEventListener('click', () => {
-        document.getElementById('estimate-issue-btn')?.click();
-    });
     document.getElementById('estimate-template-save')?.addEventListener('click', async () => {
         const templateId = document.getElementById('estimate-template')?.value || docSettings.templateId;
         if (templateId && templateId !== docSettings.templateId) {
@@ -8143,7 +8428,7 @@ const renderPagosModule = async () => {
             <td class="py-2">${money(r.amount)} ${escapeHtml(r.currency || '')}</td>
             <td class="py-2">${escapeHtml(r.status || '')}</td>
             <td class="py-2 text-xs">${escapeHtml(r.reconciliation_status || '')}</td>
-            <td class="py-2 text-xs">${escapeHtml(toDateString(r.paid_at))}</td>
+            <td class="py-2 text-xs">${escapeHtml(toDateString(r.payment_date))}</td>
             <td class="py-2 text-right">
                 <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-pay-alloc="${escapeHtml(
                     r.id
@@ -8656,13 +8941,12 @@ const renderClientesModule = async () => {
             </div>
         </div>
         <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-            <input id="cli-filter-q" type="search" class="max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Buscar nombre, correo, telefono, RNC…" value="${escapeHtml(
+            <input id="cli-filter-q" type="search" class="max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Buscar nombre, correo, telefono, ${escapeHtml(state.tenantContext?.fiscalIdLabel || 'ID fiscal')}…" value="${escapeHtml(
                 q
             )}" />
             <select id="cli-filter-seg" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${segmentFilterOpts}</select>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="cli-filter-inactive" ${includeInactive ? 'checked' : ''} /> Incluir inactivos</label>
             <button type="button" id="cli-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
-            <button type="button" id="cli-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar cliente</button>
             <button type="button" id="cli-export-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Exportar CSV</button>
         </div>
         <div class="overflow-x-auto">
@@ -8726,7 +9010,7 @@ const renderClientesModule = async () => {
             <label class="block text-sm">Telefono<input name="phone" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
                 fc.phone || ''
             )}" /></label>
-            <label class="block text-sm">RNC / ID fiscal<input name="tax_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
+            <label class="block text-sm">${escapeHtml(state.tenantContext?.fiscalIdLabel || 'ID fiscal')} / ID fiscal<input name="tax_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
                 fc.tax_id || ''
             )}" /></label>
             <label class="block text-sm">Limite de credito<input name="credit_limit" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
@@ -8735,12 +9019,8 @@ const renderClientesModule = async () => {
             <label class="sm:col-span-2 block text-sm">Direccion<textarea name="address" rows="2" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${escapeHtml(
                 fc.address || ''
             )}</textarea></label>
-            <label class="block text-sm">Ciudad<input name="city" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.city || ''
-            )}" /></label>
-            <label class="block text-sm">Pais<input name="country" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.country || ''
-            )}" /></label>
+            
+            
             <label class="sm:col-span-2 block text-sm">Notas internas<textarea name="internal_notes" rows="2" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${escapeHtml(
                 fc.internal_notes || ''
             )}</textarea></label>
@@ -8845,10 +9125,6 @@ const renderClientesModule = async () => {
         void renderClientesModule();
     });
 
-    document.getElementById('cli-new-btn')?.addEventListener('click', () => {
-        state.clientesUi = { ...state.clientesUi, sheet: 'form', editId: null };
-        void renderClientesModule();
-    });
     document.getElementById('cli-new-btn-top')?.addEventListener('click', () => {
         state.clientesUi = { ...state.clientesUi, sheet: 'form', editId: null };
         void renderClientesModule();
@@ -8946,8 +9222,8 @@ const renderClientesModule = async () => {
             phone: fd.get('phone') || null,
             tax_id: fd.get('tax_id') || null,
             address: fd.get('address') || null,
-            city: fd.get('city') || null,
-            country: fd.get('country') || null,
+            city: null,
+            country: null,
             internal_notes: fd.get('internal_notes') || null,
             credit_limit: fd.get('credit_limit') === '' ? null : fd.get('credit_limit'),
             segmentIds
@@ -9374,7 +9650,6 @@ const renderInventarioModule = async () => {
             </select>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="inv-filter-inactive" ${includeInactive ? 'checked' : ''} /> Inactivos</label>
             <button type="button" id="inv-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
-            <button type="button" id="inv-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar producto o servicio</button>
             <button type="button" id="inv-export-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Exportar CSV</button>
         </div>
         <div class="overflow-x-auto">
@@ -9549,10 +9824,6 @@ const renderInventarioModule = async () => {
         void renderInventarioModule();
     });
 
-    document.getElementById('inv-new-btn')?.addEventListener('click', () => {
-        state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null };
-        void renderInventarioModule();
-    });
     document.getElementById('inv-new-btn-top')?.addEventListener('click', () => {
         state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null };
         void renderInventarioModule();
@@ -9701,6 +9972,8 @@ const renderFiscalModule = async (opts = {}) => {
     const ratesU = unwrapFnInvoke(ratesRes);
     const ncfU = unwrapFnInvoke(ncfRes);
     const settings = setU.data?.settings || null;
+    const fiscalCountryCode = normalizeBillingCountryCode(settings?.country_code || state.tenantContext?.billingCountryCode) || 'DO';
+    const fiscalCountry = billingCountryConfig(fiscalCountryCode);
     const fk = (k, def) => (settings && settings[k] != null ? settings[k] : def);
     let errBanner = '';
     if (setU.data?.missingSql) {
@@ -9713,11 +9986,11 @@ const renderFiscalModule = async (opts = {}) => {
 <label class="text-sm sm:col-span-2">Razon social<input name="company_legal_name" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
             fk('company_legal_name', '')
         )}" /></label>
-<label class="text-sm">RNC<input name="company_rnc" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
+<label class="text-sm">${escapeHtml(fiscalCountry.fiscalIdLabel || 'ID fiscal')}<input name="company_rnc" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
             fk('company_rnc', '')
         )}" /></label>
-<label class="text-sm">Pais ISO2<input name="country_code" maxlength="2" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-            String(fk('country_code', 'DO') || 'DO')
+<label class="text-sm">Pais fiscal<input name="country_code" maxlength="2" readonly class="mt-1 w-full rounded-md border border-outline-variant/40 bg-surface-container px-3 py-2 text-sm" value="${escapeHtml(
+            fiscalCountry.code
         )}" /></label>
 <label class="text-sm">Etiqueta impuesto<input name="tax_label" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
             fk('tax_label', 'ITBIS')
@@ -9737,7 +10010,7 @@ const renderFiscalModule = async (opts = {}) => {
 <label class="text-sm">Retencion ISR % sobre subtotal<input name="withholding_isr_on_subtotal_pct" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
             String(fk('withholding_isr_on_subtotal_pct', 0))
         )}" /></label>
-<label class="text-sm">Retencion ITBIS % sobre impuesto total<input name="withholding_itbis_on_tax_pct" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
+<label class="text-sm">Retencion ${escapeHtml(fiscalCountry.withholdingTaxLabel || fiscalCountry.taxLabel)} % sobre impuesto total<input name="withholding_itbis_on_tax_pct" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
             String(fk('withholding_itbis_on_tax_pct', 0))
         )}" /></label>
 <label class="text-sm sm:col-span-2">Notas fiscales<textarea name="fiscal_notes" rows="2" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${escapeHtml(
@@ -9757,7 +10030,9 @@ const renderFiscalModule = async (opts = {}) => {
                     )}">Eliminar</button></td></tr>`
             )
             .join('');
-        body = `<button type="button" id="fisc-seed-rates" class="mb-3 rounded-md border px-3 py-2 text-sm">Tasas RD (18/16/0)</button>
+        body = `<button type="button" id="fisc-seed-rates" class="mb-3 rounded-md border px-3 py-2 text-sm">Sembrar tasas ${escapeHtml(fiscalCountry.code)} (${escapeHtml(
+            fiscalCountry.taxLabel
+        )})</button>
 <div class="mb-4 grid max-w-lg grid-cols-2 gap-2"><input id="fisc-rate-code" class="rounded-md border px-2 py-2 text-sm" placeholder="codigo" />
 <input id="fisc-rate-label" class="rounded-md border px-2 py-2 text-sm" placeholder="Etiqueta" />
 <input id="fisc-rate-pct" type="number" class="rounded-md border px-2 py-2 text-sm" placeholder="%" />
@@ -9792,7 +10067,9 @@ const renderFiscalModule = async (opts = {}) => {
         }</tbody></table>`;
     } else {
         body =
-            '<ul class="list-disc space-y-2 pl-5 text-sm text-on-surface-variant max-w-3xl"><li>Obtener rangos NCF y e-CF ante DGII o autoridad competente.</li><li>Zyron no envia datos a la DGII salvo integraciones externas que configures.</li><li>Conserva XML/PDF oficiales y libros segun normativa.</li></ul>' +
+            `<ul class="list-disc space-y-2 pl-5 text-sm text-on-surface-variant max-w-3xl"><li>Revisa la configuracion ante ${escapeHtml(
+                fiscalCountry.authority || 'la autoridad fiscal'
+            )} o tu asesor contable.</li><li>Zyron no envia datos fiscales salvo integraciones externas que configures.</li><li>Conserva XML/PDF oficiales y libros segun normativa.</li></ul>` +
             '<label class="mt-4 flex items-center gap-2 text-sm"><input type="checkbox" id="fisc-ack" /> Confirmo revision con asesoria contable.</label>' +
             '<button type="button" id="fisc-ack-save" class="mt-3 rounded-md border px-3 py-2 text-sm">Registrar</button>';
     }
@@ -9836,7 +10113,7 @@ const renderFiscalModule = async (opts = {}) => {
         else void renderFiscalModule(opts);
     });
     document.getElementById('fisc-seed-rates')?.addEventListener('click', async () => {
-        const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'seed_tax_rates_do' });
+        const res = await seedTenantCountryDefaultsViaDb(tid, fiscalCountry.code);
         const u = unwrapFnInvoke(res);
         if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
         else void renderFiscalModule(opts);
@@ -10292,7 +10569,7 @@ const renderConfigModule = async () => {
     const previewCustomerSample = {
         name: 'Cliente de ejemplo',
         email: 'cliente@empresa.com',
-        tax_id: 'RNC 000-00000-0',
+        tax_id: `${state.tenantContext?.fiscalIdLabel || 'ID fiscal'} 000-00000-0`,
         address: 'Santo Domingo, RD'
     };
     const initialPreviewHtml = buildInvoiceDocumentHtml({
@@ -10315,7 +10592,7 @@ const renderConfigModule = async () => {
                 <label class="text-xs font-medium text-on-surface-variant">Razon social
                     <input id="company-legal-name" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(tenantRow.legal_name || '')}" />
                 </label>
-                <label class="text-xs font-medium text-on-surface-variant">RNC / identificacion fiscal
+                <label class="text-xs font-medium text-on-surface-variant">${escapeHtml(state.tenantContext?.fiscalIdLabel || 'ID fiscal')} / identificacion fiscal
                     <input id="company-tax-id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(tenantRow.tax_id || '')}" />
                 </label>
                 <label class="text-xs font-medium text-on-surface-variant">Email
@@ -10381,7 +10658,7 @@ const renderConfigModule = async () => {
                         )}" placeholder="${escapeHtml(String(tenantRow.display_name || tenantRow.legal_name || 'Empresa'))}" />
                     </label>
                     <label class="block text-xs font-medium text-on-surface-variant">Pie legal / notas al pie
-                        <textarea id="doc-footer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="4" placeholder="RNC, terminos de pago, etc.">${escapeHtml(
+                        <textarea id="doc-footer" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" rows="4" placeholder="${escapeHtml(state.tenantContext?.fiscalIdLabel || 'ID fiscal')}, terminos de pago, etc.">${escapeHtml(
                             docSettings.footerLegal
                         )}</textarea>
                     </label>
@@ -10495,7 +10772,6 @@ const renderConfigModule = async () => {
         { key: 'preferencias', icon: 'tune', label: 'Preferencias' },
         { key: 'documentos', icon: 'description', label: 'Facturas y presupuestos' },
         { key: 'impuestos', icon: 'request_quote', label: 'Impuestos' },
-        { key: 'pagos', icon: 'payments', label: 'Pagos' },
         { key: 'notas', icon: 'notes', label: 'Notas' },
         { key: 'campos', icon: 'dynamic_form', label: 'Campos personalizados' },
         { key: 'roles', icon: 'admin_panel_settings', label: 'Roles' },
@@ -10554,7 +10830,6 @@ const renderConfigModule = async () => {
         preferencias: preferencesBlock,
         documentos: invoiceFormatBlock,
         impuestos: '<div id="config-fiscal-mount"></div>',
-        pagos: shortcutCard('Pagos', 'Metodos de pago, cuentas por cobrar, vencimientos y conciliacion viven en Pagos y cobros.', 'Abrir pagos', 'pagos'),
         notas: devCard('Notas', 'Plantillas de notas para documentos y clientes estaran disponibles aqui.'),
         campos: devCard('Campos personalizados', 'Campos extra para clientes, productos y documentos se agregaran en esta seccion.'),
         roles: '<div id="config-roles-mount"></div>',
@@ -10811,6 +11086,11 @@ const openModule = async (moduleKey, opts = {}) => {
         await renderPendingApprovalScreen();
         return;
     }
+    if (tenantNeedsBillingCountry() && moduleKey !== 'billing-country-gate') {
+        zyronLog('openModule:blockedBillingCountryGate', { requested });
+        await renderBillingCountryGate();
+        return;
+    }
     if (state.isSuperAdmin) {
         const allow = new Set(state.navModulesSuper.map((m) => m.key));
         if (!allow.has(moduleKey)) {
@@ -10922,6 +11202,7 @@ registerForm.addEventListener('submit', async (event) => {
     const formData = new FormData(registerForm);
     const fullName = String(formData.get('fullName') || '').trim();
     const company = String(formData.get('company') || '').trim();
+    const billingCountryCode = normalizeBillingCountryCode(formData.get('billingCountryCode'));
     const email = String(formData.get('email') || '').trim().toLowerCase();
     const phone = String(formData.get('phone') || '').trim();
     const notes = String(formData.get('notes') || '').trim();
@@ -10933,10 +11214,11 @@ registerForm.addEventListener('submit', async (event) => {
     if (password.length < 8) return setStatus(registerStatus, 'La contraseña debe tener al menos 8 caracteres.', true);
     if (password !== passwordConfirm) return setStatus(registerStatus, 'Las contraseñas no coinciden.', true);
     if (!company || !email) return setStatus(registerStatus, 'Completa empresa y correo.', true);
+    if (!billingCountryCode) return setStatus(registerStatus, 'Selecciona Argentina o Republica Dominicana como pais de facturacion.', true);
     const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
     if (!emailOk) return setStatus(registerStatus, 'Introduce un correo valido (ejemplo: usuario@dominio.com).', true);
 
-    zyronLog('register:start', { email, company, username, phoneLen: phone.length, notesLen: notes.length });
+    zyronLog('register:start', { email, company, username, billingCountryCode, phoneLen: phone.length, notesLen: notes.length });
     const { data: signUpData, error: signUpError } = await safeCall(
         () =>
             window.insforgeAPI.auth.signUp({
@@ -10982,6 +11264,7 @@ registerForm.addEventListener('submit', async (event) => {
             p_username: username,
             p_full_name: fullName || username,
             p_company_name: company,
+            p_billing_country_code: billingCountryCode,
             p_phone: phone,
             p_notes: notes
         });
@@ -10997,6 +11280,7 @@ registerForm.addEventListener('submit', async (event) => {
                     username,
                     full_name: fullName,
                     company_name: company,
+                    billing_country_code: billingCountryCode,
                     phone,
                     notes,
                     requested_role: 'tenant_admin',
@@ -11007,6 +11291,8 @@ registerForm.addEventListener('submit', async (event) => {
                         username,
                         full_name: fullName || username,
                         company_name: company,
+                        billing_country_code: billingCountryCode,
+                        billingCountryCode,
                         phone,
                         notes,
                         requested_owner: true
@@ -11058,7 +11344,7 @@ const performLogout = async () => {
     state.appUser = null;
     state.membership = null;
     state.membershipsList = [];
-    state.tenantContext = { defaultCurrency: 'DOP', defaultLocale: 'es', priceDisplayCurrency: null };
+    state.tenantContext = defaultTenantContextObj();
     try {
         localStorage.removeItem(LAST_TENANT_KEY);
     } catch (_) {

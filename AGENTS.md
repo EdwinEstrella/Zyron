@@ -13,7 +13,7 @@ Backend-as-a-service (BaaS) platform providing:
 - **Database**: PostgreSQL with PostgREST API
 - **Authentication**: Email/password + OAuth (Google, GitHub)
 - **Storage**: File upload/download
-- **AI**: Chat completions and image generation (OpenAI-compatible)
+- **AI**: OpenRouter key provisioning and model catalog for direct OpenAI-compatible integrations
 - **Functions**: Serverless function deployment
 - **Realtime**: WebSocket pub/sub (database + client events)
 
@@ -79,7 +79,7 @@ Available documentation types:
   - `"auth-components-nextjs"` - Pre-built auth UI for Nextjs (SSR App)
 - `"storage-sdk"` - File storage operations
 - `"functions-sdk"` - Serverless functions invocation
-- `"ai-integration-sdk"` - AI chat and image generation
+- `"ai-integration-sdk"` - AI integration with the provisioned OpenRouter key and OpenAI SDK
 - `"real-time"` - Real-time pub/sub (database + client events) via WebSockets
 - `"deployment"` - Deploy frontend applications via MCP tool
 
@@ -94,7 +94,7 @@ Available feature types:
 - storage - File storage operations
 - functions - Serverless functions invocation
 - auth - User authentication
-- ai - AI chat and image generation
+- ai - AI integration with the provisioned OpenRouter key and OpenAI SDK
 - realtime - Real-time pub/sub (database + client events) via WebSockets
 
 Available languages:
@@ -110,7 +110,7 @@ Available languages:
 - Authentication (register, login, logout, profiles)
 - Database CRUD (select, insert, update, delete)
 - Storage operations (upload, download files)
-- AI operations (chat, image generation)
+- AI integration via the provisioned OpenRouter key with the OpenAI SDK or OpenRouter HTTP API
 - Serverless function invocation
 
 ### Use MCP Tools for Infrastructure:
@@ -129,17 +129,5 @@ Available languages:
 - Database inserts require array format: `[{...}]`
 - Serverless functions have single endpoint (no subpaths)
 - Storage: Upload files to buckets, store URLs in database
-- AI operations are OpenAI-compatible
+- AI integrations should call OpenRouter directly with `baseURL: "https://openrouter.ai/api/v1"` and a server-side `OPENROUTER_API_KEY`
 - **EXTRA IMPORTANT**: Use Tailwind CSS 3.4 (do not upgrade to v4). Lock these dependencies in `package.json`
-
-## Preferences & RBAC Implementation
-
-Zyron uses a multi-tenant preference and RBAC system implemented via InsForge PostgreSQL RLS:
-
-- **Preferences**: Stored in `public.app_settings` with `tenant_id`. Defaults are automatically seeded via a database trigger on new tenant creation. Use `preferences.*` keys.
-- **RBAC**:
-  - **Permissions**: Defined in `public.permission_catalog`.
-  - **Roles**: System presets in `public.role_system_presets`. Tenants use `public.role_catalog`.
-  - **Enforcement**: Row Level Security (RLS) is enabled on core tables. Policies use `public.check_user_permission(tenant_id, permission_key)` to authorize access.
-  - **Security Definer**: Helper functions use `SECURITY DEFINER` to avoid infinite recursion during policy evaluation.
-  - **Tenant Isolation**: Users only see data where `tenant_id` matches their `tenant_memberships`.

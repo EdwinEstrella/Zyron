@@ -1,0 +1,13 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "insforge": {
+      "type": "local",
+      "command": ["npx", "-y", "@insforge/mcp@latest"],
+      "environment": {
+        "API_KEY": "ik_6x5cr7yb8h9m7c6v8t7yb9numi0oaisudhouaoc6tv7yb9nu",
+        "API_BASE_URL": "https://zyron.azokia.com"
+      }
+    }
+  }
+}

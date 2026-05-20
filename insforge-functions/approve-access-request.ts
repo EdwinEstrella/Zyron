@@ -22,6 +22,43 @@ const slugifyTenant = (text) => {
     .replace(/\s+/g, '-');
 };
 
+const countryCatalog = {
+  AR: {
+    code: 'AR',
+    currency: 'ARS',
+    taxLabel: 'IVA',
+    defaultTaxRate: 21,
+    ncfEnabled: false,
+    authorityLabel: 'ARCA / AFIP',
+    fiscalIdLabel: 'CUIT',
+    taxRates: [
+      { code: 'iva_21', label: 'IVA tasa general 21%', rate_percent: 21, sort_order: 10, is_default: true },
+      { code: 'iva_105', label: 'IVA tasa reducida 10.5%', rate_percent: 10.5, sort_order: 20, is_default: false },
+      { code: 'iva_27', label: 'IVA tasa incrementada 27%', rate_percent: 27, sort_order: 30, is_default: false },
+      { code: 'exento', label: 'Exento 0%', rate_percent: 0, sort_order: 40, is_default: false }
+    ]
+  },
+  DO: {
+    code: 'DO',
+    currency: 'DOP',
+    taxLabel: 'ITBIS',
+    defaultTaxRate: 18,
+    ncfEnabled: true,
+    authorityLabel: 'DGII',
+    fiscalIdLabel: 'RNC',
+    taxRates: [
+      { code: 'itbis_18', label: 'ITBIS tasa general 18%', rate_percent: 18, sort_order: 10, is_default: true },
+      { code: 'itbis_16', label: 'ITBIS tasa reducida 16%', rate_percent: 16, sort_order: 20, is_default: false },
+      { code: 'exento', label: 'Exento 0%', rate_percent: 0, sort_order: 30, is_default: false }
+    ]
+  }
+};
+
+const normalizeBillingCountryCode = (value) => {
+  const code = String(value || '').trim().toUpperCase();
+  return countryCatalog[code] ? code : null;
+};
+
 const currentAppUserId = async (client, token) => {
   if (!token) return null;
   const userClient = createClient({
@@ -113,6 +150,11 @@ export default async function handler(req) {
     
     const fullName = request.full_name || request.username || request.request_payload?.username || email.split('@')[0];
     const companyName = request.company_name || request.request_payload?.company_name || 'Empresa';
+    const billingCountryCode = normalizeBillingCountryCode(
+      request.billing_country_code || request.request_payload?.billing_country_code || request.request_payload?.billingCountryCode
+    );
+    if (!billingCountryCode) return json({ error: 'La solicitud no tiene pais de facturacion.' }, 400);
+    const country = countryCatalog[billingCountryCode];
     
     // Find or create app_user
     let { data: appRows } = await adminClient.database
@@ -161,6 +203,7 @@ export default async function handler(req) {
         display_name: companyName,
         legal_name: companyName,
         email,
+        billing_country_code: billingCountryCode,
         status: 'active',
         created_by: appUser.id
       }])
@@ -168,6 +211,51 @@ export default async function handler(req) {
       
     if (tenErr || !tenRows?.length) return json({ error: tenErr?.message || 'No se pudo crear empresa.' }, 500);
     const tenant = tenRows[0];
+
+    await adminClient.database
+      .from('tenant_fiscal_settings')
+      .insert([{
+        tenant_id: tenant.id,
+        country_code: country.code,
+        tax_label: country.taxLabel,
+        default_tax_rate: country.defaultTaxRate,
+        prices_tax_inclusive: false,
+        ncf_enabled: country.ncfEnabled,
+        electronic_invoicing_requested: false,
+        updated_at: now
+      }])
+      .select();
+
+    const tenantContext = {
+      version: 1,
+      defaultCurrency: country.currency,
+      defaultLocale: 'es',
+      priceDisplayCurrency: null,
+      billingCountryCode: country.code,
+      taxLabel: country.taxLabel,
+      defaultTaxRate: country.defaultTaxRate,
+      ncfEnabled: country.ncfEnabled,
+      authorityLabel: country.authorityLabel,
+      fiscalIdLabel: country.fiscalIdLabel
+    };
+
+    await adminClient.database
+      .from('app_settings')
+      .insert([{
+        tenant_id: tenant.id,
+        setting_key: 'zyron_tenant_context',
+        setting_value: JSON.stringify(tenantContext),
+        value: tenantContext,
+        updated_at: now
+      }])
+      .select();
+
+    for (const rate of country.taxRates) {
+      await adminClient.database
+        .from('tax_rates_catalog')
+        .insert([{ tenant_id: tenant.id, ...rate, is_active: true }])
+        .select();
+    }
     
     // Create tenant membership
     const { error: memErr } = await adminClient.database
