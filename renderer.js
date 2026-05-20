@@ -168,6 +168,16 @@ const state = {
     fiscalUi: { tab: 'general' },
     /** Contexto regional y aislamiento por empresa (multi-tenant). */
     tenantContext: { defaultCurrency: 'DOP', defaultLocale: 'es', priceDisplayCurrency: null },
+    /** Preferencias operativas cargadas desde app_settings por empresa. */
+    tenantPreferences: {
+        version: 1,
+        defaultModule: 'panel',
+        interfaceDensity: 'comfortable',
+        confirmBeforeIssue: true,
+        autoOpenDocumentPreview: false,
+        invoiceDueDays: 30,
+        estimateExpiryDays: 15
+    },
     membershipsList: [],
     /** Canal realtime suscrito para la empresa activa (desuscribir al cambiar workspace). */
     _rtTenantChannel: null,
@@ -745,6 +755,11 @@ const defaultTenantPreferencesObj = () => ({
     invoiceDueDays: 30,
     estimateExpiryDays: 15
 });
+const clampPreferenceDays = (value, fallback) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(365, Math.trunc(n)));
+};
 const parseTenantContextRaw = (raw) => {
     if (!raw || typeof raw !== 'string') return defaultTenantContextObj();
     try {
@@ -767,8 +782,8 @@ const parseTenantPreferencesRaw = (raw) => {
         if (!['comfortable', 'compact'].includes(next.interfaceDensity)) next.interfaceDensity = 'comfortable';
         next.confirmBeforeIssue = next.confirmBeforeIssue !== false;
         next.autoOpenDocumentPreview = next.autoOpenDocumentPreview === true;
-        next.invoiceDueDays = Math.max(0, Math.min(365, Number(next.invoiceDueDays) || 30));
-        next.estimateExpiryDays = Math.max(0, Math.min(365, Number(next.estimateExpiryDays) || 15));
+        next.invoiceDueDays = clampPreferenceDays(next.invoiceDueDays, 30);
+        next.estimateExpiryDays = clampPreferenceDays(next.estimateExpiryDays, 15);
         return next;
     } catch (_) {
         return defaultTenantPreferencesObj();
@@ -806,6 +821,22 @@ const loadTenantContext = async (tenantId) => {
     };
 };
 
+const applyTenantPreferencesToDom = () => {
+    document.documentElement?.setAttribute('data-interface-density', state.tenantPreferences?.interfaceDensity || 'comfortable');
+};
+
+const loadTenantPreferences = async (tenantId) => {
+    if (!tenantId || state.isSuperAdmin) {
+        state.tenantPreferences = defaultTenantPreferencesObj();
+        applyTenantPreferencesToDom();
+        return state.tenantPreferences;
+    }
+    const prefRes = await fetchTenantPreferencesViaDb(tenantId);
+    state.tenantPreferences = prefRes.data?.preferences || defaultTenantPreferencesObj();
+    applyTenantPreferencesToDom();
+    return state.tenantPreferences;
+};
+
 const switchWorkspaceTenant = async (tenantId) => {
     const row = state.membershipsList.find((m) => String(m.tenant_id) === String(tenantId));
     if (!row) return;
@@ -824,6 +855,7 @@ const switchWorkspaceTenant = async (tenantId) => {
     await safeCall(() => window.insforgeAPI.realtime.subscribe(ch), `realtime.subscribe:${ch}`);
     state._rtTenantChannel = ch;
     await loadTenantContext(row.tenant_id);
+    await loadTenantPreferences(row.tenant_id);
     await loadUiCatalogsFromDb();
     await renderSidebar();
     renderTenantContextBar();
@@ -1552,11 +1584,13 @@ const bootstrapSession = async () => {
                 zyronLog('bootstrapSession:noActiveTenant', { appUserStatus: appUser.status });
             }
             await loadTenantContext(state.currentTenantId);
+            await loadTenantPreferences(state.currentTenantId);
         }
     } else {
         state.membership = null;
         state.currentTenantId = null;
         state.membershipsList = [];
+        await loadTenantPreferences(null);
     }
 
     if (!pendingGate) {
@@ -1580,7 +1614,7 @@ const bootstrapSession = async () => {
         zyronLog('bootstrapSession:success', { module: 'pending-gate' });
     } else {
         const firstSuper = state.navModulesSuper[0]?.key || 'empresas';
-        const defaultMod = state.isSuperAdmin ? firstSuper : 'panel';
+        const defaultMod = state.isSuperAdmin ? firstSuper : state.tenantPreferences?.defaultModule || 'panel';
         const urlView = getZyronViewFromUrl();
         const target = urlView || defaultMod;
         void openModule(target, { replaceHistory: true });
@@ -5343,6 +5377,7 @@ const appSettingJsonUpsertViaDb = async (tenantId, settingKey, nextObj, auditAct
 };
 
 const fetchTenantPreferencesViaDb = async (tenantId) => {
+    if (!tenantId) return { data: { ok: true, preferences: defaultTenantPreferencesObj() }, error: null };
     const { data: rows, error } = await dbSelect({
         table: 'app_settings',
         filters: [
@@ -5369,8 +5404,8 @@ const tenantPreferencesUpsertViaDb = async (tenantId, body) => {
     }
     if (body.confirmBeforeIssue != null) next.confirmBeforeIssue = Boolean(body.confirmBeforeIssue);
     if (body.autoOpenDocumentPreview != null) next.autoOpenDocumentPreview = Boolean(body.autoOpenDocumentPreview);
-    if (body.invoiceDueDays != null) next.invoiceDueDays = Math.max(0, Math.min(365, Number(body.invoiceDueDays) || 0));
-    if (body.estimateExpiryDays != null) next.estimateExpiryDays = Math.max(0, Math.min(365, Number(body.estimateExpiryDays) || 0));
+    if (body.invoiceDueDays != null) next.invoiceDueDays = clampPreferenceDays(body.invoiceDueDays, 30);
+    if (body.estimateExpiryDays != null) next.estimateExpiryDays = clampPreferenceDays(body.estimateExpiryDays, 15);
     return appSettingJsonUpsertViaDb(tenantId, ZYRON_TENANT_PREFERENCES_KEY, next, 'tenant_preferences_updated');
 };
 
@@ -6864,7 +6899,8 @@ const renderFacturasModule = async () => {
         document.getElementById('factura-customer').value = customerId || '';
         document.getElementById('factura-notes').value = notes || '';
         const today = new Date().toISOString().slice(0, 10);
-        const due = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10);
+        const dueDays = clampPreferenceDays(state.tenantPreferences?.invoiceDueDays, 30);
+        const due = new Date(Date.now() + dueDays * 86400000).toISOString().slice(0, 10);
         const dateEl = document.getElementById('factura-date');
         const dueEl = document.getElementById('factura-due-date');
         if (dateEl) dateEl.value = opts.invoiceDate || today;
@@ -7018,6 +7054,7 @@ const renderFacturasModule = async () => {
             window.alert('Selecciona el documento padre para NC/ND.');
             return;
         }
+        if (state.tenantPreferences?.confirmBeforeIssue !== false && !window.confirm('Emitir esta factura?')) return;
         await persistFacturaTemplateChoice(meta.templateId);
         const iid = document.getElementById('factura-sheet-invoice-id').value.trim();
         if (!iid) {
@@ -7761,7 +7798,8 @@ const renderPresupuestosModule = async () => {
         document.getElementById('estimate-customer').value = opts.customerId || '';
         document.getElementById('estimate-notes').value = opts.notes || '';
         const today = new Date().toISOString().slice(0, 10);
-        const expiry = new Date(Date.now() + 15 * 86400000).toISOString().slice(0, 10);
+        const expiryDays = clampPreferenceDays(state.tenantPreferences?.estimateExpiryDays, 15);
+        const expiry = new Date(Date.now() + expiryDays * 86400000).toISOString().slice(0, 10);
         const dateEl = document.getElementById('estimate-date');
         const expiryEl = document.getElementById('estimate-expiry-date');
         if (dateEl) dateEl.value = opts.estimateDate || today;
@@ -7809,6 +7847,7 @@ const renderPresupuestosModule = async () => {
             window.alert('Anade al menos una linea valida.');
             return;
         }
+        if (issue && state.tenantPreferences?.confirmBeforeIssue !== false && !window.confirm('Emitir este presupuesto?')) return;
         const id = document.getElementById('estimate-sheet-id').value.trim();
         const payload = {
             tenantId: tid,
@@ -10581,6 +10620,10 @@ const renderConfigModule = async () => {
             st.textContent = u.err || u.data?.error ? u.err || u.data.error : 'Preferencias guardadas.';
             st.classList.toggle('text-error', Boolean(u.err || u.data?.error));
             st.classList.toggle('text-primary', !u.err && !u.data?.error);
+        }
+        if (!u.err && !u.data?.error) {
+            state.tenantPreferences = u.data?.settings || defaultTenantPreferencesObj();
+            applyTenantPreferencesToDom();
         }
     });
     document.getElementById('reg-save-btn')?.addEventListener('click', async () => {
