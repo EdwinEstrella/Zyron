@@ -197,6 +197,88 @@ test('failed realtime subscription enters degraded state and schedules backoff',
   assert.equal(snapshot[0].status, 'degraded')
   assert.equal(snapshot[0].degraded, true)
   assert.equal(snapshot[0].attempts, 1)
+  assert.equal(typeof snapshot[0].retryDelayMs, 'number')
+  assert.equal(typeof snapshot[0].nextRetryAt, 'string')
+
+  main.__testHooks.resetRealtimeRegistry()
+})
+
+test('manual realtime retry clears degraded state when subscription recovers', async () => {
+  const { handlers, main } = loadMainForBehaviorTest()
+  let attempts = 0
+
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    auth: {},
+    realtime: {
+      on: () => {},
+      connect: async () => ({}),
+      subscribe: async () => {
+        attempts += 1
+        if (attempts === 1) throw Object.assign(new Error('temporary outage'), { status: 503 })
+        return { ok: true }
+      },
+      unsubscribe: () => {},
+      disconnect: async () => ({ ok: true })
+    }
+  }
+
+  await handlers.get('insforge:realtime:subscribe')(null, 'tenant:tenant_1:domain-events')
+  const retry = await handlers.get('insforge:realtime:retry')(null, 'tenant:tenant_1:domain-events')
+  const snapshot = main.__testHooks.realtimeSnapshot()
+
+  assert.equal(retry.error, null)
+  assert.equal(retry.data.ok, true)
+  assert.equal(snapshot[0].status, 'subscribed')
+  assert.equal(snapshot[0].degraded, false)
+  assert.equal(snapshot[0].attempts, 0)
+
+  main.__testHooks.resetRealtimeRegistry()
+})
+
+test('realtime publish queues domain events while channel is degraded and flushes after retry', async () => {
+  const { handlers, main } = loadMainForBehaviorTest()
+  let subscribeAttempts = 0
+  const published = []
+
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    auth: {},
+    realtime: {
+      on: () => {},
+      connect: async () => ({}),
+      subscribe: async () => {
+        subscribeAttempts += 1
+        if (subscribeAttempts === 1) throw Object.assign(new Error('offline'), { status: 503 })
+        return { ok: true }
+      },
+      publish: async (channel, event, payload) => {
+        published.push({ channel, event, payload })
+        return { ok: true }
+      },
+      unsubscribe: () => {},
+      disconnect: async () => ({ ok: true })
+    }
+  }
+
+  await handlers.get('insforge:realtime:subscribe')(null, 'tenant:tenant_1:domain-events')
+  const queued = await handlers.get('insforge:realtime:publish')(null, {
+    channel: 'tenant:tenant_1:domain-events',
+    event: 'invoice_created',
+    payload: { id: 'inv-1' }
+  })
+
+  assert.equal(queued.error, null)
+  assert.equal(queued.data.queued, true)
+  assert.equal(main.__testHooks.realtimeSnapshot()[0].queuedEvents, 1)
+
+  await handlers.get('insforge:realtime:retry')(null, 'tenant:tenant_1:domain-events')
+
+  assert.equal(published.length, 1)
+  assert.deepEqual(published[0], {
+    channel: 'tenant:tenant_1:domain-events',
+    event: 'invoice_created',
+    payload: { id: 'inv-1' }
+  })
+  assert.equal(main.__testHooks.realtimeSnapshot()[0].queuedEvents, 0)
 
   main.__testHooks.resetRealtimeRegistry()
 })

@@ -282,13 +282,46 @@ const filterTenantNavForRole = (modules) => {
 const updateSessionNoticeBanner = () => {
     if (!sessionNoticeBanner) return;
     if (state.realtimeStatus?.degraded && state.appUser && !isTenantPendingApproval()) {
-        sessionNoticeBanner.textContent = 'Realtime esta en modo degradado. La app sigue funcionando y reintentara la conexion automaticamente.';
+        const primary = state.realtimeStatus.channels.find((ch) => ch.degraded || ch.status === 'degraded') || {};
+        const retryAt = primary.nextRetryAt ? new Date(primary.nextRetryAt) : null;
+        const retryText = retryAt && !Number.isNaN(retryAt.getTime())
+            ? `Proximo reintento automatico: ${retryAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+            : 'Reintentando automaticamente.';
+        sessionNoticeBanner.innerHTML = '';
+        const wrap = document.createElement('div');
+        wrap.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between';
+        const copy = document.createElement('div');
+        copy.innerHTML = `
+            <strong class="block text-on-surface">Realtime en modo degradado</strong>
+            <span class="text-on-surface-variant">La app sigue funcionando; los eventos criticos se encolan y se sincronizan cuando vuelva la conexion. ${retryText}</span>
+        `;
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.dataset.action = 'retry-realtime';
+        retry.dataset.channel = primary.channel || state._rtTenantChannel || '';
+        retry.className = 'btn-secondary self-start whitespace-nowrap px-3 py-2 text-xs sm:self-center';
+        retry.textContent = 'Reintentar ahora';
+        retry.disabled = !retry.dataset.channel;
+        wrap.append(copy, retry);
+        sessionNoticeBanner.append(wrap);
         sessionNoticeBanner.classList.remove('hidden');
         return;
     }
-    sessionNoticeBanner.textContent = '';
+    sessionNoticeBanner.innerHTML = '';
     sessionNoticeBanner.classList.add('hidden');
 };
+
+sessionNoticeBanner?.addEventListener('click', async (event) => {
+    const button = event.target?.closest?.('[data-action="retry-realtime"]');
+    if (!button || button.disabled) return;
+    const channel = button.dataset.channel || state._rtTenantChannel;
+    if (!channel) return;
+    button.disabled = true;
+    button.textContent = 'Reintentando...';
+    await safeCall(() => window.insforgeAPI.realtime.retry(channel), `realtime.retry:${channel}`);
+    button.textContent = 'Reintentar ahora';
+    updateSessionNoticeBanner();
+});
 
 togglePw.addEventListener('click', () => {
     const show = passwordInput.type === 'password';
@@ -445,7 +478,9 @@ const safeCall = async (handler, debugLabel = 'ipc') => {
         const result = await handler();
         const ms = typeof performance !== 'undefined' ? Math.round(performance.now() - t0) : 0;
         if (result && typeof result === 'object' && result.error) {
-            console.warn(`[Zyron:ipc:!!] ${debugLabel} (${ms}ms)`, result.error, summarizeInsforgeResult(result));
+            const quietRealtimeDegraded = debugLabel.startsWith('realtime.') && result.error.realtimeDegraded;
+            if (quietRealtimeDegraded) zyronLog('safeCall:realtimeDegraded', { label: debugLabel, error: result.error });
+            else console.warn(`[Zyron:ipc:!!] ${debugLabel} (${ms}ms)`, result.error, summarizeInsforgeResult(result));
             if (result.error.reauthRequired || result.error.code === 'AUTH_RELOGIN_REQUIRED') {
                 await handleSessionExpired(result.error);
             }

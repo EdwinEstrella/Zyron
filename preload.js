@@ -51,6 +51,7 @@ contextBridge.exposeInMainWorld('insforgeAPI', {
     connect: () => ipcRenderer.invoke('insforge:realtime:connect'),
     subscribe: (channel) => ipcRenderer.invoke('insforge:realtime:subscribe', channel),
     unsubscribe: (channel) => ipcRenderer.invoke('insforge:realtime:unsubscribe', channel),
+    retry: (channel) => ipcRenderer.invoke('insforge:realtime:retry', channel),
     publish: (payload) => ipcRenderer.invoke('insforge:realtime:publish', payload),
     disconnect: () => ipcRenderer.invoke('insforge:realtime:disconnect'),
     status: () => ipcRenderer.invoke('insforge:realtime:status'),
