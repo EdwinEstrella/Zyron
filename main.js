@@ -468,23 +468,35 @@ const requestAuthRecovery = async (client, reason) => {
   return authRecoveryPromise
 }
 
+const forceAuthRelogin = (client, error) => {
+  try {
+    client?.auth?.signOut?.()
+  } catch (_) {}
+  currentRefreshToken = null
+  notifyRenderer('auth-session-expired', {
+    code: AUTH_RELOGIN_REQUIRED,
+    message: 'Tu sesion expiro. Vuelve a iniciar sesion para continuar.'
+  })
+  return {
+    data: null,
+    error: serializeError(error, AUTH_RELOGIN_REQUIRED, {
+      code: AUTH_RELOGIN_REQUIRED,
+      reauthRequired: true,
+      recoverable: false
+    })
+  }
+}
+
 const runInsforgeOperation = async (scope, operation, options = {}) => {
   try {
     const client = await getInsforgeClient()
     let result = await operation(client)
     if (!options.skipAuthRecovery && isAuthError(result?.error)) {
       const recovered = await requestAuthRecovery(client, scope)
-      if (recovered.ok) result = await operation(client)
-      else {
-        return {
-          data: null,
-          error: serializeError(recovered.error, AUTH_RELOGIN_REQUIRED, {
-            code: AUTH_RELOGIN_REQUIRED,
-            reauthRequired: true,
-            recoverable: false
-          })
-        }
-      }
+      if (recovered.ok) {
+        result = await operation(client)
+        if (isAuthError(result?.error)) return forceAuthRelogin(client, result.error)
+      } else return forceAuthRelogin(client, recovered.error)
     }
     return normalizeResult(result)
   } catch (error) {
@@ -493,19 +505,15 @@ const runInsforgeOperation = async (scope, operation, options = {}) => {
       const recovered = await requestAuthRecovery(client, scope)
       if (recovered.ok) {
         try {
-          return normalizeResult(await operation(client))
+          const retryResult = await operation(client)
+          if (isAuthError(retryResult?.error)) return forceAuthRelogin(client, retryResult.error)
+          return normalizeResult(retryResult)
         } catch (retryError) {
+          if (isAuthError(retryError)) return forceAuthRelogin(client, retryError)
           return normalizeResult(null, retryError)
         }
       }
-      return {
-        data: null,
-        error: serializeError(recovered.error, AUTH_RELOGIN_REQUIRED, {
-          code: AUTH_RELOGIN_REQUIRED,
-          reauthRequired: true,
-          recoverable: false
-        })
-      }
+      return forceAuthRelogin(client, recovered.error)
     }
     zyronLog(`${scope}:exception`, { message: error?.message || String(error) })
     return normalizeResult(null, error)

@@ -137,6 +137,86 @@ test('401/AUTH_UNAUTHORIZED refreshes once and retries without surfacing re-logi
   assert.equal(selectCount, 2)
 })
 
+test('auth recovery failure returns reauth-required error after a single refresh attempt', async () => {
+  const { handlers } = loadMainForBehaviorTest()
+  let refreshCount = 0
+  let selectCount = 0
+  let signedOut = false
+
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    auth: {
+      refreshSession: async () => {
+        refreshCount += 1
+        return { data: null, error: { status: 401, code: 'AUTH_UNAUTHORIZED', message: 'refresh expired' } }
+      },
+      signOut: () => {
+        signedOut = true
+      }
+    },
+    database: {
+      from: () => ({
+        select: () => {
+          selectCount += 1
+          return makeSelectQuery([{ data: null, error: { status: 401, code: 'AUTH_UNAUTHORIZED', message: 'expired token' } }])
+        }
+      })
+    },
+    realtime: { on: () => {} }
+  }
+
+  const result = await handlers.get('insforge:db:select')(null, { table: 'invoices' })
+
+  assert.equal(result.data, null)
+  assert.equal(result.error.code, 'AUTH_RELOGIN_REQUIRED')
+  assert.equal(result.error.reauthRequired, true)
+  assert.equal(result.error.recoverable, false)
+  assert.equal(refreshCount, 1)
+  assert.equal(selectCount, 1)
+  assert.equal(signedOut, true)
+})
+
+test('auth retry that still returns 401 forces controlled relogin instead of surfacing raw auth error', async () => {
+  const { handlers } = loadMainForBehaviorTest()
+  const selectResults = [
+    { data: null, error: { status: 401, code: 'AUTH_UNAUTHORIZED', message: 'expired token' } },
+    { data: null, error: { status: 401, code: 'AUTH_UNAUTHORIZED', message: 'retry still invalid' } }
+  ]
+  let refreshCount = 0
+  let selectCount = 0
+
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    auth: {
+      refreshSession: async () => {
+        refreshCount += 1
+        return { data: { accessToken: 'new-token', user: { id: 'user-1' } }, error: null }
+      },
+      signOut: () => {},
+      saveSessionFromResponse: () => {}
+    },
+    tokenManager: {
+      saveSession: () => {}
+    },
+    database: {
+      from: () => ({
+        select: () => {
+          selectCount += 1
+          return makeSelectQuery(selectResults)
+        }
+      })
+    },
+    realtime: { on: () => {} }
+  }
+
+  const result = await handlers.get('insforge:db:select')(null, { table: 'invoices' })
+
+  assert.equal(result.data, null)
+  assert.equal(result.error.code, 'AUTH_RELOGIN_REQUIRED')
+  assert.equal(result.error.reauthRequired, true)
+  assert.equal(result.error.recoverable, false)
+  assert.equal(refreshCount, 1)
+  assert.equal(selectCount, 2)
+})
+
 test('sign in persists SDK token manager session so bootstrap getCurrentUser returns user', async () => {
   const { handlers } = loadMainForBehaviorTest()
   let savedSession = null
