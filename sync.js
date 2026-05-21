@@ -213,6 +213,12 @@ async function ejecutarFlujoPush(tenantId) {
   }
 }
 
+// Mapeo específico de columnas de fecha incremental por tabla
+const COLUMNAS_FECHA_TABLA = {
+  accounting_journal_lines: 'created_at',
+  role_permissions: 'created_at'
+}
+
 /**
  * Ejecuta el flujo Pull (descarga de cambios remotos posteriores a la última sincronización exitosa).
  * @param {string} tenantId - Identificador del inquilino.
@@ -230,15 +236,18 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
 
   for (const tabla of TABLAS_SINCRONIZABLES) {
     try {
+      const columnaFecha = COLUMNAS_FECHA_TABLA[tabla] || 'updated_at'
       if (logueadoVerbose) {
-        console.log(`[Zyron:sync] Descargando cambios de ${tabla} desde: ${ultimaSincronizacion}`)
+        console.log(
+          `[Zyron:sync] Descargando cambios de ${tabla} desde: ${ultimaSincronizacion} usando columna: ${columnaFecha}`
+        )
       }
 
       const respuesta = await clienteInsforge.database
         .from(tabla)
         .select('*')
         .eq('tenant_id', tenantId)
-        .gt('updated_at', ultimaSincronizacion)
+        .gt(columnaFecha, ultimaSincronizacion)
 
       if (respuesta.error) {
         console.error(`[Zyron:sync] Error descargando cambios de tabla ${tabla}:`, respuesta.error)
@@ -263,6 +272,42 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
       console.error(`[Zyron:sync] Excepción descargando cambios de tabla ${tabla}:`, error)
       erroresRegistrados = true
     }
+  }
+
+  // 3. Sincronizar datos de la propia empresa (tabla tenants)
+  try {
+    const respuestaTenant = await clienteInsforge.database
+      .from('tenants')
+      .select('*')
+      .eq('id', tenantId)
+      .limit(1)
+    if (!respuestaTenant.error && respuestaTenant.data && respuestaTenant.data.length > 0) {
+      const registroEmpresa = respuestaTenant.data[0]
+      await localdb.upsertRemotoLWW(tenantId, 'tenants', registroEmpresa)
+    }
+  } catch (errorTenant) {
+    console.error(
+      `[Zyron:sync] Excepción descargando datos de tenants para ${tenantId}:`,
+      errorTenant
+    )
+  }
+
+  // 4. Sincronizar catálogo global de planes de servicio (tabla planes_servicio)
+  try {
+    const respuestaPlanes = await clienteInsforge.database
+      .from('planes_servicio')
+      .select('*')
+      .eq('activo', true)
+    if (!respuestaPlanes.error && respuestaPlanes.data) {
+      for (const plan of respuestaPlanes.data) {
+        await localdb.upsertRemotoLWW(tenantId, 'planes_servicio', plan)
+      }
+    }
+  } catch (errorPlanes) {
+    console.error(
+      `[Zyron:sync] Excepción descargando planes_servicio para ${tenantId}:`,
+      errorPlanes
+    )
   }
 
   // Si se completaron todas las consultas sin errores, actualizamos el timestamp del Pull exitoso

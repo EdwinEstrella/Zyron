@@ -2198,11 +2198,13 @@ const renderEmpresasModule = async () => {
         zyronLog('render:empresas:forbidden', {});
         return;
     }
-    const [{ data: tenants }, users, requests] = await Promise.all([
+    const [{ data: tenants }, { data: planes }, users, requests] = await Promise.all([
         dbSelect({ table: 'tenants', order: { column: 'created_at', ascending: false } }),
+        dbSelect({ table: 'planes_servicio', order: { column: 'precio', ascending: true } }),
         loadAppUsersSuperOrFallback(),
         loadAccessRequestsSuperOrFallback()
     ]);
+    const planesLista = planes || [];
     const usersAll = users || [];
     const usersPanel = usersAll.filter((u) => u.global_role !== 'super_admin');
     const tenantList = tenants || [];
@@ -2252,6 +2254,14 @@ const renderEmpresasModule = async () => {
                         <input name="slug" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm text-on-surface" />
                     </label>
                     <label class="flex flex-col gap-1 text-xs text-on-surface-variant">
+                        Plan de Servicio
+                        <select name="plan_id" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm text-on-surface">
+                            ${planesLista.map((plan) => `
+                                <option value="${plan.id}">${plan.nombre} (${plan.limite_usuarios} usu, ${plan.limite_facturas_mes === -1 ? 'Ilimitadas' : plan.limite_facturas_mes} fac) - $${plan.precio}</option>
+                            `).join('')}
+                        </select>
+                    </label>
+                    <label class="flex flex-col gap-1 text-xs text-on-surface-variant">
                         Max usuarios
                         <input name="max_users" type="number" min="1" class="rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm text-on-surface" />
                     </label>
@@ -2277,16 +2287,21 @@ const renderEmpresasModule = async () => {
                         <tr class="border-b border-outline-variant/30">
                             <th class="py-2">Empresa</th>
                             <th class="py-2">Estado</th>
+                            <th class="py-2">Plan</th>
                             <th class="py-2">Max usuarios</th>
                             <th class="py-2">Permite crecer</th>
                             <th class="py-2 text-right">Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
-                        ${tenantList.map((tenant) => `
+                        ${tenantList.map((tenant) => {
+                            const plan = planesLista.find((p) => p.id === tenant.plan_id);
+                            const nombrePlan = plan ? plan.nombre : 'Sin Plan';
+                            return `
                             <tr class="border-b border-outline-variant/20">
                                 <td class="py-3 font-medium text-on-surface">${tenant.display_name}</td>
                                 <td class="py-3">${tenant.status}</td>
+                                <td class="py-3"><span class="rounded bg-primary-container px-2 py-0.5 text-xs font-semibold text-on-primary-container">${nombrePlan}</span></td>
                                 <td class="py-3">${tenant.max_users}</td>
                                 <td class="py-3">${tenant.allow_more_users ? 'Si' : 'No'}</td>
                                 <td class="py-3 text-right">
@@ -2297,7 +2312,8 @@ const renderEmpresasModule = async () => {
                                     </button>
                                 </td>
                             </tr>
-                        `).join('')}
+                            `;
+                        }).join('')}
                     </tbody>
                 </table>
             </div>
@@ -2406,6 +2422,7 @@ const renderEmpresasModule = async () => {
         tenantProfileForm.display_name.value = tenant.display_name || '';
         tenantProfileForm.legal_name.value = tenant.legal_name || '';
         tenantProfileForm.slug.value = tenant.slug || '';
+        tenantProfileForm.plan_id.value = tenant.plan_id || '';
         tenantProfileForm.max_users.value = String(tenant.max_users || 1);
         tenantProfileForm.allow_more_users.checked = Boolean(tenant.allow_more_users);
         setTenantEditorStatus('');
@@ -2424,6 +2441,7 @@ const renderEmpresasModule = async () => {
             const tenantId = tenantEditorSelect.value;
             if (!tenantId) return;
             const fd = new FormData(tenantProfileForm);
+            const planId = String(fd.get('plan_id') || '').trim() || null;
             const payload = {
                 tenantId,
                 action: 'update_profile',
@@ -2431,11 +2449,28 @@ const renderEmpresasModule = async () => {
                 legalName: String(fd.get('legal_name') || '').trim(),
                 slug: String(fd.get('slug') || '').trim().toLowerCase(),
                 maxUsers: Number(fd.get('max_users') || 1),
-                allowMoreUsers: Boolean(fd.get('allow_more_users'))
+                allowMoreUsers: Boolean(fd.get('allow_more_users')),
+                planId
             };
             const { error } = await invokeFn('manage-tenant', payload);
-            if (error) setTenantEditorStatus(error.message || 'No se pudo guardar.', true);
-            else setTenantEditorStatus('Cambios guardados.');
+            if (error) {
+                setTenantEditorStatus(error.message || 'No se pudo guardar.', true);
+            } else {
+                await dbUpdate({
+                    table: 'tenants',
+                    values: {
+                        plan_id: planId,
+                        max_users: Number(fd.get('max_users') || 1),
+                        allow_more_users: Boolean(fd.get('allow_more_users')),
+                        display_name: String(fd.get('display_name') || '').trim(),
+                        legal_name: String(fd.get('legal_name') || '').trim(),
+                        slug: String(fd.get('slug') || '').trim().toLowerCase(),
+                        updated_at: new Date().toISOString()
+                    },
+                    filters: [{ op: 'eq', column: 'id', value: tenantId }]
+                });
+                setTenantEditorStatus('Cambios guardados.');
+            }
             await renderEmpresasModule();
         });
     }
@@ -11727,16 +11762,52 @@ const renderConfigModule = async () => {
         order: { column: 'updated_at', ascending: false },
         limit: 80
     });
-    const [docRes, hintsRes, { data: tenantRows }] = await Promise.all([
+    const [docRes, hintsRes, { data: tenantRows }, { data: planes }, { data: membresias }, { data: facturas }] = await Promise.all([
         fetchInvoiceDocSettingsViaDb(tid),
         fetchTaxHintsViaDb(tid),
-        dbSelect({ table: 'tenants', filters: [{ op: 'eq', column: 'id', value: tid }], limit: 1 })
+        dbSelect({ table: 'tenants', filters: [{ op: 'eq', column: 'id', value: tid }], limit: 1 }),
+        dbSelect({ table: 'planes_servicio' }),
+        dbSelect({ table: 'tenant_memberships', filters: [{ op: 'eq', column: 'tenant_id', value: tid }, { op: 'eq', column: 'status', value: 'active' }] }),
+        dbSelect({ table: 'invoices', filters: [{ op: 'eq', column: 'tenant_id', value: tid }] })
     ]);
     const docU = unwrapFnInvoke(docRes);
     const hintsU = unwrapFnInvoke(hintsRes);
     const docSettings = mergeInvoiceDocumentSettings(docU.data?.settings || {});
     const docTemplates = Array.isArray(docU.data?.templates) && docU.data.templates.length ? docU.data.templates : documentTemplateCatalog();
     const tenantRow = (tenantRows || [])[0] || {};
+    
+    // Obtener los datos del plan actual y calcular el consumo de recursos
+    const listaPlanes = planes || [];
+    let planActual = listaPlanes.find((p) => p.id === tenantRow.plan_id);
+    if (!planActual) {
+        planActual = listaPlanes.find((p) => p.codigo_plan === 'basico') || {
+            nombre: 'Plan Basico',
+            limite_usuarios: 3,
+            limite_facturas_mes: 50,
+            precio: 0.00
+        };
+    }
+
+    const ahora = new Date();
+    const mesActual = ahora.getMonth();
+    const anioActual = ahora.getFullYear();
+    const facturasEsteMes = (facturas || []).filter((factura) => {
+        if (!factura.created_at) return false;
+        const fecha = new Date(factura.created_at);
+        return fecha.getMonth() === mesActual && fecha.getFullYear() === anioActual;
+    }).length;
+
+    const totalUsuariosActivos = membresias ? membresias.length : 0;
+    const limiteUsuarios = tenantRow.max_users || planActual.limite_usuarios || 3;
+    const porcentajeUsuarios = Math.min(100, Math.round((totalUsuariosActivos / limiteUsuarios) * 100));
+
+    const limiteFacturas = planActual.limite_facturas_mes;
+    const esFacturasIlimitadas = limiteFacturas === -1;
+    const porcentajeFacturas = esFacturasIlimitadas ? 0 : Math.min(100, Math.round((facturasEsteMes / limiteFacturas) * 100));
+
+    const colorBarraUsuarios = porcentajeUsuarios >= 90 ? 'bg-error' : porcentajeUsuarios >= 75 ? 'bg-warning' : 'bg-primary';
+    const colorBarraFacturas = porcentajeFacturas >= 90 ? 'bg-error' : porcentajeFacturas >= 75 ? 'bg-warning' : 'bg-primary';
+
     const fiscalTaxLabel = !hintsU.err && hintsU.data?.ok ? hintsU.data.taxLabel : 'ITBIS';
     const previewInvoiceSample = {
         series: 'FAC',
@@ -11967,6 +12038,7 @@ const renderConfigModule = async () => {
         { key: 'correo', icon: 'mail', label: 'Correo' },
         { key: 'archivos', icon: 'picture_as_pdf', label: 'PDF y almacenamiento' },
         { key: 'notificaciones', icon: 'notifications', label: 'Notificaciones' },
+        { key: 'plan', icon: 'workspace_premium', label: 'Plan y Consumo' },
         { key: 'sistema', icon: 'database', label: 'Datos del sistema' }
     ];
     const activeSetting = settingsMenu.some((m) => m.key === state.configUi?.tab) ? state.configUi.tab : 'empresa';
@@ -12013,6 +12085,114 @@ const renderConfigModule = async () => {
             <button type="button" id="pref-save-btn" class="mt-4 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">Guardar preferencias</button>
             <p id="pref-save-status" class="mt-2 hidden text-xs"></p>
         </div>`;
+
+    const planConsumoBlock = `
+        <div class="mb-6 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-6 shadow-sm">
+            <div class="flex flex-col justify-between gap-4 border-b border-outline-variant/15 pb-5 sm:flex-row sm:items-center">
+                <div>
+                    <h3 class="text-lg font-bold text-primary flex items-center gap-2">
+                        <span class="material-symbols-outlined text-xl text-primary">workspace_premium</span>
+                        Plan de Servicio y Licencias
+                    </h3>
+                    <p class="text-xs text-on-surface-variant">Detalle de tu suscripcion actual y consumo de recursos de la plataforma.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="rounded-full bg-primary/10 px-3.5 py-1 text-xs font-bold text-primary tracking-wide uppercase border border-primary/20">
+                        ${escapeHtml(planActual.nombre)}
+                    </span>
+                    <span class="text-sm font-semibold text-on-surface-variant">
+                        $${planActual.precio} / mes
+                    </span>
+                </div>
+            </div>
+
+            <!-- Consumo en tiempo real -->
+            <div class="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+                <!-- Tarjeta de Usuarios Activos -->
+                <div class="rounded-xl border border-outline-variant/20 bg-surface-container-low/40 p-5 transition-all hover:shadow-md">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                                <span class="material-symbols-outlined">group</span>
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-bold text-on-surface">Usuarios Activos</h4>
+                                <p class="text-[10px] text-on-surface-variant">Membresias activas de la empresa</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-lg font-extrabold text-on-surface">${totalUsuariosActivos}</span>
+                            <span class="text-xs text-on-surface-variant">/ ${limiteUsuarios}</span>
+                        </div>
+                    </div>
+
+                    <!-- Barra de progreso -->
+                    <div class="mt-4">
+                        <div class="h-2 w-full rounded-full bg-outline-variant/30 overflow-hidden">
+                            <div class="h-full ${colorBarraUsuarios} rounded-full transition-all duration-500" style="width: ${porcentajeUsuarios}%"></div>
+                        </div>
+                        <div class="mt-2 flex items-center justify-between text-xs text-on-surface-variant">
+                            <span>Consumo: ${porcentajeUsuarios}%</span>
+                            <span>${limiteUsuarios - totalUsuariosActivos} disponibles</span>
+                        </div>
+                    </div>
+
+                    ${tenantRow.allow_more_users ? `
+                    <div class="mt-4 flex items-center gap-2 rounded-lg bg-primary/10 p-2.5 text-xs text-primary border border-primary/20">
+                        <span class="material-symbols-outlined text-sm">info</span>
+                        <span>Esta empresa tiene activada la flexibilidad para exceder temporalmente el limite de usuarios.</span>
+                    </div>
+                    ` : ''}
+                </div>
+
+                <!-- Tarjeta de Facturas Emitidas -->
+                <div class="rounded-xl border border-outline-variant/20 bg-surface-container-low/40 p-5 transition-all hover:shadow-md">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <div class="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                                <span class="material-symbols-outlined">receipt_long</span>
+                            </div>
+                            <div>
+                                <h4 class="text-sm font-bold text-on-surface">Facturas Emitidas</h4>
+                                <p class="text-[10px] text-on-surface-variant">Facturas generadas este mes</p>
+                            </div>
+                        </div>
+                        <div class="text-right">
+                            <span class="text-lg font-extrabold text-on-surface">${facturasEsteMes}</span>
+                            <span class="text-xs text-on-surface-variant">/ ${esFacturasIlimitadas ? 'Ilimitadas' : limiteFacturas}</span>
+                        </div>
+                    </div>
+
+                    <!-- Barra de progreso -->
+                    <div class="mt-4">
+                        <div class="h-2 w-full rounded-full bg-outline-variant/30 overflow-hidden">
+                            <div class="h-full ${colorBarraFacturas} rounded-full transition-all duration-500" style="width: ${esFacturasIlimitadas ? 0 : porcentajeFacturas}%"></div>
+                        </div>
+                        <div class="mt-2 flex items-center justify-between text-xs text-on-surface-variant">
+                            <span>Consumo: ${esFacturasIlimitadas ? '0' : porcentajeFacturas}%</span>
+                            <span>${esFacturasIlimitadas ? 'Sin limite mensual' : `${limiteFacturas - facturasEsteMes} restantes este mes`}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Seccion de informacion premium -->
+            <div class="mt-6 rounded-lg bg-gradient-to-r from-primary/5 to-primary-container/10 p-5 border border-primary/10">
+                <h4 class="text-xs font-bold text-primary uppercase tracking-wider">Gestion de Suscripcion</h4>
+                <p class="mt-2 text-xs text-on-surface-variant leading-relaxed">
+                    Zyron opera bajo una estructura de planes multi-inquilino escalable. Si necesitas actualizar tu plan para expandir tu equipo o emitir mas facturas mensuales, comunicate con el administrador global o el equipo de soporte tecnico.
+                </p>
+                <div class="mt-4 flex flex-wrap gap-2">
+                    <button type="button" class="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/95 shadow-sm transition-all" onclick="window.alert('Solicitud de cambio de plan enviada al soporte tecnico.')">
+                        Solicitar Cambio de Plan
+                    </button>
+                    <button type="button" class="rounded-md border border-outline-variant/50 px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-high transition-all" onclick="window.alert('Tu ID de empresa es: ${tenantRow.id}')">
+                        Copiar ID de Empresa
+                    </button>
+                </div>
+            </div>
+        </div>`;
+
     const contentBySetting = {
         cuenta: devCard('Cuenta', 'Preferencias personales, perfil y seguridad local se agregaran a esta seccion.'),
         empresa: companySettingsBlock,
@@ -12026,6 +12206,7 @@ const renderConfigModule = async () => {
         correo: devCard('Correo', 'El envio por correo esta fuera del flujo actual de escritorio.'),
         archivos: devCard('PDF y almacenamiento', 'La exportacion PDF se guarda desde el dialogo del sistema. Almacenamiento avanzado se agregara despues.'),
         notificaciones: devCard('Notificaciones', 'En desarrollo.'),
+        plan: planConsumoBlock,
         sistema: appSettingsBlock
     };
     dashboardContent.innerHTML = `

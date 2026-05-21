@@ -226,6 +226,98 @@ function aplicarFiltrosLocales(filas, filtros = []) {
 }
 
 /**
+ * Valida localmente si una operación de inserción o actualización cumple con los límites del plan del tenant.
+ * CERO INGLÉS en comentarios y variables.
+ * @param {string} tenantId - Identificador del inquilino.
+ * @param {string} tabla - Nombre de la tabla sobre la que se opera ('tenant_memberships' o 'invoices').
+ * @param {Array<Object>|Object} valores - Nuevos valores a validar.
+ * @param {boolean} esInsercion - Indica si es una inserción (true) o actualización (false).
+ */
+async function validarLimitesPlanLocal(tenantId, tabla, valores, esInsercion) {
+  // Aseguramos la carga de los datos del inquilino
+  const listaTenants = asegurarTablaCargada(tenantId, 'tenants')
+  const infoTenant = listaTenants.find((t) => t.id === tenantId)
+
+  // Si no hay datos del tenant localmente, no podemos bloquear
+  if (!infoTenant) return
+
+  const planId = infoTenant.plan_id
+  const permitirMasUsuarios =
+    infoTenant.allow_more_users === true || infoTenant.allow_more_users === 'true'
+
+  // Obtener planes
+  const listaPlanes = asegurarTablaCargada(tenantId, 'planes_servicio')
+
+  // Buscar el plan activo del tenant, si no se encuentra buscamos el plan básico por defecto
+  let infoPlan = listaPlanes.find((p) => p.id === planId)
+  if (!infoPlan) {
+    infoPlan = listaPlanes.find((p) => p.codigo_plan === 'basico')
+  }
+
+  // Si no hay plan disponible en absoluto, usar valores por defecto del plan básico
+  const limiteUsuariosMaximo = infoPlan ? infoPlan.limite_usuarios : 3
+  const limiteFacturasMaximo = infoPlan ? infoPlan.limite_facturas_mes : 50
+
+  const registrosAValidar = Array.isArray(valores) ? valores : [valores]
+
+  if (tabla === 'tenant_memberships') {
+    // Si permite crecimiento flexible, no validamos el límite de usuarios
+    if (permitirMasUsuarios) return
+
+    // Obtener membresías existentes
+    const membresiasExistentes = asegurarTablaCargada(tenantId, 'tenant_memberships')
+
+    // Validar cada registro nuevo
+    for (const reg of registrosAValidar) {
+      // Solo validamos si pasa a estado activo
+      if (reg.status === 'active') {
+        const idActual = reg.id
+
+        // Contar miembros activos, excluyendo el mismo registro si es un UPDATE
+        const totalActivos = membresiasExistentes.filter(
+          (m) => m.status === 'active' && (esInsercion || m.id !== idActual)
+        ).length
+
+        if (totalActivos >= limiteUsuariosMaximo) {
+          throw new Error(
+            `Límite de usuarios excedido para este plan de servicio. El límite es ${limiteUsuariosMaximo} usuarios activos.`
+          )
+        }
+      }
+    }
+  }
+
+  if (tabla === 'invoices') {
+    // Si el límite de facturas es ilimitado (-1), no validamos
+    if (limiteFacturasMaximo === -1) return
+
+    // Obtener facturas existentes
+    const facturasExistentes = asegurarTablaCargada(tenantId, 'invoices')
+
+    // Obtener mes y año actuales
+    const ahora = new Date()
+    const mesActual = ahora.getMonth()
+    const anioActual = ahora.getFullYear()
+
+    // Contar facturas emitidas en el mes actual localmente
+    const facturasMesActual = facturasExistentes.filter((factura) => {
+      if (!factura.created_at) return false
+      const fechaFactura = new Date(factura.created_at)
+      return fechaFactura.getMonth() === mesActual && fechaFactura.getFullYear() === anioActual
+    }).length
+
+    // Sumar el número de facturas que se intentan insertar
+    const nuevasFacturasAInsertar = esInsercion ? registrosAValidar.length : 0
+
+    if (facturasMesActual + nuevasFacturasAInsertar > limiteFacturasMaximo) {
+      throw new Error(
+        `Límite de facturas mensuales excedido para este plan de servicio. El límite es ${limiteFacturasMaximo} facturas al mes.`
+      )
+    }
+  }
+}
+
+/**
  * Consulta de registros locales.
  * @param {string} tenantId - Identificador de inquilino.
  * @param {string} tabla - Tabla a consultar.
@@ -300,6 +392,12 @@ async function selectLocal(tenantId, tabla, opciones = {}) {
 async function insertLocal(tenantId, tabla, valores) {
   try {
     const registrosNuevos = Array.isArray(valores) ? valores : [valores]
+
+    // Validar límites del plan offline antes de proceder a la inserción
+    if (tabla === 'tenant_memberships' || tabla === 'invoices') {
+      await validarLimitesPlanLocal(tenantId, tabla, registrosNuevos, true)
+    }
+
     const filasExistentes = asegurarTablaCargada(tenantId, tabla)
     const ahora = new Date().toISOString()
     const insertados = []
@@ -325,7 +423,10 @@ async function insertLocal(tenantId, tabla, valores) {
     await guardarTablaEnDisco(tenantId, tabla)
     return { data: insertados, error: null }
   } catch (error) {
-    return { data: null, error: { code: 'LOCAL_DB_INSERT_ERROR', message: error.message } }
+    const codigoError = error.message.includes('Límite de')
+      ? 'LIMITES_PLAN_EXCEDIDOS'
+      : 'LOCAL_DB_INSERT_ERROR'
+    return { data: null, error: { code: codigoError, message: error.message } }
   }
 }
 
@@ -349,6 +450,14 @@ async function updateLocal(tenantId, tabla, valores, filtros = []) {
       filasAFiltrar.map((x) => x.fila),
       filtros
     )
+
+    // Validar límites del plan offline antes de proceder a la actualización
+    if (tabla === 'tenant_memberships' || tabla === 'invoices') {
+      for (const filaOriginal of filtrados) {
+        const valoresCombinados = { ...filaOriginal, ...valores }
+        await validarLimitesPlanLocal(tenantId, tabla, valoresCombinados, false)
+      }
+    }
 
     const indicesAModificar = new Set()
     filasAFiltrar.forEach((item) => {
@@ -375,7 +484,10 @@ async function updateLocal(tenantId, tabla, valores, filtros = []) {
 
     return { data: modificados, error: null }
   } catch (error) {
-    return { data: null, error: { code: 'LOCAL_DB_UPDATE_ERROR', message: error.message } }
+    const codigoError = error.message.includes('Límite de')
+      ? 'LIMITES_PLAN_EXCEDIDOS'
+      : 'LOCAL_DB_UPDATE_ERROR'
+    return { data: null, error: { code: codigoError, message: error.message } }
   }
 }
 
@@ -476,30 +588,41 @@ async function limpiarMarcaSucia(tenantId, tabla, id, fechaCopiaRemota) {
   }
 }
 
+// Mapeo específico de columnas de fecha incremental por tabla para resoluciones
+const COLUMNAS_FECHA_TABLA = {
+  accounting_journal_lines: 'created_at',
+  role_permissions: 'created_at'
+}
+
 /**
- * Aplica de forma atómica cambios remotos a la base de datos local (Last-Write-Wins).
- * @param {string} tenantId - Identificador de inquilino.
- * @param {string} tabla - Nombre de la tabla.
+ * Resuelve y aplica cambios remotos en la base de datos local usando Last-Write-Wins (LWW).
+ * @param {string} tenantId - Identificador del inquilino.
+ * @param {string} tabla - Nombre de la tabla de negocio.
  * @param {Object} registroRemoto - Registro descargado de la nube.
  */
 async function upsertRemotoLWW(tenantId, tabla, registroRemoto) {
   const filas = asegurarTablaCargada(tenantId, tabla)
   const indice = filas.findIndex((f) => f.id === registroRemoto.id)
   const ahora = new Date().toISOString()
+  const columnaFecha = COLUMNAS_FECHA_TABLA[tabla] || 'updated_at'
 
   if (indice === -1) {
     // Si no existe localmente, lo insertamos directo sin flag dirty
     const copia = {
       ...registroRemoto,
       _dirty: false,
-      updated_at: registroRemoto.updated_at || ahora
+      updated_at: registroRemoto.updated_at || registroRemoto.created_at || ahora
     }
     filas.push(copia)
     await guardarTablaEnDisco(tenantId, tabla)
   } else {
     const local = filas[indice]
-    const fechaLocal = new Date(local.updated_at || 0).getTime()
-    const fechaRemota = new Date(registroRemoto.updated_at || 0).getTime()
+    const fechaLocalRaw = local[columnaFecha] || local.updated_at || local.created_at || 0
+    const fechaRemotaRaw =
+      registroRemoto[columnaFecha] || registroRemoto.updated_at || registroRemoto.created_at || 0
+
+    const fechaLocal = new Date(fechaLocalRaw).getTime()
+    const fechaRemota = new Date(fechaRemotaRaw).getTime()
 
     // Lógica Last-Write-Wins
     if (fechaRemota > fechaLocal) {
@@ -508,7 +631,7 @@ async function upsertRemotoLWW(tenantId, tabla, registroRemoto) {
       filas[indice] = {
         ...registroRemoto,
         _dirty: false,
-        updated_at: registroRemoto.updated_at || ahora
+        updated_at: registroRemoto.updated_at || registroRemoto.created_at || ahora
       }
       await guardarTablaEnDisco(tenantId, tabla)
     } else if (fechaLocal === fechaRemota && local._dirty) {

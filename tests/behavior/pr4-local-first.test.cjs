@@ -467,3 +467,217 @@ test('sync: Last-Write-Wins mantiene cambio local si es más nuevo que el servid
 
   limpiarEntornoDb();
 });
+
+// ==========================================
+// PRUEBAS DE LÍMITES DE PLAN Y LICENCIAS (Issue #19)
+// ==========================================
+
+test('localdb: validación de límites de usuarios bloquea inserción si se excede el cupo y no hay crecimiento flexible', async () => {
+  prepararEntornoDb();
+
+  // Sembrar datos necesarios en las tablas locales
+  const planPrueba = {
+    id: 'plan-basico-id',
+    codigo_plan: 'basico',
+    nombre: 'Plan Básico',
+    limite_usuarios: 2,
+    limite_facturas_mes: 3,
+    precio: 0
+  };
+  await localdb.insertLocal(idInquilinoPrueba, 'planes_servicio', planPrueba);
+
+  const tenantPrueba = {
+    id: idInquilinoPrueba,
+    plan_id: 'plan-basico-id',
+    max_users: 2,
+    allow_more_users: false,
+    display_name: 'Inquilino Limitado'
+  };
+  await localdb.insertLocal(idInquilinoPrueba, 'tenants', tenantPrueba);
+
+  // Insertar los usuarios máximos permitidos (2 activos)
+  await localdb.insertLocal(idInquilinoPrueba, 'tenant_memberships', [
+    { id: 'miembro-1', app_user_id: 'usuario-1', status: 'active' },
+    { id: 'miembro-2', app_user_id: 'usuario-2', status: 'active' }
+  ]);
+
+  // Intentar insertar un tercer miembro activo (debe fallar)
+  const intentoExceder = await localdb.insertLocal(idInquilinoPrueba, 'tenant_memberships', {
+    id: 'miembro-3',
+    app_user_id: 'usuario-3',
+    status: 'active'
+  });
+
+  assert.ok(intentoExceder.error, 'Debe retornar un error al intentar exceder el cupo');
+  assert.equal(intentoExceder.error.code, 'LIMITES_PLAN_EXCEDIDOS', 'El código de error debe ser LIMITES_PLAN_EXCEDIDOS');
+  assert.ok(intentoExceder.error.message.includes('Límite de usuarios excedido'), 'El mensaje debe explicar el límite');
+
+  // Intentar actualizar un miembro inactivo a activo (debe fallar)
+  await localdb.insertLocal(idInquilinoPrueba, 'tenant_memberships', {
+    id: 'miembro-inactivo',
+    app_user_id: 'usuario-inactivo',
+    status: 'inactive'
+  });
+
+  const intentoActivar = await localdb.updateLocal(
+    idInquilinoPrueba,
+    'tenant_memberships',
+    { status: 'active' },
+    [{ column: 'id', op: 'eq', value: 'miembro-inactivo' }]
+  );
+
+  assert.ok(intentoActivar.error, 'Debe retornar un error al actualizar excediendo el cupo');
+  assert.equal(intentoActivar.error.code, 'LIMITES_PLAN_EXCEDIDOS', 'El código de error debe ser LIMITES_PLAN_EXCEDIDOS');
+
+  limpiarEntornoDb();
+});
+
+test('localdb: validación de límites de usuarios permite exceder cupo si allow_more_users es verdadero (crecimiento flexible)', async () => {
+  prepararEntornoDb();
+
+  const planPrueba = {
+    id: 'plan-basico-id',
+    codigo_plan: 'basico',
+    nombre: 'Plan Básico',
+    limite_usuarios: 2,
+    limite_facturas_mes: 3,
+    precio: 0
+  };
+  await localdb.insertLocal(idInquilinoPrueba, 'planes_servicio', planPrueba);
+
+  const tenantPrueba = {
+    id: idInquilinoPrueba,
+    plan_id: 'plan-basico-id',
+    max_users: 2,
+    allow_more_users: true, // Flexibilidad activada
+    display_name: 'Inquilino Con Crecimiento'
+  };
+  await localdb.insertLocal(idInquilinoPrueba, 'tenants', tenantPrueba);
+
+  // Insertar los usuarios máximos permitidos (2 activos)
+  await localdb.insertLocal(idInquilinoPrueba, 'tenant_memberships', [
+    { id: 'miembro-1', app_user_id: 'usuario-1', status: 'active' },
+    { id: 'miembro-2', app_user_id: 'usuario-2', status: 'active' }
+  ]);
+
+  // Insertar un tercer miembro activo (debe permitirse)
+  const intentoInsertar = await localdb.insertLocal(idInquilinoPrueba, 'tenant_memberships', {
+    id: 'miembro-3',
+    app_user_id: 'usuario-3',
+    status: 'active'
+  });
+
+  assert.equal(intentoInsertar.error, null, 'No debe fallar la inserción con flexibilidad de crecimiento activa');
+  assert.equal(intentoInsertar.data.length, 1, 'Debe retornar el registro insertado correctamente');
+
+  limpiarEntornoDb();
+});
+
+test('localdb: validación de límites de facturas mensuales bloquea inserciones que exceden el plan', async () => {
+  prepararEntornoDb();
+
+  const planPrueba = {
+    id: 'plan-basico-id',
+    codigo_plan: 'basico',
+    nombre: 'Plan Básico',
+    limite_usuarios: 2,
+    limite_facturas_mes: 3, // Máximo 3 facturas al mes
+    precio: 0
+  };
+  await localdb.insertLocal(idInquilinoPrueba, 'planes_servicio', planPrueba);
+
+  const tenantPrueba = {
+    id: idInquilinoPrueba,
+    plan_id: 'plan-basico-id',
+    max_users: 2,
+    allow_more_users: false,
+    display_name: 'Inquilino Con Limite Facturas'
+  };
+  await localdb.insertLocal(idInquilinoPrueba, 'tenants', tenantPrueba);
+
+  const fechaEsteMes = new Date().toISOString();
+
+  // Insertar 3 facturas en el mes actual
+  await localdb.insertLocal(idInquilinoPrueba, 'invoices', [
+    { id: 'factura-1', created_at: fechaEsteMes, total: 1000 },
+    { id: 'factura-2', created_at: fechaEsteMes, total: 2000 },
+    { id: 'factura-3', created_at: fechaEsteMes, total: 3000 }
+  ]);
+
+  // Intentar insertar una cuarta factura en el mes actual (debe fallar)
+  const intentoInsertarFactura = await localdb.insertLocal(idInquilinoPrueba, 'invoices', {
+    id: 'factura-4',
+    created_at: fechaEsteMes,
+    total: 4000
+  });
+
+  assert.ok(intentoInsertarFactura.error, 'Debe dar error por límite de facturas excedido');
+  assert.equal(intentoInsertarFactura.error.code, 'LIMITES_PLAN_EXCEDIDOS', 'El código de error debe ser LIMITES_PLAN_EXCEDIDOS');
+  assert.ok(intentoInsertarFactura.error.message.includes('Límite de facturas mensuales excedido'), 'El mensaje debe explicar el límite');
+
+  limpiarEntornoDb();
+});
+
+test('sync: flujo Pull maneja tablas sin updated_at usando created_at como columna incremental', async () => {
+  prepararEntornoDb();
+
+  const fechaAntigua = new Date(Date.now() - 100000).toISOString();
+  const fechaNueva = new Date().toISOString();
+
+  // Registro remoto en una tabla de solo inserción (sin updated_at)
+  const registroRemoto = {
+    id: 'linea-diario-1',
+    created_at: fechaNueva,
+    tenant_id: idInquilinoPrueba,
+    descripcion: 'Línea de diario en la nube'
+  };
+
+  // Mockear cliente Insforge
+  let columnaFiltrada = null;
+  const clienteMock = {
+    database: {
+      from: (tabla) => {
+        if (tabla === 'tenants') {
+          // Retornar información del inquilino simulada
+          return construirQueryMockeado([{ data: [{ id: idInquilinoPrueba, plan_id: 'plan-1' }], error: null }]);
+        }
+        if (tabla === 'planes_servicio') {
+          // Retornar catálogo de planes simulado
+          return construirQueryMockeado([{ data: [{ id: 'plan-1', codigo_plan: 'basico', limite_usuarios: 5, limite_facturas_mes: 100, activo: true }], error: null }]);
+        }
+        // Para las tablas sincronizables de negocio
+        return {
+          select: () => ({
+            eq: () => ({
+              gt: (columna, fecha) => {
+                columnaFiltrada = columna;
+                return construirQueryMockeado([{ data: [registroRemoto], error: null }]);
+              }
+            })
+          })
+        };
+      }
+    },
+    realtime: {
+      status: async () => ({ ok: true })
+    }
+  };
+
+  sync.establecerClienteInsforge(clienteMock, false);
+
+  // Ejecutar el flujo de Pull
+  const marcaCiclo = new Date().toISOString();
+  await sync.__testHooks.ejecutarFlujoPull(idInquilinoPrueba, marcaCiclo);
+
+  // Validaciones
+  assert.equal(columnaFiltrada, 'created_at', 'Debe haber filtrado usando created_at en lugar de updated_at para accounting_journal_lines');
+
+  // Validar que se guardó localmente y resolvió LWW usando created_at
+  const resLocal = await localdb.selectLocal(idInquilinoPrueba, 'accounting_journal_lines');
+  assert.equal(resLocal.data.length, 1, 'Debe haberse insertado localmente');
+  assert.equal(resLocal.data[0].descripcion, 'Línea de diario en la nube');
+
+  limpiarEntornoDb();
+});
+
+
