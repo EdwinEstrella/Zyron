@@ -680,6 +680,10 @@ const ZYRON_VIEW_KEYS = new Set([
     'pagos',
     'reportes',
     'contabilidad',
+    'cuentas-contables',
+    'cuentas_contables',
+    'cuentas',
+    'accounting',
     'config'
 ]);
 
@@ -1807,10 +1811,22 @@ const renderSidebar = async () => {
         : filterTenantNavForRole(state.navModulesTenant).filter((module) => module.key !== 'fiscal');
     for (const module of allowedModules) {
         const link = document.createElement('a');
-        link.className = `nav-module ${module.key === state.currentModule ? 'is-active' : ''}`;
+        let esModuloActual = module.key === state.currentModule;
+        let claveNormalizadaModulo = module.key;
+        let claveNormalizadaActual = state.currentModule;
+        if (claveNormalizadaModulo === 'cuentas-contables' || claveNormalizadaModulo === 'cuentas_contables' || claveNormalizadaModulo === 'cuentas' || claveNormalizadaModulo === 'accounting') {
+            claveNormalizadaModulo = 'contabilidad';
+        }
+        if (claveNormalizadaActual === 'cuentas-contables' || claveNormalizadaActual === 'cuentas_contables' || claveNormalizadaActual === 'cuentas' || claveNormalizadaActual === 'accounting') {
+            claveNormalizadaActual = 'contabilidad';
+        }
+        if (claveNormalizadaModulo === claveNormalizadaActual) {
+            esModuloActual = true;
+        }
+        link.className = `nav-module ${esModuloActual ? 'is-active' : ''}`;
         link.href = '#';
         link.dataset.module = module.key;
-        if (module.key === state.currentModule) {
+        if (esModuloActual) {
             link.setAttribute('aria-current', 'page');
         }
         const navKey = NAV_LABEL_KEYS[module.key];
@@ -1829,7 +1845,15 @@ const renderSidebar = async () => {
 
 const refreshSidebarSelection = () => {
     document.querySelectorAll('.nav-module[data-module]').forEach((el) => {
-        if (el.dataset.module === state.currentModule) {
+        let claveModuloElemento = el.dataset.module;
+        let claveModuloActual = state.currentModule;
+        if (claveModuloElemento === 'cuentas-contables' || claveModuloElemento === 'cuentas_contables' || claveModuloElemento === 'cuentas' || claveModuloElemento === 'accounting') {
+            claveModuloElemento = 'contabilidad';
+        }
+        if (claveModuloActual === 'cuentas-contables' || claveModuloActual === 'cuentas_contables' || claveModuloActual === 'cuentas' || claveModuloActual === 'accounting') {
+            claveModuloActual = 'contabilidad';
+        }
+        if (claveModuloElemento === claveModuloActual) {
             el.classList.add('is-active');
             el.setAttribute('aria-current', 'page');
         } else {
@@ -10569,7 +10593,10 @@ const renderContabilidadModule = async () => {
     for (const entry of entriesRaw) {
         const linesRes = await dbSelect({
             table: 'accounting_journal_lines',
-            filters: [{ op: 'eq', column: 'journal_entry_id', value: entry.id }]
+            filters: [
+                { op: 'eq', column: 'journal_entry_id', value: entry.id },
+                { op: 'eq', column: 'tenant_id', value: tid }
+            ]
         });
         const lines = linesRes?.data || [];
         const debitoTotal = lines.reduce((acc, curr) => acc + Number(curr.debit_amount || 0), 0);
@@ -10590,7 +10617,10 @@ const renderContabilidadModule = async () => {
         if (selectedEntry) {
             const linesRes = await dbSelect({
                 table: 'accounting_journal_lines',
-                filters: [{ op: 'eq', column: 'journal_entry_id', value: ui.editId }],
+                filters: [
+                    { op: 'eq', column: 'journal_entry_id', value: ui.editId },
+                    { op: 'eq', column: 'tenant_id', value: tid }
+                ],
                 order: { column: 'line_no', ascending: true }
             });
             selectedLines = linesRes?.data || [];
@@ -11266,7 +11296,10 @@ const renderContabilidadModule = async () => {
 
                     const originalLinesRes = await dbSelect({
                         table: 'accounting_journal_lines',
-                        filters: [{ op: 'eq', column: 'journal_entry_id', value: id }]
+                        filters: [
+                            { op: 'eq', column: 'journal_entry_id', value: id },
+                            { op: 'eq', column: 'tenant_id', value: tid }
+                        ]
                     });
                     const originalLines = originalLinesRes?.data || [];
 
@@ -12454,6 +12487,10 @@ const installZyronPopstateNavigation = () => {
 };
 
 const openModule = async (moduleKey, opts = {}) => {
+    // Normalizar las claves alternativas del modulo contable para evitar congelamientos si cambian en base de datos
+    if (moduleKey === 'cuentas-contables' || moduleKey === 'cuentas_contables' || moduleKey === 'cuentas' || moduleKey === 'accounting') {
+        moduleKey = 'contabilidad';
+    }
     const requested = moduleKey;
     console.log('[Zyron:openModule]', { requested, isSuperAdmin: state.isSuperAdmin, pending: isTenantPendingApproval() });
     if (isTenantPendingApproval()) {
