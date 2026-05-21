@@ -156,6 +156,10 @@ const state = {
     membership: null,
     currentTenantId: null,
     isSuperAdmin: false,
+    isStaff: false,
+    isGlobalAccess: false,
+    isImpersonating: false,
+    impersonatedTenantId: null,
     currentModule: 'panel',
     navModulesSuper: [...DEFAULT_NAV_SUPER],
     navModulesTenant: [...DEFAULT_NAV_TENANT],
@@ -215,7 +219,7 @@ const state = {
 };
 
 const isTenantPendingApproval = () =>
-    Boolean(state.appUser && !state.isSuperAdmin && String(state.appUser.status || '').toLowerCase() === 'pending');
+    Boolean(state.appUser && !state.isGlobalAccess && String(state.appUser.status || '').toLowerCase() === 'pending');
 
 /** Claves `tenant_memberships.role_key` → etiqueta humana (no confundir con `app_users.global_role`). */
 const TENANT_ROLE_LABELS = Object.freeze({
@@ -229,6 +233,7 @@ const TENANT_ROLE_LABELS = Object.freeze({
 const formatGlobalRoleForUi = (globalRole) => {
     const g = String(globalRole || 'user').toLowerCase();
     if (g === 'super_admin') return 'Superadmin de plataforma';
+    if (g === 'staff') return 'Soporte técnico';
     return 'Usuario de plataforma';
 };
 
@@ -243,11 +248,12 @@ const formatTenantRolePrimary = (membership) => {
 
 /** Texto para chip de cabecera y badge de módulos: separa rol en empresa vs tipo de cuenta. */
 const getSessionRolePresentation = () => {
-    if (state.isSuperAdmin) {
+    if (state.isGlobalAccess) {
+        const esSuper = state.isSuperAdmin;
         return {
-            primary: 'Superadmin',
+            primary: esSuper ? 'Superadmin' : 'Soporte técnico',
             secondary: 'Operación global (no es un rol dentro de una empresa)',
-            title: 'global_role: super_admin'
+            title: `global_role: ${state.appUser?.global_role || 'staff'}`
         };
     }
     const tenantLine = formatTenantRolePrimary(state.membership);
@@ -294,6 +300,30 @@ const filterTenantNavForRole = (modules) => {
 
 const updateSessionNoticeBanner = () => {
     if (!sessionNoticeBanner) return;
+    if (state.isImpersonating && state.appUser) {
+        sessionNoticeBanner.innerHTML = '';
+        const wrap = document.createElement('div');
+        wrap.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-amber-500 text-black px-4 py-2 rounded-lg font-medium';
+        const copy = document.createElement('div');
+        const tn = state.membershipsList.find((m) => String(m.tenant_id) === String(state.currentTenantId));
+        const name = tn?.tenant?.display_name || tn?.tenant?.legal_name || state.currentTenantId;
+        copy.innerHTML = `
+            <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-[20px]">support_agent</span>
+                <strong>MODO ASISTENCIA ACTIVO</strong>
+            </div>
+            <span class="text-xs">Asistiendo a la empresa <strong>${escapeHtml(String(name))}</strong> de forma segura.</span>
+        `;
+        const exitBtn = document.createElement('button');
+        exitBtn.type = 'button';
+        exitBtn.dataset.action = 'exit-assistance';
+        exitBtn.className = 'bg-black text-amber-500 hover:bg-black/80 px-3 py-1.5 rounded-md text-xs font-semibold';
+        exitBtn.textContent = 'Salir de asistencia';
+        wrap.append(copy, exitBtn);
+        sessionNoticeBanner.append(wrap);
+        sessionNoticeBanner.classList.remove('hidden');
+        return;
+    }
     if (state.realtimeStatus?.degraded && state.appUser && !isTenantPendingApproval()) {
         const primary = state.realtimeStatus.channels.find((ch) => ch.degraded || ch.status === 'degraded') || {};
         const retryAt = primary.nextRetryAt ? new Date(primary.nextRetryAt) : null;
@@ -325,6 +355,13 @@ const updateSessionNoticeBanner = () => {
 };
 
 sessionNoticeBanner?.addEventListener('click', async (event) => {
+    const exitBtn = event.target?.closest?.('[data-action="exit-assistance"]');
+    if (exitBtn) {
+        exitBtn.disabled = true;
+        exitBtn.textContent = 'Saliendo...';
+        await stopImpersonation();
+        return;
+    }
     const button = event.target?.closest?.('[data-action="retry-realtime"]');
     if (!button || button.disabled) return;
     const channel = button.dataset.channel || state._rtTenantChannel;
@@ -415,7 +452,7 @@ const showDashboard = () => {
     if (isTenantPendingApproval()) {
         document.title = 'Zyron | Pendiente de aprobacion';
     } else {
-        document.title = state.isSuperAdmin ? `Zyron — ${who} | Super Admin` : `Zyron — ${who} | Panel`;
+        document.title = state.isGlobalAccess ? `Zyron — ${who} | Soporte` : `Zyron — ${who} | Panel`;
     }
     updateTitlebarAndDocumentTitle();
     if (!isTenantPendingApproval()) {
@@ -517,6 +554,10 @@ const handleSessionExpired = async (error = {}) => {
     state.membershipsList = [];
     state.currentTenantId = null;
     state.isSuperAdmin = false;
+    state.isStaff = false;
+    state.isGlobalAccess = false;
+    state.isImpersonating = false;
+    state.impersonatedTenantId = null;
     state._rtTenantChannel = null;
     state.realtimeStatus = { degraded: false, channels: [] };
     showLogin();
@@ -570,7 +611,7 @@ const dbRpc = (functionName, args = {}) =>
     safeCall(() => window.insforgeAPI.database.rpc({ functionName, args }), `db.rpc:${functionName}`);
 const invokeFn = (slug, body = {}, method = 'POST') => {
     let b = body;
-    if (body && typeof body === 'object' && !state.isSuperAdmin && state.currentTenantId) {
+    if (body && typeof body === 'object' && !state.isGlobalAccess && state.currentTenantId) {
         const tid = body.tenantId;
         if (tid != null && String(tid) !== String(state.currentTenantId)) {
             zyronLog('invokeFn:tenantIdCoerced', { slug, requested: tid, enforced: state.currentTenantId });
@@ -797,7 +838,7 @@ const parseTenantPreferencesRaw = (raw) => {
 
 /** get_context vía dbSelect (misma fuente que manage-tenant-context en edge). */
 const loadTenantContext = async (tenantId) => {
-    if (!tenantId || state.isSuperAdmin) {
+    if (!tenantId || (state.isGlobalAccess && !state.isImpersonating)) {
         state.tenantContext = { defaultCurrency: 'DOP', defaultLocale: 'es', priceDisplayCurrency: null };
         return;
     }
@@ -831,7 +872,7 @@ const applyTenantPreferencesToDom = () => {
 };
 
 const loadTenantPreferences = async (tenantId) => {
-    if (!tenantId || state.isSuperAdmin) {
+    if (!tenantId || (state.isGlobalAccess && !state.isImpersonating)) {
         state.tenantPreferences = defaultTenantPreferencesObj();
         applyTenantPreferencesToDom();
         return state.tenantPreferences;
@@ -870,10 +911,96 @@ const switchWorkspaceTenant = async (tenantId) => {
     await openModule(state.currentModule, { skipHistory: true });
 };
 
+const startImpersonation = async (tenantId) => {
+    zyronLog('startImpersonation', { tenantId });
+    if (!tenantId) return;
+    try {
+        const appUserId = state.appUser.id;
+        const { data: existing } = await dbSelect({
+            table: 'tenant_memberships',
+            filters: [
+                { op: 'eq', column: 'tenant_id', value: tenantId },
+                { op: 'eq', column: 'app_user_id', value: appUserId }
+            ]
+        });
+        
+        if (!existing || existing.length === 0) {
+            await dbInsert({
+                table: 'tenant_memberships',
+                values: [{
+                    tenant_id: tenantId,
+                    app_user_id: appUserId,
+                    role_key: 'tenant_admin',
+                    status: 'active'
+                }]
+            });
+        } else if (existing[0].status !== 'active' || existing[0].role_key !== 'tenant_admin') {
+            await dbUpdate({
+                table: 'tenant_memberships',
+                values: { status: 'active', role_key: 'tenant_admin' },
+                filters: [{ op: 'eq', column: 'id', value: existing[0].id }]
+            });
+        }
+        
+        await appendAuditLogSafe(tenantId, 'soporte_iniciar', 'tenant', tenantId, { correo: state.appUser.email });
+        
+        state.isImpersonating = true;
+        state.impersonatedTenantId = tenantId;
+        
+        state.membershipsList = await loadActiveMembershipsDetailed(appUserId);
+        
+        await switchWorkspaceTenant(tenantId);
+        await openModule('panel');
+    } catch (err) {
+        console.error('[Zyron:startImpersonation]', err);
+        window.alert('No se pudo iniciar el modo asistencia de soporte.');
+    }
+};
+
+const stopImpersonation = async () => {
+    zyronLog('stopImpersonation', { tenantId: state.impersonatedTenantId });
+    const tenantId = state.impersonatedTenantId || state.currentTenantId;
+    try {
+        const appUserId = state.appUser.id;
+        
+        if (tenantId) {
+            await dbDelete({
+                table: 'tenant_memberships',
+                filters: [
+                    { op: 'eq', column: 'tenant_id', value: tenantId },
+                    { op: 'eq', column: 'app_user_id', value: appUserId }
+                ]
+            });
+            await appendAuditLogSafe(tenantId, 'soporte_finalizar', 'tenant', tenantId, { correo: state.appUser.email });
+        }
+        
+        state.isImpersonating = false;
+        state.impersonatedTenantId = null;
+        state.currentTenantId = null;
+        state.membership = null;
+        
+        state.membershipsList = [];
+        
+        try {
+            localStorage.removeItem(LAST_TENANT_KEY);
+        } catch (_) {}
+        
+        await loadTenantContext(null);
+        await loadTenantPreferences(null);
+        await renderSidebar();
+        updateSessionNoticeBanner();
+        
+        await openModule('empresas');
+    } catch (err) {
+        console.error('[Zyron:stopImpersonation]', err);
+        window.alert('Error al salir del modo asistencia de soporte.');
+    }
+};
+
 const renderTenantContextBar = () => {
     const mount = document.getElementById('tenant-context-mount');
     if (!mount) return;
-    if (state.isSuperAdmin || isTenantPendingApproval() || !state.currentTenantId) {
+    if ((state.isGlobalAccess && !state.isImpersonating) || isTenantPendingApproval() || !state.currentTenantId) {
         mount.classList.add('hidden');
         mount.innerHTML = '';
         return;
@@ -1397,7 +1524,7 @@ const getTenantNumberLocale = () => 'es-DO';
 const getTenantDateLocale = () => 'es-DO';
 
 const enforceTenantScopeOnSelect = (payload) => {
-    if (!payload?.table || state.isSuperAdmin || !state.currentTenantId) return payload;
+    if (!payload?.table || (state.isGlobalAccess && !state.isImpersonating) || !state.currentTenantId) return payload;
     if (!TENANT_SCOPED_TABLES.has(String(payload.table))) return payload;
     const filters = Array.isArray(payload.filters) ? [...payload.filters] : [];
     const cleaned = filters.filter((f) => !(String(f.column) === 'tenant_id' && String(f.op) === 'eq'));
@@ -1406,7 +1533,7 @@ const enforceTenantScopeOnSelect = (payload) => {
 };
 
 const enforceTenantScopeOnMutate = (payload) => {
-    if (!payload?.table || state.isSuperAdmin || !state.currentTenantId) return payload;
+    if (!payload?.table || (state.isGlobalAccess && !state.isImpersonating) || !state.currentTenantId) return payload;
     if (!TENANT_SCOPED_TABLES.has(String(payload.table))) return payload;
     const filters = Array.isArray(payload.filters) ? [...payload.filters] : [];
     const cleaned = filters.filter((f) => !(String(f.column) === 'tenant_id' && String(f.op) === 'eq'));
@@ -1415,7 +1542,7 @@ const enforceTenantScopeOnMutate = (payload) => {
 };
 
 const enforceTenantScopeOnInsert = (payload) => {
-    if (!payload?.table || state.isSuperAdmin || !state.currentTenantId) return payload;
+    if (!payload?.table || (state.isGlobalAccess && !state.isImpersonating) || !state.currentTenantId) return payload;
     if (!TENANT_SCOPED_TABLES.has(String(payload.table)) || payload.values == null) return payload;
     const vals = Array.isArray(payload.values) ? payload.values : [payload.values];
     const next = vals.map((v) => (v && typeof v === 'object' ? { ...v, tenant_id: state.currentTenantId } : v));
@@ -1540,12 +1667,14 @@ const bootstrapSession = async () => {
     state.sessionUser = currentUserData.user;
     state.appUser = appUser;
     state.isSuperAdmin = appUser.global_role === 'super_admin';
-    zyronLog('bootstrapSession:appUser', { id: appUser.id, status: appUser.status, isSuperAdmin: state.isSuperAdmin });
+    state.isStaff = appUser.global_role === 'staff';
+    state.isGlobalAccess = state.isSuperAdmin || state.isStaff;
+    zyronLog('bootstrapSession:appUser', { id: appUser.id, status: appUser.status, isSuperAdmin: state.isSuperAdmin, isStaff: state.isStaff });
 
     const accountStatus = String(appUser.status || '').toLowerCase();
-    const pendingGate = !state.isSuperAdmin && accountStatus === 'pending';
+    const pendingGate = !state.isGlobalAccess && accountStatus === 'pending';
 
-    if (!state.isSuperAdmin) {
+    if (!state.isGlobalAccess) {
         const blockedAccountStatuses = ['suspended', 'inactive', 'blocked'];
         if (blockedAccountStatuses.includes(accountStatus)) {
             zyronLog('bootstrapSession:accountBlocked', { status: appUser.status });
@@ -1608,7 +1737,7 @@ const bootstrapSession = async () => {
     if (!pendingGate) {
         void (async () => {
             await safeCall(() => window.insforgeAPI.realtime.connect(), 'realtime.connect');
-            if (state.isSuperAdmin) {
+            if (state.isGlobalAccess) {
                 await safeCall(() => window.insforgeAPI.realtime.subscribe('super-admin:alerts'), 'realtime.subscribe:super-admin');
             } else if (state.currentTenantId) {
                 const ch = `tenant:${state.currentTenantId}:domain-events`;
@@ -1626,7 +1755,7 @@ const bootstrapSession = async () => {
         zyronLog('bootstrapSession:success', { module: 'pending-gate' });
     } else {
         const firstSuper = state.navModulesSuper[0]?.key || 'empresas';
-        const defaultMod = state.isSuperAdmin ? firstSuper : state.tenantPreferences?.defaultModule || 'panel';
+        const defaultMod = state.isGlobalAccess ? firstSuper : state.tenantPreferences?.defaultModule || 'panel';
         const urlView = getZyronViewFromUrl();
         const target = urlView || defaultMod;
         void openModule(target, { replaceHistory: true });
@@ -1673,7 +1802,7 @@ const renderSidebar = async () => {
         refreshSidebarSelection();
         return;
     }
-    const allowedModules = state.isSuperAdmin
+    const allowedModules = (state.isGlobalAccess && !state.isImpersonating)
         ? state.navModulesSuper
         : filterTenantNavForRole(state.navModulesTenant).filter((module) => module.key !== 'fiscal');
     for (const module of allowedModules) {
@@ -1745,7 +1874,7 @@ const fmtMoneyPanel = (n, currencyCode = null) => {
 
 const renderPanelModule = async () => {
     zyronLog('render:panel:start', { isSuperAdmin: state.isSuperAdmin, tenantId: state.currentTenantId });
-    if (state.isSuperAdmin) {
+    if (state.isGlobalAccess && !state.isImpersonating) {
         dashboardContent.innerHTML = `<div class="flex flex-col gap-6" id="super-panel-root"></div>`;
         const root = document.getElementById('super-panel-root');
         const inv = await invokeFn('get-super-admin-overview', {}, 'GET');
@@ -2064,8 +2193,8 @@ const renderPanelModule = async () => {
 
 const renderEmpresasModule = async () => {
     zyronLog('render:empresas:start', {});
-    if (!state.isSuperAdmin) {
-        dashboardContent.innerHTML = `${renderModuleHeader('Empresas', 'Solo disponible para super admin')}<div class="rounded-lg bg-error-container/20 p-4 text-sm text-error">No tienes acceso a este modulo.</div>`;
+    if (!state.isGlobalAccess) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Empresas', 'Solo disponible para soporte técnico')}<div class="rounded-lg bg-error-container/20 p-4 text-sm text-error">No tienes acceso a este modulo.</div>`;
         zyronLog('render:empresas:forbidden', {});
         return;
     }
@@ -2161,7 +2290,8 @@ const renderEmpresasModule = async () => {
                                 <td class="py-3">${tenant.max_users}</td>
                                 <td class="py-3">${tenant.allow_more_users ? 'Si' : 'No'}</td>
                                 <td class="py-3 text-right">
-                                    <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white" data-tenant-edit="${tenant.id}">Editar</button>
+                                    <button type="button" class="rounded-md bg-amber-500 px-2 py-1 text-xs text-black font-semibold hover:bg-amber-400 mr-1" data-tenant-assist="${tenant.id}">Asistir</button>
+                                    <button type="button" class="rounded-md bg-primary px-2 py-1 text-xs text-white mr-1" data-tenant-edit="${tenant.id}">Editar</button>
                                     <button type="button" class="rounded-md bg-surface-container px-2 py-1 text-xs" data-tenant-row-action="${tenant.status === 'blocked' ? 'unblock' : 'block'}" data-tenant-id="${tenant.id}">
                                         ${tenant.status === 'blocked' ? 'Desbloquear' : 'Bloquear'}
                                     </button>
@@ -2389,6 +2519,16 @@ const renderEmpresasModule = async () => {
             if (!error) await renderEmpresasModule();
         });
     });
+
+    dashboardContent.querySelectorAll('[data-tenant-assist]').forEach((button) => {
+        button.addEventListener('click', async () => {
+            const tenantId = button.getAttribute('data-tenant-assist');
+            if (tenantId) {
+                await startImpersonation(tenantId);
+            }
+        });
+    });
+
     zyronLog('render:empresas:done', {
         approveButtons: dashboardContent.querySelectorAll('[data-request-action]').length
     });
@@ -2396,7 +2536,7 @@ const renderEmpresasModule = async () => {
 
 const renderSolicitudesModule = async () => {
     zyronLog('render:solicitudes:start', { isSuperAdmin: state.isSuperAdmin });
-    if (!state.isSuperAdmin) {
+    if (!state.isGlobalAccess) {
         dashboardContent.innerHTML = `${renderModuleHeader('Solicitudes', 'Acceso restringido')}
             <div class="rounded-xl bg-surface-container-low p-1">
                 <div class="rounded-lg bg-surface-container-lowest p-6 text-sm text-on-surface-variant">
@@ -2460,11 +2600,11 @@ const renderSolicitudesModule = async () => {
 
 const renderSuperAccessModule = async () => {
     zyronLog('render:superAccess:start', { isSuperAdmin: state.isSuperAdmin, tab: state.superAccessUi?.tab });
-    if (!state.isSuperAdmin) {
+    if (!state.isGlobalAccess) {
         dashboardContent.innerHTML = `${renderModuleHeader('Acceso', 'Acceso restringido')}
             <div class="rounded-xl bg-surface-container-low p-1">
                 <div class="rounded-lg bg-surface-container-lowest p-6 text-sm text-on-surface-variant">
-                    Solo un <strong class="text-on-surface">superadministrador de plataforma</strong> puede abrir el control de acceso global (multiusuario, roles y cumplimiento de permisos a nivel plataforma y entre empresas).
+                    Solo el <strong class="text-on-surface">personal de soporte técnico</strong> puede abrir el control de acceso global (multiusuario, roles y cumplimiento de permisos a nivel plataforma y entre empresas).
                 </div>
             </div>`;
         zyronLog('render:superAccess:forbidden', { role: state.membership?.role_key });
@@ -2550,7 +2690,7 @@ const renderSuperAccessModule = async () => {
                                       return `<tr class="border-b border-outline-variant/15" data-sa-mem-row="${escapeHtml(r.membership_id)}">
                                         <td class="py-2 px-2 max-w-[200px] truncate" title="${escapeHtml(String(tn))}">${escapeHtml(String(tn))}</td>
                                         <td class="py-2 px-2 font-mono text-xs">${escapeHtml(String(em))}</td>
-                                        <td class="py-2 px-2"><select data-sa-field="role" class="w-full max-w-[160px] rounded border border-outline-variant/40 px-1 py-1 text-xs">${roleKeys
+                                        <td class="py-2 px-2"><select data-sa-field="role" ${!state.isSuperAdmin ? 'disabled' : ''} class="w-full max-w-[160px] rounded border border-outline-variant/40 px-1 py-1 text-xs">${roleKeys
                                             .map(
                                                 (rk) =>
                                                     `<option value="${escapeHtml(rk)}" ${
@@ -2558,14 +2698,17 @@ const renderSuperAccessModule = async () => {
                                                     }>${escapeHtml(rk)}</option>`
                                             )
                                             .join('')}</select></td>
-                                        <td class="py-2 px-2"><select data-sa-field="status" class="rounded border border-outline-variant/40 px-1 py-1 text-xs">
+                                        <td class="py-2 px-2"><select data-sa-field="status" ${!state.isSuperAdmin ? 'disabled' : ''} class="rounded border border-outline-variant/40 px-1 py-1 text-xs">
                                             <option value="active" ${String(r.status || '').toLowerCase() === 'active' ? 'selected' : ''}>active</option>
                                             <option value="suspended" ${String(r.status || '').toLowerCase() === 'suspended' ? 'selected' : ''}>suspended</option>
                                         </select></td>
-                                        <td class="py-2 px-2"><input type="checkbox" data-sa-field="owner" class="h-4 w-4" ${r.is_owner ? 'checked' : ''} /></td>
-                                        <td class="py-2 px-2 text-right"><button type="button" data-sa-mem-save="${escapeHtml(
-                                            r.membership_id
-                                        )}" class="rounded-md bg-primary px-2 py-1 text-xs text-white">Guardar</button></td>
+                                        <td class="py-2 px-2"><input type="checkbox" data-sa-field="owner" ${!state.isSuperAdmin ? 'disabled' : ''} class="h-4 w-4" ${r.is_owner ? 'checked' : ''} /></td>
+                                        <td class="py-2 px-2 text-right">
+                                        ${state.isSuperAdmin 
+                                            ? `<button type="button" data-sa-mem-save="${escapeHtml(r.membership_id)}" class="rounded-md bg-primary px-2 py-1 text-xs text-white">Guardar</button>` 
+                                            : `<span class="text-xs text-on-surface-variant">Solo lectura</span>`
+                                        }
+                                        </td>
                                     </tr>`;
                                   })
                                   .join('')}
@@ -2611,6 +2754,7 @@ const renderSuperAccessModule = async () => {
     const platformTable = (list, opts) => {
         const { showDemote, showDelete } = opts || {};
         if (!list.length) return '<p class="text-sm text-on-surface-variant">Sin filas.</p>';
+        const isStrictSuper = state.isSuperAdmin;
         return `<table class="w-full text-left text-sm">
             <thead><tr class="border-b border-outline-variant/30">
                 <th class="py-2">Correo</th><th class="py-2">Tipo</th><th class="py-2">Estado</th><th class="py-2">Clave</th><th class="py-2 text-right">Acciones</th>
@@ -2628,14 +2772,14 @@ const renderSuperAccessModule = async () => {
                             String(user.email || '')
                         )}">Reset pass</button>
                         ${
-                            user.status !== 'pending' && user.global_role !== 'super_admin'
+                            user.status !== 'pending' && user.global_role !== 'super_admin' && isStrictSuper
                                 ? `<button type="button" class="rounded-md bg-surface-container px-2 py-1 text-xs" data-sa-toggle-status="${user.id}" data-sa-user-status="${escapeHtml(
                                       String(user.status || '')
                                   )}">${['inactive', 'suspended'].includes(String(user.status || '').toLowerCase()) ? 'Reactivar' : 'Suspender'}</button>`
                                 : ''
                         }
-                        ${showDemote && user.global_role === 'super_admin' && user.id !== state.appUser?.id ? `<button type="button" class="rounded-md border border-error/50 px-2 py-1 text-xs text-error" data-sa-demote="${user.id}">Degradar a usuario</button>` : ''}
-                        ${showDelete && user.global_role !== 'super_admin' ? `<button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-sa-delete-user="${user.id}">Eliminar</button>` : ''}
+                        ${showDemote && user.global_role === 'super_admin' && user.id !== state.appUser?.id && isStrictSuper ? `<button type="button" class="rounded-md border border-error/50 px-2 py-1 text-xs text-error" data-sa-demote="${user.id}">Degradar a usuario</button>` : ''}
+                        ${showDelete && user.global_role !== 'super_admin' && isStrictSuper ? `<button type="button" class="rounded-md bg-error px-2 py-1 text-xs text-white" data-sa-delete-user="${user.id}">Eliminar</button>` : ''}
                     </td>
                 </tr>`
                 )
@@ -12136,7 +12280,7 @@ const openModule = async (moduleKey, opts = {}) => {
         await renderPendingApprovalScreen();
         return;
     }
-    if (state.isSuperAdmin) {
+    if (state.isGlobalAccess && !state.isImpersonating) {
         const allow = new Set(state.navModulesSuper.map((m) => m.key));
         if (!allow.has(moduleKey)) {
             const fallback = state.navModulesSuper[0]?.key || 'empresas';
@@ -12144,16 +12288,16 @@ const openModule = async (moduleKey, opts = {}) => {
             moduleKey = fallback;
         }
     } else if (
-        !state.isSuperAdmin &&
+        !(state.isGlobalAccess && !state.isImpersonating) &&
         (moduleKey === 'acceso' || moduleKey === 'usuarios' || moduleKey === 'solicitudes' || moduleKey === 'empresas')
     ) {
         zyronLog('openModule:superOnlyModule', { from: moduleKey });
         moduleKey = 'panel';
-    } else if (!state.isSuperAdmin && moduleKey === 'roles') {
+    } else if (!(state.isGlobalAccess && !state.isImpersonating) && moduleKey === 'roles') {
         zyronLog('openModule:rolesAsConfigTab', { from: moduleKey });
         state.configUi = { ...state.configUi, tab: 'roles' };
         moduleKey = 'config';
-    } else if (!state.isSuperAdmin && moduleKey === 'fiscal') {
+    } else if (!(state.isGlobalAccess && !state.isImpersonating) && moduleKey === 'fiscal') {
         zyronLog('openModule:fiscalAsConfigTab', { from: moduleKey });
         state.configUi = { ...state.configUi, tab: 'impuestos' };
         moduleKey = 'config';
