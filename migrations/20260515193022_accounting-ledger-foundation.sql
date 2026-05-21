@@ -1,6 +1,6 @@
--- Accounting ledger foundation for Zyron.
--- Additive migration: chart of accounts, journals, posting rules, reversal links,
--- tenant-scoped RLS/RBAC, and deferred balance guards.
+-- Fundamento del libro mayor de contabilidad para Zyron.
+-- Migración aditiva: catálogo de cuentas, diarios, reglas de contabilización, enlaces de reversión,
+-- RLS con alcance de inquilino y protectores de balance diferidos.
 
 INSERT INTO public.permission_catalog (permission_key, label, description)
 VALUES
@@ -9,20 +9,6 @@ VALUES
 ON CONFLICT (permission_key) DO UPDATE
 SET label = excluded.label,
     description = excluded.description;
-
-UPDATE public.role_system_presets
-SET permission_keys = ARRAY(
-  SELECT DISTINCT key
-  FROM unnest(permission_keys || ARRAY['accounting.ledger.view']) AS key
-)
-WHERE role_key IN ('tenant_admin', 'manager', 'billing_agent', 'viewer');
-
-UPDATE public.role_system_presets
-SET permission_keys = ARRAY(
-  SELECT DISTINCT key
-  FROM unnest(permission_keys || ARRAY['accounting.ledger.manage']) AS key
-)
-WHERE role_key IN ('tenant_admin', 'manager');
 
 CREATE TABLE IF NOT EXISTS public.accounting_accounts (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -55,7 +41,7 @@ CREATE TABLE IF NOT EXISTS public.accounting_journal_entries (
   currency text NOT NULL DEFAULT 'DOP',
   reversal_of_entry_id uuid REFERENCES public.accounting_journal_entries(id) ON DELETE RESTRICT,
   posted_at timestamptz,
-  created_by uuid REFERENCES public.app_users(id) ON DELETE SET NULL,
+  created_by uuid REFERENCES public.tenant_users(id) ON DELETE SET NULL,
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now(),
@@ -183,15 +169,15 @@ BEGIN
   WHERE id = NEW.account_id;
 
   IF v_entry_tenant IS NULL OR v_account_tenant IS NULL THEN
-    RAISE EXCEPTION 'Journal entry and account are required for accounting line.';
+    RAISE EXCEPTION 'El asiento de diario y la cuenta son obligatorios para la línea contable.';
   END IF;
 
   IF NEW.tenant_id <> v_entry_tenant OR NEW.tenant_id <> v_account_tenant THEN
-    RAISE EXCEPTION 'Journal line tenant must match its entry and account.';
+    RAISE EXCEPTION 'El inquilino de la línea de diario debe coincidir con su asiento y cuenta.';
   END IF;
 
   IF NEW.currency <> v_entry_currency THEN
-    RAISE EXCEPTION 'Journal line currency must match journal entry currency.';
+    RAISE EXCEPTION 'La divisa de la línea de diario debe coincidir con la divisa del asiento de diario.';
   END IF;
 
   RETURN NEW;
@@ -231,11 +217,11 @@ BEGIN
   FROM public.zyron_journal_entry_totals(p_journal_entry_id);
 
   IF coalesce(v_totals.line_count, 0) < 2 THEN
-    RAISE EXCEPTION 'Posted journal entry % requires at least two lines.', p_journal_entry_id;
+    RAISE EXCEPTION 'El asiento contable publicado % requiere al menos dos líneas.', p_journal_entry_id;
   END IF;
 
   IF coalesce(v_totals.total_debit, 0) <> coalesce(v_totals.total_credit, 0) THEN
-    RAISE EXCEPTION 'Posted journal entry % is not balanced: debit %, credit %.', p_journal_entry_id, v_totals.total_debit, v_totals.total_credit;
+    RAISE EXCEPTION 'El asiento contable publicado % no está balanceado: débito %, crédito %.', p_journal_entry_id, v_totals.total_debit, v_totals.total_credit;
   END IF;
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public';
@@ -271,92 +257,150 @@ AFTER INSERT OR UPDATE OF status ON public.accounting_journal_entries
 DEFERRABLE INITIALLY DEFERRED
 FOR EACH ROW EXECUTE FUNCTION public.zyron_assert_journal_entry_balance_trigger();
 
+-- RLS (Row Level Security) Configuration
+
 ALTER TABLE public.accounting_accounts ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.accounting_journal_entries ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.accounting_journal_lines ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.accounting_posting_rules ENABLE ROW LEVEL SECURITY;
 
 DROP POLICY IF EXISTS "project_admin_policy" ON public.accounting_accounts;
-CREATE POLICY "project_admin_policy" ON public.accounting_accounts
-  FOR ALL TO project_admin
-  USING (true)
-  WITH CHECK (true);
+CREATE POLICY "project_admin_policy" ON public.accounting_accounts FOR ALL TO project_admin USING (true) WITH CHECK (true);
 
+DROP POLICY IF EXISTS "project_admin_policy" ON public.accounting_journal_entries;
+CREATE POLICY "project_admin_policy" ON public.accounting_journal_entries FOR ALL TO project_admin USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "project_admin_policy" ON public.accounting_journal_lines;
+CREATE POLICY "project_admin_policy" ON public.accounting_journal_lines FOR ALL TO project_admin USING (true) WITH CHECK (true);
+
+DROP POLICY IF EXISTS "project_admin_policy" ON public.accounting_posting_rules;
+CREATE POLICY "project_admin_policy" ON public.accounting_posting_rules FOR ALL TO project_admin USING (true) WITH CHECK (true);
+
+-- Políticas multi-inquilino de Zyron basadas en tenant_users
+
+-- 1. accounting_accounts
 DROP POLICY IF EXISTS "tenant_accounting_accounts_read" ON public.accounting_accounts;
 CREATE POLICY "tenant_accounting_accounts_read" ON public.accounting_accounts
   FOR SELECT TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.view'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_accounts.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
 
 DROP POLICY IF EXISTS "tenant_accounting_accounts_write" ON public.accounting_accounts;
 CREATE POLICY "tenant_accounting_accounts_write" ON public.accounting_accounts
   FOR ALL TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'))
-  WITH CHECK (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_accounts.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_accounts.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
 
-DROP POLICY IF EXISTS "project_admin_policy" ON public.accounting_journal_entries;
-CREATE POLICY "project_admin_policy" ON public.accounting_journal_entries
-  FOR ALL TO project_admin
-  USING (true)
-  WITH CHECK (true);
-
+-- 2. accounting_journal_entries
 DROP POLICY IF EXISTS "tenant_accounting_journal_entries_read" ON public.accounting_journal_entries;
 CREATE POLICY "tenant_accounting_journal_entries_read" ON public.accounting_journal_entries
   FOR SELECT TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.view'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_journal_entries.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
 
 DROP POLICY IF EXISTS "tenant_accounting_journal_entries_write" ON public.accounting_journal_entries;
 CREATE POLICY "tenant_accounting_journal_entries_write" ON public.accounting_journal_entries
   FOR ALL TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'))
-  WITH CHECK (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_journal_entries.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_journal_entries.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
 
-DROP POLICY IF EXISTS "project_admin_policy" ON public.accounting_journal_lines;
-CREATE POLICY "project_admin_policy" ON public.accounting_journal_lines
-  FOR ALL TO project_admin
-  USING (true)
-  WITH CHECK (true);
-
+-- 3. accounting_journal_lines
 DROP POLICY IF EXISTS "tenant_accounting_journal_lines_read" ON public.accounting_journal_lines;
 CREATE POLICY "tenant_accounting_journal_lines_read" ON public.accounting_journal_lines
   FOR SELECT TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.view'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_journal_lines.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
 
 DROP POLICY IF EXISTS "tenant_accounting_journal_lines_write" ON public.accounting_journal_lines;
 CREATE POLICY "tenant_accounting_journal_lines_write" ON public.accounting_journal_lines
   FOR ALL TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'))
-  WITH CHECK (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_journal_lines.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_journal_lines.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
 
-DROP POLICY IF EXISTS "project_admin_policy" ON public.accounting_posting_rules;
-CREATE POLICY "project_admin_policy" ON public.accounting_posting_rules
-  FOR ALL TO project_admin
-  USING (true)
-  WITH CHECK (true);
-
+-- 4. accounting_posting_rules
 DROP POLICY IF EXISTS "tenant_accounting_posting_rules_read" ON public.accounting_posting_rules;
 CREATE POLICY "tenant_accounting_posting_rules_read" ON public.accounting_posting_rules
   FOR SELECT TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.view'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_posting_rules.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
 
 DROP POLICY IF EXISTS "tenant_accounting_posting_rules_write" ON public.accounting_posting_rules;
 CREATE POLICY "tenant_accounting_posting_rules_write" ON public.accounting_posting_rules
   FOR ALL TO authenticated
-  USING (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'))
-  WITH CHECK (tenant_id IN (SELECT public.get_user_tenants()) AND public.check_user_permission(tenant_id, 'accounting.ledger.manage'));
+  USING (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_posting_rules.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ))
+  WITH CHECK (EXISTS (
+    SELECT 1 FROM public.tenant_users tu
+    WHERE tu.tenant_id = accounting_posting_rules.tenant_id
+      AND tu.activo IS TRUE
+      AND (tu.auth_user_id = public.cloudix_auth_user_id() OR (tu.auth_user_id IS NULL AND lower(tu.email) = lower(public.cloudix_auth_email())))
+  ));
+
+-- Semillas predeterminadas
 
 INSERT INTO public.accounting_accounts (tenant_id, code, name, account_type, normal_balance, is_system, metadata)
 SELECT t.id, seed.code, seed.name, seed.account_type, seed.normal_balance, true, seed.metadata
 FROM public.tenants t
 CROSS JOIN (VALUES
-  ('1010', 'Cash and bank', 'asset', 'debit', '{"category":"cash"}'::jsonb),
-  ('1100', 'Accounts receivable', 'asset', 'debit', '{"category":"receivables"}'::jsonb),
-  ('1300', 'Inventory', 'asset', 'debit', '{"category":"inventory"}'::jsonb),
-  ('2100', 'Tax payable', 'liability', 'credit', '{"category":"tax"}'::jsonb),
-  ('2200', 'Accounts payable', 'liability', 'credit', '{"category":"payables"}'::jsonb),
-  ('3100', 'Owner equity', 'equity', 'credit', '{"category":"equity"}'::jsonb),
-  ('4100', 'Sales revenue', 'revenue', 'credit', '{"category":"sales"}'::jsonb),
-  ('5100', 'Cost of goods sold', 'expense', 'debit', '{"category":"cogs"}'::jsonb),
-  ('5200', 'Operating expenses', 'expense', 'debit', '{"category":"opex"}'::jsonb)
+  ('1010', 'Efectivo y equivalentes de efectivo', 'asset', 'debit', '{"category":"cash"}'::jsonb),
+  ('1100', 'Cuentas por cobrar comerciales', 'asset', 'debit', '{"category":"receivables"}'::jsonb),
+  ('1300', 'Inventarios', 'asset', 'debit', '{"category":"inventory"}'::jsonb),
+  ('2100', 'Impuestos por pagar', 'liability', 'credit', '{"category":"tax"}'::jsonb),
+  ('2200', 'Cuentas por pagar comerciales', 'liability', 'credit', '{"category":"payables"}'::jsonb),
+  ('3100', 'Capital social', 'equity', 'credit', '{"category":"equity"}'::jsonb),
+  ('4100', 'Ingresos por ventas', 'revenue', 'credit', '{"category":"sales"}'::jsonb),
+  ('5100', 'Costo de ventas', 'expense', 'debit', '{"category":"cogs"}'::jsonb),
+  ('5200', 'Gastos operativos', 'expense', 'debit', '{"category":"opex"}'::jsonb)
 ) AS seed(code, name, account_type, normal_balance, metadata)
 ON CONFLICT (tenant_id, code) DO NOTHING;
 
@@ -364,11 +408,11 @@ INSERT INTO public.accounting_posting_rules (tenant_id, source_type, event_type,
 SELECT t.id, seed.source_type, seed.event_type, seed.debit_code, seed.credit_code, seed.description, seed.metadata
 FROM public.tenants t
 CROSS JOIN (VALUES
-  ('invoice', 'issued_receivable', '1100', '4100', 'Invoice issued: debit accounts receivable and credit sales revenue.', '{"requires_tax_split":true}'::jsonb),
-  ('invoice', 'tax_payable', '1100', '2100', 'Invoice tax component: debit receivable and credit tax payable.', '{"applies_when_tax_amount_positive":true}'::jsonb),
-  ('payment', 'received', '1010', '1100', 'Payment received: debit cash/bank and credit accounts receivable.', '{}'::jsonb),
-  ('inventory', 'cogs', '5100', '1300', 'Inventory sale cost: debit cost of goods sold and credit inventory.', '{}'::jsonb),
-  ('reversal', 'reverse_entry', '9999', '9999', 'Reversal entries copy original lines with debit and credit inverted.', '{"uses_original_accounts":true}'::jsonb)
+  ('invoice', 'issued_receivable', '1100', '4100', 'Factura emitida: débito a cuentas por cobrar comerciales y crédito a ingresos por ventas.', '{"requires_tax_split":true}'::jsonb),
+  ('invoice', 'tax_payable', '1100', '2100', 'Componente de impuestos de factura: débito a cuentas por cobrar comerciales y crédito a impuestos por pagar.', '{"applies_when_tax_amount_positive":true}'::jsonb),
+  ('payment', 'received', '1010', '1100', 'Pago recibido: débito a efectivo y equivalentes y crédito a cuentas por cobrar comerciales.', '{}'::jsonb),
+  ('inventory', 'cogs', '5100', '1300', 'Costo de venta de inventario: débito a costo de ventas y crédito a inventarios.', '{}'::jsonb),
+  ('reversal', 'reverse_entry', '9999', '9999', 'Los asientos de reversión copian las líneas originales con el débito y el crédito invertidos.', '{"uses_original_accounts":true}'::jsonb)
 ) AS seed(source_type, event_type, debit_code, credit_code, description, metadata)
 ON CONFLICT (tenant_id, source_type, event_type) DO UPDATE
 SET debit_account_code = excluded.debit_account_code,
