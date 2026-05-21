@@ -52,7 +52,9 @@ const DEFAULT_PERMISSION_UI = Object.freeze([
     { key: 'estimates.manage', label: 'Gestion de presupuestos' },
     { key: 'inventory.manage', label: 'Inventario' },
     { key: 'reports.view', label: 'Reportes' },
-    { key: 'fiscal.manage', label: 'Fiscal / cumplimiento' }
+    { key: 'fiscal.manage', label: 'Fiscal / cumplimiento' },
+    { key: 'accounting.ledger.view', label: 'Ver contabilidad' },
+    { key: 'accounting.ledger.manage', label: 'Gestionar contabilidad' }
 ]);
 
 const DEFAULT_NAV_SUPER = Object.freeze([
@@ -70,6 +72,7 @@ const DEFAULT_NAV_TENANT = Object.freeze([
     { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
     { key: 'clientes', label: 'Clientes', icon: 'groups' },
     { key: 'reportes', label: 'Reportes', icon: 'monitoring' },
+    { key: 'contabilidad', label: 'Contabilidad', icon: 'account_balance' },
     { key: 'config', label: 'Configuracion', icon: 'settings' }
 ]);
 
@@ -635,6 +638,7 @@ const ZYRON_VIEW_KEYS = new Set([
     'clientes',
     'pagos',
     'reportes',
+    'contabilidad',
     'config'
 ]);
 
@@ -653,6 +657,7 @@ const ZYRON_MODULE_FRAGMENTS = {
     clientes: 'fragments/outlet-skeleton.html',
     pagos: 'fragments/outlet-skeleton.html',
     reportes: 'fragments/outlet-skeleton.html',
+    contabilidad: 'fragments/outlet-skeleton.html',
     config: 'fragments/outlet-skeleton.html'
 };
 
@@ -813,7 +818,7 @@ const loadTenantContext = async (tenantId) => {
     const cur = String(c.defaultCurrency || 'DOP').toUpperCase();
     state.tenantContext = {
         defaultCurrency: /^[A-Z]{3}$/.test(cur) ? cur : 'DOP',
-        defaultLocale: c.defaultLocale === 'en' ? 'en' : 'es',
+        defaultLocale: 'es',
         priceDisplayCurrency:
             c.priceDisplayCurrency && /^[A-Z]{3}$/.test(String(c.priceDisplayCurrency).toUpperCase())
                 ? String(c.priceDisplayCurrency).toUpperCase()
@@ -1319,7 +1324,11 @@ const TENANT_SCOPED_TABLES = new Set([
     'measurement_units',
     'customer_segment_members',
     'custom_report_definitions',
-    'report_exports'
+    'report_exports',
+    'accounting_accounts',
+    'accounting_journal_entries',
+    'accounting_journal_lines',
+    'accounting_posting_rules'
 ]);
 
 const ZYRON_I18N = Object.freeze({
@@ -1331,6 +1340,7 @@ const ZYRON_I18N = Object.freeze({
         'nav.inventory': 'Inventario',
         'nav.customers': 'Clientes',
         'nav.reports': 'Reportes',
+        'nav.contabilidad': 'Contabilidad',
         'nav.fiscal': 'Fiscal',
         'nav.config': 'Configuracion',
         'iso.switch': 'Empresa activa',
@@ -1343,23 +1353,24 @@ const ZYRON_I18N = Object.freeze({
         'iso.workspace': 'Espacio de trabajo'
     },
     en: {
-        'nav.panel': 'Dashboard',
-        'nav.invoices': 'Invoices',
-        'nav.estimates': 'Estimates',
-        'nav.payments': 'Payments',
-        'nav.inventory': 'Inventory',
-        'nav.customers': 'Customers',
-        'nav.reports': 'Reports',
-        'nav.fiscal': 'Tax / compliance',
-        'nav.config': 'Settings',
-        'iso.switch': 'Active company',
-        'iso.currency': 'Currency',
-        'iso.locale': 'Language',
-        'iso.saveRegional': 'Save regional settings',
-        'iso.saved': 'Regional preferences saved.',
-        'iso.regionalTitle': 'Regional (currency & language)',
-        'iso.regionalSub': 'Number format and navigation labels. Data remains tenant-scoped.',
-        'iso.workspace': 'Workspace'
+        'nav.panel': 'Panel principal',
+        'nav.invoices': 'Facturas',
+        'nav.estimates': 'Presupuestos',
+        'nav.payments': 'Pagos y cobros',
+        'nav.inventory': 'Inventario',
+        'nav.customers': 'Clientes',
+        'nav.reports': 'Reportes',
+        'nav.contabilidad': 'Contabilidad',
+        'nav.fiscal': 'Fiscal',
+        'nav.config': 'Configuracion',
+        'iso.switch': 'Empresa activa',
+        'iso.currency': 'Moneda',
+        'iso.locale': 'Idioma',
+        'iso.saveRegional': 'Guardar regional',
+        'iso.saved': 'Preferencias regionales guardadas.',
+        'iso.regionalTitle': 'Regional (moneda e idioma)',
+        'iso.regionalSub': 'Formato de numeros y textos de navegacion. Los datos siguen filtrados por empresa.',
+        'iso.workspace': 'Espacio de trabajo'
     }
 });
 
@@ -1371,18 +1382,19 @@ const NAV_LABEL_KEYS = Object.freeze({
     inventario: 'nav.inventory',
     clientes: 'nav.customers',
     reportes: 'nav.reports',
+    contabilidad: 'nav.contabilidad',
     fiscal: 'nav.fiscal',
     config: 'nav.config'
 });
 
 const tr = (key) => {
-    const loc = state.tenantContext?.defaultLocale === 'en' ? 'en' : 'es';
+    const loc = 'es';
     const pack = ZYRON_I18N[loc] || ZYRON_I18N.es;
     return pack[key] || ZYRON_I18N.es[key] || key;
 };
 
-const getTenantNumberLocale = () => (state.tenantContext?.defaultLocale === 'en' ? 'en-US' : 'es-DO');
-const getTenantDateLocale = () => (state.tenantContext?.defaultLocale === 'en' ? 'en-US' : 'es-DO');
+const getTenantNumberLocale = () => 'es-DO';
+const getTenantDateLocale = () => 'es-DO';
 
 const enforceTenantScopeOnSelect = (payload) => {
     if (!payload?.table || state.isSuperAdmin || !state.currentTenantId) return payload;
@@ -10213,6 +10225,1347 @@ const renderSimpleCrudModule = async (key, table, title, subtitle, columns) => {
     zyronLog('render:simpleCrud:done', { key, table, rowCount: (rows || []).length });
 };
 
+const NOMENCLATURA_ESTANDAR = [
+    // ACTIVO
+    { code: "1", name: "ACTIVO", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1", name: "CORRIENTE", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.1", name: "Caja", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.1.1", name: "Caja General", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.1.2", name: "Caja Chica", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.2", name: "Bancos", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.3", name: "Clientes", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.4", name: "Cuentas por Cobrar", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.4.1", name: "Anticipos sobre compras", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.4.2", name: "Anticipos a Empleados", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.5", name: "Deudores Varios", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.6", name: "Inventarios", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.6.1", name: "Inventario de Mercaderías", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.6.2", name: "Mercadería en Tránsito", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.6.3", name: "Otros Productos", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.7", name: "Papelería y Útiles", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.8", name: "Material de Empaque", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.9", name: "Gastos de Organización", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.10", name: "Crédito Fiscal", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.11", name: "Primas y Seguros", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.12", name: "Otros Gastos Anticipados", account_type: "asset", normal_balance: "debit" },
+    { code: "1.1.13", name: "Déficit Acumulado", account_type: "asset", normal_balance: "debit" },
+    { code: "1.2", name: "NO CORRIENTE", account_type: "asset", normal_balance: "debit" },
+    { code: "1.2.1", name: "Terrenos", account_type: "asset", normal_balance: "debit" },
+    { code: "1.2.2", name: "Edificios", account_type: "asset", normal_balance: "debit" },
+    { code: "1.2.3", name: "Vehículos", account_type: "asset", normal_balance: "debit" },
+    { code: "1.2.4", name: "Mobiliario y Equipo de Oficina", account_type: "asset", normal_balance: "debit" },
+    { code: "1.2.5", name: "Mobiliario y Equipo de Tienda", account_type: "asset", normal_balance: "debit" },
+    { code: "1.2.6", name: "Equipo de Computación", account_type: "asset", normal_balance: "debit" },
+
+    // PASIVO
+    { code: "2", name: "PASIVO", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1", name: "PASIVO CORRIENTE", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.1", name: "Proveedores", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.2", name: "Cuentas por Pagar", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.3", name: "Sueldos y Salarios por Pagar", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.4", name: "Impuestos y Contribuciones por Pagar", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.5", name: "Descuentos sobre Sueldos y Salarios", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.5.1", name: "Retención Cuota Laboral IGSS", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.5.2", name: "Otros Descuentos", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.6", name: "Cuota Patronal por Pagar", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.7", name: "Documentos por Pagar", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.8", name: "Anticipos sobre Ventas", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.9", name: "Otros Ingresos Anticipados", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.10", name: "Débito Fiscal", account_type: "liability", normal_balance: "credit" },
+    { code: "2.1.11", name: "Impuestos por Pagar", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2", name: "PASIVO NO CORRIENTE", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.1", name: "Préstamos Bancarios", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.1.1", name: "Préstamos Fiduciarios", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.1.2", name: "Préstamos Hipotecarios", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.2", name: "Préstamos No Bancarios", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.3", name: "Otras Obligaciones a Largo Plazo", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.4", name: "Cuenta Personal", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.5", name: "Depreciaciones Acumuladas", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.5.1", name: "Depreciación Acumulada Edificios", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.5.2", name: "Depreciación Acumulada Vehículos", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.5.3", name: "Depreciación Acumulada Mobiliario y Equipo de Oficina", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.5.4", name: "Depreciación Acumulada Mobiliario y Equipo de Tienda", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.5.5", name: "Depreciación Acumulada Equipo de Computación", account_type: "liability", normal_balance: "credit" },
+    { code: "2.2.5.6", name: "Amortización Acumulada Gastos de Organización", account_type: "liability", normal_balance: "credit" },
+
+    // PATRIMONIO Y RESERVAS
+    { code: "3", name: "PATRIMONIO Y RESERVAS", account_type: "equity", normal_balance: "credit" },
+    { code: "3.1", name: "PATRIMONIO", account_type: "equity", normal_balance: "credit" },
+    { code: "3.1.1", name: "Patrimonio", account_type: "equity", normal_balance: "credit" },
+    { code: "3.1.1.1", name: "Jiménez, Cuenta Capital", account_type: "equity", normal_balance: "credit" },
+    { code: "3.1.2", name: "Reservas", account_type: "equity", normal_balance: "credit" },
+    { code: "3.1.2.3", name: "Reserva para Impuestos y Multas", account_type: "equity", normal_balance: "credit" },
+    { code: "3.1.2.4", name: "Reserva para Indemnizaciones y Prestaciones", account_type: "equity", normal_balance: "credit" },
+    { code: "3.1.2.8", name: "Superávit", account_type: "equity", normal_balance: "credit" },
+
+    // INGRESOS
+    { code: "4", name: "INGRESOS", account_type: "revenue", normal_balance: "credit" },
+    { code: "4.1", name: "Ventas", account_type: "revenue", normal_balance: "credit" },
+    { code: "4.2", name: "Ingresos Varios", account_type: "revenue", normal_balance: "credit" },
+
+    // GASTOS DE ADMINISTRACIÓN
+    { code: "5", name: "GASTOS DE ADMINISTRACIÓN", account_type: "expense", normal_balance: "debit" },
+    { code: "5.1", name: "Sueldos, Cuotas, Prestaciones", account_type: "expense", normal_balance: "debit" },
+    { code: "5.2", name: "Honorarios", account_type: "expense", normal_balance: "debit" },
+    { code: "5.3", name: "Papelería y Útiles de Oficina", account_type: "expense", normal_balance: "debit" },
+    { code: "5.4", name: "Viáticos", account_type: "expense", normal_balance: "debit" },
+    { code: "5.5", name: "Combustibles y Lubricantes", account_type: "expense", normal_balance: "debit" },
+    { code: "5.6", name: "Bonificaciones", account_type: "expense", normal_balance: "debit" },
+    { code: "5.7", name: "Depreciaciones", account_type: "expense", normal_balance: "debit" },
+    { code: "5.7.1", name: "Edificios", account_type: "expense", normal_balance: "debit" },
+    { code: "5.7.2", name: "Vehículos", account_type: "expense", normal_balance: "debit" },
+    { code: "5.7.3", name: "Mobiliario y Equipo de Oficina", account_type: "expense", normal_balance: "debit" },
+    { code: "5.7.4", name: "Mobiliario y Equipo de Tienda", account_type: "expense", normal_balance: "debit" },
+    { code: "5.7.5", name: "Equipo de Computación", account_type: "expense", normal_balance: "debit" },
+    { code: "5.8", name: "Reparaciones y Repuestos", account_type: "expense", normal_balance: "debit" },
+    { code: "5.8.1", name: "Edificios", account_type: "expense", normal_balance: "debit" },
+    { code: "5.8.2", name: "Vehículos", account_type: "expense", normal_balance: "debit" },
+    { code: "5.8.3", name: "Mobiliario y Equipo de Oficina", account_type: "expense", normal_balance: "debit" },
+    { code: "5.8.4", name: "Mobiliario y Equipo de Tienda", account_type: "expense", normal_balance: "debit" },
+    { code: "5.8.5", name: "Equipo de Computación", account_type: "expense", normal_balance: "debit" },
+    { code: "5.9", name: "Amortizaciones", account_type: "expense", normal_balance: "debit" },
+    { code: "5.9.1", name: "Gastos de Organización", account_type: "expense", normal_balance: "debit" },
+
+    // GASTOS DE VENTAS
+    { code: "6", name: "GASTOS DE VENTAS", account_type: "expense", normal_balance: "debit" },
+    { code: "6.1", name: "Sueldos, Cuotas, Prestaciones", account_type: "expense", normal_balance: "debit" },
+    { code: "6.2", name: "Comisiones sobre Ventas", account_type: "expense", normal_balance: "debit" },
+    { code: "6.3", name: "Impuestos y Contribuciones sobre Ventas", account_type: "expense", normal_balance: "debit" },
+    { code: "6.4", name: "Material de Empaque", account_type: "expense", normal_balance: "debit" },
+
+    // GASTOS DE FINANCIAMIENTO
+    { code: "7", name: "GASTOS DE FINANCIAMIENTO", account_type: "expense", normal_balance: "debit" },
+    { code: "7.1", name: "Intereses y Descuentos", account_type: "expense", normal_balance: "debit" },
+    { code: "7.2", name: "Gestión de Préstamos", account_type: "expense", normal_balance: "debit" },
+    { code: "7.3", name: "Comisiones Pagadas", account_type: "expense", normal_balance: "debit" },
+
+    // OTROS GASTOS
+    { code: "8", name: "OTROS GASTOS", account_type: "expense", normal_balance: "debit" },
+    { code: "8.1", name: "Indemnizaciones", account_type: "expense", normal_balance: "debit" },
+    { code: "8.2", name: "Rectificación Ejercicios Anteriores", account_type: "expense", normal_balance: "debit" },
+
+    // RESULTADOS DEL EJERCICIO
+    { code: "9", name: "RESULTADOS DEL EJERCICIO", account_type: "equity", normal_balance: "credit" },
+    { code: "9.1", name: "Ganancia del Ejercicio", account_type: "equity", normal_balance: "credit" },
+    { code: "9.2", name: "Pérdida del Ejercicio", account_type: "expense", normal_balance: "debit" }
+];
+
+const renderContabilidadModule = async () => {
+    zyronLog('render:contabilidad:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Contabilidad', 'Necesitas seleccionar una empresa activa')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+
+    if (!state.contabilidadUi) {
+        state.contabilidadUi = {
+            tab: 'cuentas',
+            q: '',
+            asientosQ: '',
+            sheet: null,
+            editId: null
+        };
+    }
+    const ui = state.contabilidadUi;
+
+    // Cargar Catálogo de Cuentas
+    const accountsRes = await dbSelect({
+        table: 'accounting_accounts',
+        filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+        order: { column: 'code', ascending: true }
+    });
+    const accounts = accountsRes?.data || [];
+
+    // Cargar Asientos Contables
+    const entriesRes = await dbSelect({
+        table: 'accounting_journal_entries',
+        filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+        order: { column: 'entry_date', ascending: false }
+    });
+    const entriesRaw = entriesRes?.data || [];
+
+    // Cargar totales para los asientos de forma asíncrona
+    const entries = [];
+    for (const entry of entriesRaw) {
+        const linesRes = await dbSelect({
+            table: 'accounting_journal_lines',
+            filters: [{ op: 'eq', column: 'journal_entry_id', value: entry.id }]
+        });
+        const lines = linesRes?.data || [];
+        const debitoTotal = lines.reduce((acc, curr) => acc + Number(curr.debit_amount || 0), 0);
+        const creditoTotal = lines.reduce((acc, curr) => acc + Number(curr.credit_amount || 0), 0);
+        entries.push({
+            ...entry,
+            debitoTotal,
+            creditoTotal,
+            linesCount: lines.length
+        });
+    }
+
+    // Si el detalle del asiento está abierto, cargamos sus líneas
+    let selectedEntry = null;
+    let selectedLines = [];
+    if (ui.sheet === 'detalle_asiento' && ui.editId) {
+        selectedEntry = entries.find(e => e.id === ui.editId);
+        if (selectedEntry) {
+            const linesRes = await dbSelect({
+                table: 'accounting_journal_lines',
+                filters: [{ op: 'eq', column: 'journal_entry_id', value: ui.editId }],
+                order: { column: 'line_no', ascending: true }
+            });
+            selectedLines = linesRes?.data || [];
+        }
+    }
+
+    const formatMoneda = (val) => {
+        return 'RD$ ' + Number(val || 0).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    };
+
+    const traducirTipoCuenta = (type) => {
+        const map = {
+            'asset': 'Activo',
+            'liability': 'Pasivo',
+            'equity': 'Patrimonio',
+            'revenue': 'Ingreso',
+            'expense': 'Gasto'
+        };
+        return map[type] || type;
+    };
+
+    const traducirBalanceNormal = (bal) => {
+        return bal === 'debit' ? 'Débito' : 'Crédito';
+    };
+
+    const traducirEstadoAsiento = (status) => {
+        const map = {
+            'draft': 'Borrador',
+            'posted': 'Publicado',
+            'reversed': 'Reversado'
+        };
+        return map[status] || status;
+    };
+
+    const closeSheet = () => {
+        ui.sheet = null;
+        ui.editId = null;
+        void renderContabilidadModule();
+    };
+
+    // Filtrar Cuentas
+    const qLower = ui.q.toLowerCase().trim();
+    const filteredAccounts = accounts.filter(acc => {
+        if (!qLower) return true;
+        return acc.code.toLowerCase().includes(qLower) || acc.name.toLowerCase().includes(qLower);
+    });
+
+    // Filtrar Asientos
+    const aQLower = ui.asientosQ.toLowerCase().trim();
+    const filteredEntries = entries.filter(ent => {
+        if (!aQLower) return true;
+        return (ent.entry_number || '').toLowerCase().includes(aQLower) || (ent.memo || '').toLowerCase().includes(aQLower);
+    });
+
+    const activeTabClass = 'border-b-2 border-primary text-primary font-semibold';
+    const inactiveTabClass = 'text-on-surface-variant hover:text-on-surface';
+
+    let contentHtml = '';
+
+    if (ui.tab === 'cuentas') {
+        const noCuentas = accounts.length === 0;
+        const rowsHtml = filteredAccounts.map(acc => {
+            const parts = acc.code.split('.');
+            const indent = (parts.length - 1) * 16; // Sangría en px basada en nivel
+            const isParent = accounts.some(a => a.parent_account_id === acc.id);
+            return `
+                <tr class="border-b border-outline-variant/20 hover:bg-surface-container-low/40 transition-colors">
+                    <td class="py-3 px-4 font-mono text-xs text-on-surface-variant">${escapeHtml(acc.code)}</td>
+                    <td class="py-3 px-4">
+                        <div style="padding-left: ${indent}px" class="flex items-center gap-2 ${isParent ? 'font-semibold text-on-surface' : 'text-on-surface-variant'}">
+                            ${isParent ? '<span class="material-symbols-outlined text-xs select-none">folder</span>' : '<span class="material-symbols-outlined text-xs select-none">description</span>'}
+                            <span>${escapeHtml(acc.name)}</span>
+                        </div>
+                    </td>
+                    <td class="py-3 px-4 text-xs font-medium text-on-surface-variant">${escapeHtml(traducirTipoCuenta(acc.account_type))}</td>
+                    <td class="py-3 px-4 text-xs text-on-surface-variant">${escapeHtml(traducirBalanceNormal(acc.normal_balance))}</td>
+                    <td class="py-3 px-4">
+                        <span class="inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${acc.is_active ? 'bg-success/10 text-success' : 'bg-outline/10 text-outline'}">
+                            ${acc.is_active ? 'Activa' : 'Inactiva'}
+                        </span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        contentHtml = `
+            <div class="flex flex-col gap-4">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div class="flex items-center gap-2 flex-grow max-w-md">
+                        <div class="relative w-full">
+                            <span class="material-symbols-outlined absolute left-3 top-2.5 text-sm text-on-surface-variant">search</span>
+                            <input id="acc-search-q" type="text" value="${escapeHtml(ui.q)}" class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest py-2 pl-9 pr-4 text-sm focus:border-primary focus:outline-none" placeholder="Buscar por código o nombre...">
+                        </div>
+                        <button id="acc-search-clear" type="button" class="rounded-lg bg-surface-container-low hover:bg-surface-container-highest px-3 py-2 text-sm text-on-surface transition-all">Limpiar</button>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        ${noCuentas ? `
+                            <button id="acc-seed-btn" type="button" class="flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-semibold text-on-secondary shadow hover:bg-secondary-container transition-all">
+                                <span class="material-symbols-outlined text-sm">auto_awesome</span>
+                                <span>Sembrar Nomenclatura Estándar</span>
+                            </button>
+                        ` : ''}
+                        <button id="acc-new-btn" type="button" class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md hover:bg-primary/90 transition-all">
+                            <span class="material-symbols-outlined text-sm">add</span>
+                            <span>Nueva Cuenta</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="rounded-xl border border-outline-variant/30 bg-surface-container-lowest overflow-hidden shadow-sm">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant select-none">
+                                    <th class="py-3 px-4 w-28">Código</th>
+                                    <th class="py-3 px-4">Nombre de la Cuenta</th>
+                                    <th class="py-3 px-4 w-36">Tipo</th>
+                                    <th class="py-3 px-4 w-32">Saldo Normal</th>
+                                    <th class="py-3 px-4 w-24">Estado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rowsHtml || `<tr><td colspan="5" class="py-12 text-center text-on-surface-variant font-medium">No se encontraron cuentas contables.</td></tr>`}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    } else if (ui.tab === 'asientos') {
+        const rowsHtml = filteredEntries.map(ent => {
+            let statusBadge = '';
+            if (ent.status === 'draft') {
+                statusBadge = '<span class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">Borrador</span>';
+            } else if (ent.status === 'posted') {
+                statusBadge = '<span class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Publicado</span>';
+            } else {
+                statusBadge = '<span class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error">Reversado</span>';
+            }
+
+            return `
+                <tr class="border-b border-outline-variant/20 hover:bg-surface-container-low/40 transition-colors">
+                    <td class="py-3 px-4 font-mono text-xs text-on-surface-variant">${escapeHtml(ent.entry_number || '—')}</td>
+                    <td class="py-3 px-4 text-xs text-on-surface-variant">${escapeHtml(ent.entry_date)}</td>
+                    <td class="py-3 px-4 font-medium text-on-surface max-w-xs truncate" title="${escapeHtml(ent.memo || '')}">${escapeHtml(ent.memo || '—')}</td>
+                    <td class="py-3 px-4">${statusBadge}</td>
+                    <td class="py-3 px-4 text-right font-mono text-xs font-medium text-success">${formatMoneda(ent.debitoTotal)}</td>
+                    <td class="py-3 px-4 text-right font-mono text-xs font-medium text-primary">${formatMoneda(ent.creditoTotal)}</td>
+                    <td class="py-3 px-4 text-center">
+                        <div class="flex items-center justify-center gap-1">
+                            <button type="button" data-ent-view="${ent.id}" class="inline-flex items-center rounded-md p-1.5 text-on-surface-variant hover:bg-surface-container-high transition-all" title="Ver Detalles">
+                                <span class="material-symbols-outlined text-sm">visibility</span>
+                            </button>
+                            ${ent.status === 'posted' ? `
+                                <button type="button" data-ent-reverse="${ent.id}" class="inline-flex items-center rounded-md p-1.5 text-error hover:bg-error/10 transition-all" title="Reversar Asiento">
+                                    <span class="material-symbols-outlined text-sm">undo</span>
+                                </button>
+                            ` : ''}
+                            ${ent.status === 'draft' ? `
+                                <button type="button" data-ent-del="${ent.id}" class="inline-flex items-center rounded-md p-1.5 text-error hover:bg-error/10 transition-all" title="Eliminar Borrador">
+                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                </button>
+                            ` : ''}
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        contentHtml = `
+            <div class="flex flex-col gap-4">
+                <div class="flex flex-wrap items-center justify-between gap-4">
+                    <div class="flex items-center gap-2 flex-grow max-w-md">
+                        <div class="relative w-full">
+                            <span class="material-symbols-outlined absolute left-3 top-2.5 text-sm text-on-surface-variant">search</span>
+                            <input id="ent-search-q" type="text" value="${escapeHtml(ui.asientosQ)}" class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest py-2 pl-9 pr-4 text-sm focus:border-primary focus:outline-none" placeholder="Buscar por número o concepto...">
+                        </div>
+                        <button id="ent-search-clear" type="button" class="rounded-lg bg-surface-container-low hover:bg-surface-container-highest px-3 py-2 text-sm text-on-surface transition-all">Limpiar</button>
+                    </div>
+                    <button id="ent-new-btn" type="button" class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md hover:bg-primary/90 transition-all">
+                        <span class="material-symbols-outlined text-sm">add</span>
+                        <span>Nuevo Asiento</span>
+                    </button>
+                </div>
+
+                <div class="rounded-xl border border-outline-variant/30 bg-surface-container-lowest overflow-hidden shadow-sm">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant select-none">
+                                    <th class="py-3 px-4 w-32">Número</th>
+                                    <th class="py-3 px-4 w-28">Fecha</th>
+                                    <th class="py-3 px-4">Concepto / Memo</th>
+                                    <th class="py-3 px-4 w-24">Estado</th>
+                                    <th class="py-3 px-4 w-36 text-right">Débitos</th>
+                                    <th class="py-3 px-4 w-36 text-right">Créditos</th>
+                                    <th class="py-3 px-4 w-24 text-center">Acciones</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${rowsHtml || `<tr><td colspan="7" class="py-12 text-center text-on-surface-variant font-medium">No se encontraron asientos contables registrados.</td></tr>`}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    // Modal de Nueva Cuenta
+    let modalHtml = '';
+    if (ui.sheet === 'nueva_cuenta') {
+        const typeOptions = [
+            { key: 'asset', label: 'Activo' },
+            { key: 'liability', label: 'Pasivo' },
+            { key: 'equity', label: 'Patrimonio' },
+            { key: 'revenue', label: 'Ingreso' },
+            { key: 'expense', label: 'Gasto' }
+        ].map(t => `<option value="${t.key}">${t.label}</option>`).join('');
+
+        const balOptions = [
+            { key: 'debit', label: 'Débito' },
+            { key: 'credit', label: 'Crédito' }
+        ].map(b => `<option value="${b.key}">${b.label}</option>`).join('');
+
+        const parentOptions = accounts.map(acc => `
+            <option value="${acc.id}">[${acc.code}] - ${escapeHtml(acc.name)}</option>
+        `).join('');
+
+        modalHtml = `
+            <div id="acc-modal-backdrop" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div class="w-full max-w-md rounded-2xl bg-surface-container-lowest p-6 shadow-2xl border border-outline-variant/30 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200">
+                    <div class="flex items-center justify-between border-b border-outline-variant/30 pb-3">
+                        <h3 class="text-lg font-bold text-on-surface">Crear Nueva Cuenta Contable</h3>
+                        <button id="acc-modal-close" type="button" class="rounded-full p-1 hover:bg-surface-container-high text-on-surface-variant transition-all">
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+
+                    <form id="acc-form" class="flex flex-col gap-4">
+                        <div class="flex flex-col gap-1.5">
+                            <label class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Código de la Cuenta *</label>
+                            <input id="form-code" name="code" type="text" required class="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm focus:border-primary focus:outline-none" placeholder="Ej. 1.1.1.3">
+                        </div>
+
+                        <div class="flex flex-col gap-1.5">
+                            <label class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Nombre de la Cuenta *</label>
+                            <input id="form-name" name="name" type="text" required class="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm focus:border-primary focus:outline-none" placeholder="Ej. Caja General Sucursal">
+                        </div>
+
+                        <div class="grid grid-cols-2 gap-3">
+                            <div class="flex flex-col gap-1.5">
+                                <label class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Tipo *</label>
+                                <select id="form-type" name="account_type" required class="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                                    ${typeOptions}
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1.5">
+                                <label class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Saldo Normal *</label>
+                                <select id="form-balance" name="normal_balance" required class="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                                    ${balOptions}
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col gap-1.5">
+                            <label class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Cuenta Padre (Opcional)</label>
+                            <select id="form-parent" name="parent_account_id" class="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                                <option value="">Ninguna (Cuenta Principal)</option>
+                                ${parentOptions}
+                            </select>
+                        </div>
+
+                        <div class="flex items-center justify-end gap-2 border-t border-outline-variant/30 pt-4 mt-2">
+                            <button id="acc-modal-cancel" type="button" class="rounded-lg border border-outline-variant px-4 py-2 text-sm font-semibold text-on-surface hover:bg-surface-container-high transition-all">Cancelar</button>
+                            <button type="submit" class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow hover:bg-primary/90 transition-all">Guardar Cuenta</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        `;
+    }
+
+    // Modal/Editor de Nuevo Asiento
+    if (ui.sheet === 'nuevo_asiento') {
+        const selectAccountOptions = accounts.map(acc => {
+            const isParent = accounts.some(a => a.parent_account_id === acc.id);
+            return `<option value="${acc.id}" ${isParent ? 'disabled' : ''}>[${acc.code}] - ${escapeHtml(acc.name)}</option>`;
+        }).join('');
+
+        modalHtml = `
+            <div id="ent-modal-backdrop" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div class="w-full max-w-5xl rounded-2xl bg-surface-container-lowest p-6 shadow-2xl border border-outline-variant/30 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200 max-h-[90vh] overflow-y-auto">
+                    <div class="flex items-center justify-between border-b border-outline-variant/30 pb-3">
+                        <h3 class="text-lg font-bold text-on-surface">Crear Nuevo Asiento Contable</h3>
+                        <button id="ent-modal-close" type="button" class="rounded-full p-1 hover:bg-surface-container-high text-on-surface-variant transition-all">
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+
+                    <form id="ent-form" class="flex flex-col gap-4">
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <div class="flex flex-col gap-1.5 col-span-1">
+                                <label class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Fecha del Asiento *</label>
+                                <input id="ent-date" name="entry_date" type="date" required value="${new Date().toISOString().split('T')[0]}" class="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm focus:border-primary focus:outline-none">
+                            </div>
+                            <div class="flex flex-col gap-1.5 col-span-2">
+                                <label class="text-xs font-semibold text-on-surface-variant uppercase tracking-wider">Concepto General / Memo *</label>
+                                <input id="ent-memo" name="memo" type="text" required class="rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-3 py-2 text-sm focus:border-primary focus:outline-none" placeholder="Ej. Registro de ventas del día...">
+                            </div>
+                        </div>
+
+                        <div class="flex flex-col gap-2 mt-2">
+                            <h4 class="text-sm font-bold text-on-surface border-b border-outline-variant/20 pb-1 select-none">Apuntes Contables (Mínimo 2 filas)</h4>
+                            <div class="overflow-x-auto border border-outline-variant/30 rounded-xl overflow-hidden shadow-sm">
+                                <table class="w-full text-left border-collapse text-sm">
+                                    <thead>
+                                        <tr class="border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant select-none">
+                                            <th class="py-2.5 px-3">Cuenta Contable</th>
+                                            <th class="py-2.5 px-3">Descripción de Apunte</th>
+                                            <th class="py-2.5 px-3 w-40 text-right">Débito (RD$)</th>
+                                            <th class="py-2.5 px-3 w-40 text-right">Crédito (RD$)</th>
+                                            <th class="py-2.5 px-3 w-16 text-center">Acción</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="ent-lines-body">
+                                        <!-- Filas dinámicas -->
+                                        <tr class="border-b border-outline-variant/20 ent-line-row">
+                                            <td class="p-2">
+                                                <select required class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none ent-line-account">
+                                                    <option value="" disabled selected>Selecciona cuenta...</option>
+                                                    ${selectAccountOptions}
+                                                </select>
+                                            </td>
+                                            <td class="p-2">
+                                                <input type="text" class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none ent-line-desc" placeholder="Detalle opcional de la línea...">
+                                            </td>
+                                            <td class="p-2">
+                                                <input type="number" step="0.01" min="0" value="0.00" class="w-full text-right rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none font-mono ent-line-debit">
+                                            </td>
+                                            <td class="p-2">
+                                                <input type="number" step="0.01" min="0" value="0.00" class="w-full text-right rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none font-mono ent-line-credit">
+                                            </td>
+                                            <td class="p-2 text-center">
+                                                <button type="button" class="rounded-md p-1 hover:bg-error/15 text-error transition-all ent-line-del-btn">
+                                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                        <tr class="border-b border-outline-variant/20 ent-line-row">
+                                            <td class="p-2">
+                                                <select required class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none ent-line-account">
+                                                    <option value="" disabled selected>Selecciona cuenta...</option>
+                                                    ${selectAccountOptions}
+                                                </select>
+                                            </td>
+                                            <td class="p-2">
+                                                <input type="text" class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none ent-line-desc" placeholder="Detalle opcional de la línea...">
+                                            </td>
+                                            <td class="p-2">
+                                                <input type="number" step="0.01" min="0" value="0.00" class="w-full text-right rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none font-mono ent-line-debit">
+                                            </td>
+                                            <td class="p-2">
+                                                <input type="number" step="0.01" min="0" value="0.00" class="w-full text-right rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none font-mono ent-line-credit">
+                                            </td>
+                                            <td class="p-2 text-center">
+                                                <button type="button" class="rounded-md p-1 hover:bg-error/15 text-error transition-all ent-line-del-btn">
+                                                    <span class="material-symbols-outlined text-sm">delete</span>
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    </tbody>
+                                    <tfoot>
+                                        <tr class="bg-surface-container-low font-bold">
+                                            <td colspan="2" class="p-3 text-right">Totales del Asiento:</td>
+                                            <td class="p-3 text-right font-mono text-xs text-success" id="ent-foot-debit">RD$ 0.00</td>
+                                            <td class="p-3 text-right font-mono text-xs text-primary" id="ent-foot-credit">RD$ 0.00</td>
+                                            <td class="p-3"></td>
+                                        </tr>
+                                    </tfoot>
+                                </table>
+                            </div>
+
+                            <div class="flex items-center justify-between mt-2 flex-wrap gap-3">
+                                <button id="ent-line-add-btn" type="button" class="flex items-center gap-1.5 rounded-lg border border-primary px-3 py-1.5 text-xs font-semibold text-primary hover:bg-primary/5 transition-all">
+                                    <span class="material-symbols-outlined text-xs">add</span>
+                                    <span>Agregar Apunte</span>
+                                </button>
+                                <div class="flex items-center gap-2" id="ent-balance-indicator">
+                                    <span class="material-symbols-outlined text-sm text-error">error</span>
+                                    <span class="text-xs font-semibold text-error uppercase tracking-wider">Desbalanceado: RD$ 0.00</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex items-center justify-end gap-2 border-t border-outline-variant/30 pt-4 mt-2">
+                            <button id="ent-modal-cancel" type="button" class="rounded-lg border border-outline-variant px-4 py-2 text-sm font-semibold text-on-surface hover:bg-surface-container-high transition-all">Cancelar</button>
+                            <button id="ent-save-draft" type="button" class="rounded-lg bg-surface-container-high px-4 py-2 text-sm font-semibold text-on-surface hover:bg-surface-container-highest transition-all">Guardar Borrador</button>
+                            <button id="ent-save-post" type="submit" disabled class="rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow opacity-50 cursor-not-allowed hover:bg-primary/90 transition-all">Contabilizar (Publicar)</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        `;
+    }
+
+    // Modal de Detalle de Asiento
+    if (ui.sheet === 'detalle_asiento' && selectedEntry) {
+        let statusBadge = '';
+        if (selectedEntry.status === 'draft') {
+            statusBadge = '<span class="inline-flex items-center rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning">Borrador</span>';
+        } else if (selectedEntry.status === 'posted') {
+            statusBadge = '<span class="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Publicado</span>';
+        } else {
+            statusBadge = '<span class="inline-flex items-center rounded-full bg-error/10 px-2 py-0.5 text-xs font-medium text-error">Reversado</span>';
+        }
+
+        const linesHtml = selectedLines.map(line => {
+            const acc = accounts.find(a => a.id === line.account_id) || {};
+            return `
+                <tr class="border-b border-outline-variant/20">
+                    <td class="py-2.5 px-3 font-mono text-xs text-on-surface-variant">${escapeHtml(acc.code || '')}</td>
+                    <td class="py-2.5 px-3 font-medium text-on-surface">${escapeHtml(acc.name || '')}</td>
+                    <td class="py-2.5 px-3 text-on-surface-variant">${escapeHtml(line.description || '—')}</td>
+                    <td class="py-2.5 px-3 text-right font-mono text-xs text-success">${line.debit_amount > 0 ? formatMoneda(line.debit_amount) : '—'}</td>
+                    <td class="py-2.5 px-3 text-right font-mono text-xs text-primary">${line.credit_amount > 0 ? formatMoneda(line.credit_amount) : '—'}</td>
+                </tr>
+            `;
+        }).join('');
+
+        modalHtml = `
+            <div id="ent-detail-backdrop" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div class="w-full max-w-4xl rounded-2xl bg-surface-container-lowest p-6 shadow-2xl border border-outline-variant/30 flex flex-col gap-4 animate-in fade-in zoom-in-95 duration-200 max-h-[85vh] overflow-y-auto">
+                    <div class="flex items-center justify-between border-b border-outline-variant/30 pb-3">
+                        <div class="flex items-center gap-3">
+                            <h3 class="text-lg font-bold text-on-surface">Detalles del Asiento</h3>
+                            ${statusBadge}
+                        </div>
+                        <button id="ent-detail-close" type="button" class="rounded-full p-1 hover:bg-surface-container-high text-on-surface-variant transition-all">
+                            <span class="material-symbols-outlined">close</span>
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 bg-surface-container-low p-4 rounded-xl">
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">Número de Asiento</span>
+                            <span class="text-sm font-bold text-on-surface font-mono">${escapeHtml(selectedEntry.entry_number || '—')}</span>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">Fecha de Emisión</span>
+                            <span class="text-sm font-medium text-on-surface">${escapeHtml(selectedEntry.entry_date)}</span>
+                        </div>
+                        <div class="flex flex-col gap-0.5">
+                            <span class="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">Divisa Oficial</span>
+                            <span class="text-sm font-medium text-on-surface font-mono">${escapeHtml(selectedEntry.currency || 'DOP')}</span>
+                        </div>
+                        <div class="flex flex-col gap-0.5 md:col-span-3 border-t border-outline-variant/20 pt-2 mt-1">
+                            <span class="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">Concepto General / Memo</span>
+                            <span class="text-sm font-medium text-on-surface">${escapeHtml(selectedEntry.memo || '—')}</span>
+                        </div>
+                    </div>
+
+                    <div class="flex flex-col gap-2 mt-2">
+                        <h4 class="text-sm font-bold text-on-surface border-b border-outline-variant/20 pb-1 select-none">Apuntes Contables de Libro Mayor</h4>
+                        <div class="overflow-x-auto border border-outline-variant/30 rounded-xl overflow-hidden shadow-sm">
+                            <table class="w-full text-left border-collapse text-sm">
+                                <thead>
+                                    <tr class="border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant select-none">
+                                        <th class="py-2.5 px-3 w-32">Código</th>
+                                        <th class="py-2.5 px-3">Cuenta Contable</th>
+                                        <th class="py-2.5 px-3">Descripción de Apunte</th>
+                                        <th class="py-2.5 px-3 w-40 text-right">Débitos</th>
+                                        <th class="py-2.5 px-3 w-40 text-right">Créditos</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${linesHtml}
+                                </tbody>
+                                <tfoot>
+                                    <tr class="bg-surface-container-low font-bold">
+                                        <td colspan="3" class="p-3 text-right">Totales del Asiento:</td>
+                                        <td class="p-3 text-right font-mono text-xs text-success">${formatMoneda(selectedEntry.debitoTotal)}</td>
+                                        <td class="p-3 text-right font-mono text-xs text-primary">${formatMoneda(selectedEntry.creditoTotal)}</td>
+                                    </tr>
+                                </tfoot>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center justify-between border-t border-outline-variant/30 pt-4 mt-2">
+                        <div>
+                            ${selectedEntry.status === 'posted' ? `
+                                <button id="ent-detail-reverse" type="button" class="flex items-center gap-1.5 rounded-lg border border-error px-4 py-2 text-sm font-semibold text-error hover:bg-error/5 transition-all">
+                                    <span class="material-symbols-outlined text-sm">undo</span>
+                                    <span>Reversar Asiento</span>
+                                </button>
+                            ` : ''}
+                            ${selectedEntry.status === 'draft' ? `
+                                <button id="ent-detail-post" type="button" class="flex items-center gap-1.5 rounded-lg bg-success px-4 py-2 text-sm font-semibold text-white shadow hover:bg-success/90 transition-all">
+                                    <span class="material-symbols-outlined text-sm">check_circle</span>
+                                    <span>Publicar / Contabilizar</span>
+                                </button>
+                            ` : ''}
+                        </div>
+                        <div class="flex items-center gap-2">
+                            ${selectedEntry.status === 'draft' ? `
+                                <button id="ent-detail-delete" type="button" class="rounded-lg border border-error px-4 py-2 text-sm font-semibold text-error hover:bg-error/5 transition-all">Eliminar Borrador</button>
+                            ` : ''}
+                            <button id="ent-detail-cancel" type="button" class="rounded-lg border border-outline-variant px-4 py-2 text-sm font-semibold text-on-surface hover:bg-surface-container-high transition-all">Cerrar Detalle</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Contabilidad', 'Módulo contable general, catálogo de cuentas y registro de diario')}
+        
+        <div class="flex flex-col gap-5">
+            <!-- Barra de Pestañas -->
+            <div class="flex border-b border-outline-variant/30 select-none">
+                <button type="button" data-tab-key="cuentas" class="py-3 px-6 text-sm font-medium transition-all border-b-2 border-transparent ${ui.tab === 'cuentas' ? activeTabClass : inactiveTabClass}">
+                    Catálogo de Cuentas
+                </button>
+                <button type="button" data-tab-key="asientos" class="py-3 px-6 text-sm font-medium transition-all border-b-2 border-transparent ${ui.tab === 'asientos' ? activeTabClass : inactiveTabClass}">
+                    Historial de Asientos
+                </button>
+            </div>
+
+            <!-- Contenido Activo -->
+            <div class="flex-grow">
+                ${contentHtml}
+            </div>
+        </div>
+
+        <!-- Inyección de Hojas/Modales -->
+        ${modalHtml}
+    `;
+
+    // --- Vinculación de Eventos ---
+
+    // Cambio de pestañas
+    dashboardContent.querySelectorAll('[data-tab-key]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.getAttribute('data-tab-key');
+            void renderContabilidadModule();
+        });
+    });
+
+    // Eventos de Catálogo
+    if (ui.tab === 'cuentas') {
+        const searchInput = document.getElementById('acc-search-q');
+        searchInput?.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') {
+                ui.q = searchInput.value;
+                void renderContabilidadModule();
+            }
+        });
+
+        document.getElementById('acc-search-clear')?.addEventListener('click', () => {
+            ui.q = '';
+            void renderContabilidadModule();
+        });
+
+        document.getElementById('acc-new-btn')?.addEventListener('click', () => {
+            ui.sheet = 'nueva_cuenta';
+            void renderContabilidadModule();
+        });
+
+        // Sembrar Catálogo
+        document.getElementById('acc-seed-btn')?.addEventListener('click', async () => {
+            if (!window.confirm('¿Deseas sembrar la nomenclatura estándar del catálogo de cuentas en español?')) return;
+            
+            try {
+                // Limpieza opcional de cuentas inglesas vacías del tenant
+                const englishCodes = ['1010', '1100', '1300', '2100', '2200', '3100', '4100', '5100', '5200'];
+                const englishAccounts = accounts.filter(acc => englishCodes.includes(acc.code) && acc.is_system);
+                for (const acc of englishAccounts) {
+                    try {
+                        await dbDelete({ table: 'accounting_accounts', id: acc.id });
+                    } catch (err) {
+                        // Ignorar si tiene RLS/FKs restrictivas
+                    }
+                }
+
+                // Cargar mapa
+                const currentAccountsRes = await dbSelect({
+                    table: 'accounting_accounts',
+                    filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+                });
+                const currentAccounts = currentAccountsRes?.data || [];
+                const accountsMap = {};
+                currentAccounts.forEach(acc => {
+                    accountsMap[acc.code] = acc.id;
+                });
+
+                // Siembra secuencial
+                for (const item of NOMENCLATURA_ESTANDAR) {
+                    if (accountsMap[item.code]) continue;
+
+                    let parentId = null;
+                    const parts = item.code.split('.');
+                    if (parts.length > 1) {
+                        const parentCode = parts.slice(0, -1).join('.');
+                        parentId = accountsMap[parentCode] || null;
+                    }
+
+                    const insRes = await dbInsert({
+                        table: 'accounting_accounts',
+                        values: [{
+                            tenant_id: tid,
+                            code: item.code,
+                            name: item.name,
+                            account_type: item.account_type,
+                            normal_balance: item.normal_balance,
+                            parent_account_id: parentId,
+                            is_system: false,
+                            is_active: true
+                        }]
+                    });
+
+                    if (insRes?.data && insRes.data[0]) {
+                        accountsMap[item.code] = insRes.data[0].id;
+                    }
+                }
+
+                window.alert('¡Nomenclatura estándar en español sembrada exitosamente!');
+                void renderContabilidadModule();
+            } catch (err) {
+                console.error(err);
+                window.alert('Error al sembrar la nomenclatura contable: ' + err.message);
+            }
+        });
+    }
+
+    // Eventos de Asientos
+    if (ui.tab === 'asientos') {
+        const searchInput = document.getElementById('ent-search-q');
+        searchInput?.addEventListener('keyup', (e) => {
+            if (e.key === 'Enter') {
+                ui.asientosQ = searchInput.value;
+                void renderContabilidadModule();
+            }
+        });
+
+        document.getElementById('ent-search-clear')?.addEventListener('click', () => {
+            ui.asientosQ = '';
+            void renderContabilidadModule();
+        });
+
+        document.getElementById('ent-new-btn')?.addEventListener('click', () => {
+            ui.sheet = 'nuevo_asiento';
+            void renderContabilidadModule();
+        });
+
+        dashboardContent.querySelectorAll('[data-ent-view]').forEach(btn => {
+            btn.addEventListener('click', () => {
+                ui.sheet = 'detalle_asiento';
+                ui.editId = btn.getAttribute('data-ent-view');
+                void renderContabilidadModule();
+            });
+        });
+
+        dashboardContent.querySelectorAll('[data-ent-reverse]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = btn.getAttribute('data-ent-reverse');
+                if (!window.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
+                
+                try {
+                    const originalEntry = entries.find(e => e.id === id);
+                    if (!originalEntry) return;
+
+                    const originalLinesRes = await dbSelect({
+                        table: 'accounting_journal_lines',
+                        filters: [{ op: 'eq', column: 'journal_entry_id', value: id }]
+                    });
+                    const originalLines = originalLinesRes?.data || [];
+
+                    // 1. Crear asiento de reversión
+                    const revEntryRes = await dbInsert({
+                        table: 'accounting_journal_entries',
+                        values: [{
+                            tenant_id: tid,
+                            entry_date: new Date().toISOString().split('T')[0],
+                            status: 'draft',
+                            memo: `Reversión de asiento ${originalEntry.entry_number} - ${originalEntry.memo || ''}`,
+                            reversal_of_entry_id: originalEntry.id,
+                            created_by: state.appUser?.id || null
+                        }]
+                    });
+
+                    if (revEntryRes.error || !revEntryRes.data || !revEntryRes.data[0]) {
+                        throw new Error(revEntryRes.error?.message || 'No se pudo crear el asiento de reversión.');
+                    }
+                    const newEntryId = revEntryRes.data[0].id;
+
+                    // 2. Crear líneas invertidas
+                    for (let i = 0; i < originalLines.length; i++) {
+                        const line = originalLines[i];
+                        await dbInsert({
+                            table: 'accounting_journal_lines',
+                            values: [{
+                                tenant_id: tid,
+                                journal_entry_id: newEntryId,
+                                account_id: line.account_id,
+                                line_no: line.line_no,
+                                description: `Inversión: ${line.description || 'Apunte reversado'}`,
+                                debit_amount: line.credit_amount, // Invertido
+                                credit_amount: line.debit_amount, // Invertido
+                                currency: line.currency || 'DOP'
+                            }]
+                        });
+                    }
+
+                    // 3. Contabilizar asiento de reversión
+                    await dbUpdate({
+                        table: 'accounting_journal_entries',
+                        id: newEntryId,
+                        values: { status: 'posted' }
+                    });
+
+                    // 4. Actualizar original a reversed
+                    await dbUpdate({
+                        table: 'accounting_journal_entries',
+                        id: originalEntry.id,
+                        values: { status: 'reversed' }
+                    });
+
+                    window.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
+                    void renderContabilidadModule();
+                } catch (err) {
+                    console.error(err);
+                    window.alert('Error al reversar asiento: ' + err.message);
+                }
+            });
+        });
+
+        dashboardContent.querySelectorAll('[data-ent-del]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const id = btn.getAttribute('data-ent-del');
+                if (!window.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
+                
+                try {
+                    await dbDelete({ table: 'accounting_journal_entries', id });
+                    window.alert('¡Borrador eliminado exitosamente!');
+                    void renderContabilidadModule();
+                } catch (err) {
+                    window.alert('Error al eliminar asiento: ' + err.message);
+                }
+            });
+        });
+    }
+
+    // Modal Nueva Cuenta - Close/Cancel/Submit
+    if (ui.sheet === 'nueva_cuenta') {
+        const closeModal = () => {
+            ui.sheet = null;
+            void renderContabilidadModule();
+        };
+
+        document.getElementById('acc-modal-close')?.addEventListener('click', closeModal);
+        document.getElementById('acc-modal-cancel')?.addEventListener('click', closeModal);
+        
+        document.getElementById('acc-modal-backdrop')?.addEventListener('click', (e) => {
+            if (e.target.id === 'acc-modal-backdrop') closeModal();
+        });
+
+        document.getElementById('acc-form')?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const fd = new FormData(e.target);
+            const code = fd.get('code').trim();
+            const name = fd.get('name').trim();
+            const account_type = fd.get('account_type');
+            const normal_balance = fd.get('normal_balance');
+            const parent_account_id = fd.get('parent_account_id') || null;
+
+            try {
+                const res = await dbInsert({
+                    table: 'accounting_accounts',
+                    values: [{
+                        tenant_id: tid,
+                        code,
+                        name,
+                        account_type,
+                        normal_balance,
+                        parent_account_id,
+                        is_system: false,
+                        is_active: true
+                    }]
+                });
+
+                if (res.error) throw new Error(res.error.message);
+                window.alert('¡Cuenta contable creada con éxito!');
+                closeModal();
+            } catch (err) {
+                window.alert('Error al crear cuenta contable: ' + err.message);
+            }
+        });
+    }
+
+    // Modal Nuevo Asiento - Close/Cancel/Lines Logic
+    if (ui.sheet === 'nuevo_asiento') {
+        const closeModal = () => {
+            ui.sheet = null;
+            void renderContabilidadModule();
+        };
+
+        document.getElementById('ent-modal-close')?.addEventListener('click', closeModal);
+        document.getElementById('ent-modal-cancel')?.addEventListener('click', closeModal);
+        
+        document.getElementById('ent-modal-backdrop')?.addEventListener('click', (e) => {
+            if (e.target.id === 'ent-modal-backdrop') closeModal();
+        });
+
+        const linesBody = document.getElementById('ent-lines-body');
+
+        // Recalcular Totales y Balanceo
+        const recalcularBalance = () => {
+            let totalDebit = 0;
+            let totalCredit = 0;
+
+            linesBody.querySelectorAll('.ent-line-row').forEach(row => {
+                const debInput = row.querySelector('.ent-line-debit');
+                const credInput = row.querySelector('.ent-line-credit');
+                totalDebit += Number(debInput.value || 0);
+                totalCredit += Number(credInput.value || 0);
+            });
+
+            document.getElementById('ent-foot-debit').innerText = formatMoneda(totalDebit);
+            document.getElementById('ent-foot-credit').innerText = formatMoneda(totalCredit);
+
+            const diff = Math.abs(totalDebit - totalCredit);
+            const indicator = document.getElementById('ent-balance-indicator');
+            const postBtn = document.getElementById('ent-save-post');
+
+            if (diff < 0.005) {
+                indicator.innerHTML = `
+                    <span class="material-symbols-outlined text-sm text-success">check_circle</span>
+                    <span class="text-xs font-semibold text-success uppercase tracking-wider">Balanceado (RD$ ${totalDebit.toFixed(2)})</span>
+                `;
+                postBtn.removeAttribute('disabled');
+                postBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+            } else {
+                indicator.innerHTML = `
+                    <span class="material-symbols-outlined text-sm text-error">error</span>
+                    <span class="text-xs font-semibold text-error uppercase tracking-wider">Desbalanceado: RD$ ${diff.toLocaleString('es-DO', { minimumFractionDigits: 2 })}</span>
+                `;
+                postBtn.setAttribute('disabled', 'true');
+                postBtn.classList.add('opacity-50', 'cursor-not-allowed');
+            }
+        };
+
+        // Listeners para las filas iniciales
+        const bindRowEvents = (row) => {
+            const debInput = row.querySelector('.ent-line-debit');
+            const credInput = row.querySelector('.ent-line-credit');
+
+            // Cero inglés en base de datos constraint: one_sided
+            debInput.addEventListener('input', () => {
+                if (Number(debInput.value) > 0) {
+                    credInput.value = '0.00';
+                }
+                recalcularBalance();
+            });
+
+            credInput.addEventListener('input', () => {
+                if (Number(credInput.value) > 0) {
+                    debInput.value = '0.00';
+                }
+                recalcularBalance();
+            });
+
+            row.querySelector('.ent-line-del-btn').addEventListener('click', () => {
+                if (linesBody.querySelectorAll('.ent-line-row').length <= 2) {
+                    window.alert('Un asiento contable requiere de al menos dos apuntes (líneas).');
+                    return;
+                }
+                row.remove();
+                recalcularBalance();
+            });
+        };
+
+        linesBody.querySelectorAll('.ent-line-row').forEach(bindRowEvents);
+
+        // Agregar fila
+        document.getElementById('ent-line-add-btn')?.addEventListener('click', () => {
+            const selectAccountOptions = accounts.map(acc => {
+                const isParent = accounts.some(a => a.parent_account_id === acc.id);
+                return `<option value="${acc.id}" ${isParent ? 'disabled' : ''}>[${acc.code}] - ${escapeHtml(acc.name)}</option>`;
+            }).join('');
+
+            const tr = document.createElement('tr');
+            tr.className = 'border-b border-outline-variant/20 ent-line-row animate-in fade-in slide-in-from-top-1 duration-150';
+            tr.innerHTML = `
+                <td class="p-2">
+                    <select required class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none ent-line-account">
+                        <option value="" disabled selected>Selecciona cuenta...</option>
+                        ${selectAccountOptions}
+                    </select>
+                </td>
+                <td class="p-2">
+                    <input type="text" class="w-full rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none ent-line-desc" placeholder="Detalle opcional de la línea...">
+                </td>
+                <td class="p-2">
+                    <input type="number" step="0.01" min="0" value="0.00" class="w-full text-right rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none font-mono ent-line-debit">
+                </td>
+                <td class="p-2">
+                    <input type="number" step="0.01" min="0" value="0.00" class="w-full text-right rounded-lg border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-xs focus:border-primary focus:outline-none font-mono ent-line-credit">
+                </td>
+                <td class="p-2 text-center">
+                    <button type="button" class="rounded-md p-1 hover:bg-error/15 text-error transition-all ent-line-del-btn">
+                        <span class="material-symbols-outlined text-sm">delete</span>
+                    </button>
+                </td>
+            `;
+
+            linesBody.appendChild(tr);
+            bindRowEvents(tr);
+            recalcularBalance();
+        });
+
+        // Guardar Asiento
+        const guardarAsiento = async (status) => {
+            const memo = document.getElementById('ent-memo').value.trim();
+            const entry_date = document.getElementById('ent-date').value;
+
+            if (!memo) {
+                window.alert('El concepto general del asiento es obligatorio.');
+                return;
+            }
+
+            const rows = linesBody.querySelectorAll('.ent-line-row');
+            const linesData = [];
+            let totalDebit = 0;
+            let totalCredit = 0;
+
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                const account_id = r.querySelector('.ent-line-account').value;
+                const description = r.querySelector('.ent-line-desc').value.trim();
+                const debit_amount = Number(r.querySelector('.ent-line-debit').value || 0);
+                const credit_amount = Number(r.querySelector('.ent-line-credit').value || 0);
+
+                if (!account_id) {
+                    window.alert(`Por favor, selecciona una cuenta válida en la fila ${i + 1}.`);
+                    return;
+                }
+
+                if (debit_amount === 0 && credit_amount === 0) {
+                    window.alert(`Por favor, ingresa un monto mayor a cero en la fila ${i + 1}.`);
+                    return;
+                }
+
+                totalDebit += debit_amount;
+                totalCredit += credit_amount;
+
+                linesData.push({
+                    account_id,
+                    description: description || null,
+                    debit_amount,
+                    credit_amount,
+                    line_no: i + 1
+                });
+            }
+
+            if (status === 'posted' && Math.abs(totalDebit - totalCredit) > 0.005) {
+                window.alert('No se puede contabilizar un asiento contable desbalanceado.');
+                return;
+            }
+
+            try {
+                // 1. Crear el asiento en borrador ('draft') siempre primero para evitar fallos de triggers
+                const entryRes = await dbInsert({
+                    table: 'accounting_journal_entries',
+                    values: [{
+                        tenant_id: tid,
+                        entry_date,
+                        status: 'draft',
+                        memo,
+                        created_by: state.appUser?.id || null
+                    }]
+                });
+
+                if (entryRes.error || !entryRes.data || !entryRes.data[0]) {
+                    throw new Error(entryRes.error?.message || 'No se pudo crear el asiento contable.');
+                }
+                const newEntryId = entryRes.data[0].id;
+
+                // 2. Insertar las líneas secuencialmente
+                for (const line of linesData) {
+                    const lineRes = await dbInsert({
+                        table: 'accounting_journal_lines',
+                        values: [{
+                            tenant_id: tid,
+                            journal_entry_id: newEntryId,
+                            account_id: line.account_id,
+                            line_no: line.line_no,
+                            description: line.description,
+                            debit_amount: line.debit_amount,
+                            credit_amount: line.credit_amount,
+                            currency: 'DOP'
+                        }]
+                    });
+                    if (lineRes.error) {
+                        // Si falla, borramos el asiento en cascada y lanzamos error
+                        await dbDelete({ table: 'accounting_journal_entries', id: newEntryId });
+                        throw new Error(lineRes.error.message);
+                    }
+                }
+
+                // 3. Si se pidió contabilizar (publicar), actualizamos a 'posted'
+                if (status === 'posted') {
+                    const postRes = await dbUpdate({
+                        table: 'accounting_journal_entries',
+                        id: newEntryId,
+                        values: { status: 'posted' }
+                    });
+                    if (postRes.error) {
+                        // Devolver a borrador o informar
+                        throw new Error('Las líneas se guardaron en borrador pero la contabilización falló: ' + postRes.error.message);
+                    }
+                }
+
+                window.alert(status === 'posted' ? '¡Asiento contable contabilizado exitosamente!' : '¡Asiento borrador guardado correctamente!');
+                closeModal();
+            } catch (err) {
+                console.error(err);
+                window.alert('Error al guardar asiento contable: ' + err.message);
+            }
+        };
+
+        document.getElementById('ent-save-draft').addEventListener('click', () => void guardarAsiento('draft'));
+        
+        document.getElementById('ent-form').addEventListener('submit', (ev) => {
+            ev.preventDefault();
+            void guardarAsiento('posted');
+        });
+    }
+
+    // Eventos de Detalle de Asiento
+    if (ui.sheet === 'detalle_asiento' && selectedEntry) {
+        document.getElementById('ent-detail-close')?.addEventListener('click', closeSheet);
+        document.getElementById('ent-detail-cancel')?.addEventListener('click', closeSheet);
+        
+        document.getElementById('ent-detail-backdrop')?.addEventListener('click', (e) => {
+            if (e.target.id === 'ent-detail-backdrop') closeSheet();
+        });
+
+        // Reversar desde detalle
+        document.getElementById('ent-detail-reverse')?.addEventListener('click', async () => {
+            if (!window.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
+            
+            try {
+                // 1. Crear asiento de reversión
+                const revEntryRes = await dbInsert({
+                    table: 'accounting_journal_entries',
+                    values: [{
+                        tenant_id: tid,
+                        entry_date: new Date().toISOString().split('T')[0],
+                        status: 'draft',
+                        memo: `Reversión de asiento ${selectedEntry.entry_number} - ${selectedEntry.memo || ''}`,
+                        reversal_of_entry_id: selectedEntry.id,
+                        created_by: state.appUser?.id || null
+                    }]
+                });
+
+                if (revEntryRes.error || !revEntryRes.data || !revEntryRes.data[0]) {
+                    throw new Error(revEntryRes.error?.message || 'No se pudo crear el asiento de reversión.');
+                }
+                const newEntryId = revEntryRes.data[0].id;
+
+                // 2. Crear líneas invertidas
+                for (let i = 0; i < selectedLines.length; i++) {
+                    const line = selectedLines[i];
+                    await dbInsert({
+                        table: 'accounting_journal_lines',
+                        values: [{
+                            tenant_id: tid,
+                            journal_entry_id: newEntryId,
+                            account_id: line.account_id,
+                            line_no: line.line_no,
+                            description: `Inversión: ${line.description || 'Apunte reversado'}`,
+                            debit_amount: line.credit_amount,
+                            credit_amount: line.debit_amount,
+                            currency: line.currency || 'DOP'
+                        }]
+                    });
+                }
+
+                // 3. Contabilizar asiento de reversión
+                await dbUpdate({
+                    table: 'accounting_journal_entries',
+                    id: newEntryId,
+                    values: { status: 'posted' }
+                });
+
+                // 4. Actualizar original a reversed
+                await dbUpdate({
+                    table: 'accounting_journal_entries',
+                    id: selectedEntry.id,
+                    values: { status: 'reversed' }
+                });
+
+                window.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
+                closeSheet();
+            } catch (err) {
+                console.error(err);
+                window.alert('Error al reversar asiento: ' + err.message);
+            }
+        });
+
+        // Publicar desde detalle
+        document.getElementById('ent-detail-post')?.addEventListener('click', async () => {
+            if (Math.abs(selectedEntry.debitoTotal - selectedEntry.creditoTotal) > 0.005) {
+                window.alert('No se puede contabilizar un asiento contable desbalanceado.');
+                return;
+            }
+            if (selectedEntry.linesCount < 2) {
+                window.alert('Un asiento contabilizado requiere al menos dos líneas contables.');
+                return;
+            }
+
+            try {
+                const res = await dbUpdate({
+                    table: 'accounting_journal_entries',
+                    id: selectedEntry.id,
+                    values: { status: 'posted' }
+                });
+                if (res.error) throw new Error(res.error.message);
+                window.alert('¡Asiento contable contabilizado exitosamente!');
+                closeSheet();
+            } catch (err) {
+                window.alert('Error al contabilizar asiento: ' + err.message);
+            }
+        });
+
+        // Eliminar borrador desde detalle
+        document.getElementById('ent-detail-delete')?.addEventListener('click', async () => {
+            if (!window.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
+            
+            try {
+                await dbDelete({ table: 'accounting_journal_entries', id: selectedEntry.id });
+                window.alert('¡Borrador eliminado exitosamente!');
+                closeSheet();
+            } catch (err) {
+                window.alert('Error al eliminar asiento: ' + err.message);
+            }
+        });
+    }
+
+    zyronLog('render:contabilidad:done', { tab: ui.tab });
+};
+
 const renderConfigModule = async () => {
     zyronLog('render:config:start', { tenantId: state.currentTenantId });
     if (!state.currentTenantId) {
@@ -10823,6 +12176,7 @@ const openModule = async (moduleKey, opts = {}) => {
     if (moduleKey === 'clientes') return renderClientesModule();
     if (moduleKey === 'pagos') return renderPagosModule();
     if (moduleKey === 'reportes') return renderReportesModule();
+    if (moduleKey === 'contabilidad') return renderContabilidadModule();
     if (moduleKey === 'config') return renderConfigModule();
     console.warn('[Zyron:openModule:unknown]', { moduleKey });
 };
