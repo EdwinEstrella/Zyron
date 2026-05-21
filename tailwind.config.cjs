@@ -5,6 +5,7 @@ module.exports = {
   darkMode: 'class',
   content: [
     './index.html',
+    './renderer.js',
     './components/**/*.{html,js,css}',
     './fragments/**/*.{html,js}',
     './public/**/*.html'
