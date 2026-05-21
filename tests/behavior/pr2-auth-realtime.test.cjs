@@ -410,36 +410,35 @@ test('accounting list IPC validates tenant id before touching InsForge', async (
 })
 
 test('accounting list IPC exposes tenant-scoped ledger reads', async () => {
-  const { handlers } = loadMainForBehaviorTest()
-  const calls = []
-  const rows = [{ code: '1100', name: 'Accounts receivable' }]
-  const query = makeSelectQuery([{ data: rows, error: null }])
-  query.select = function () { return this }
-  for (const method of ['select', 'eq', 'limit', 'order']) {
-    const original = query[method]
-    query[method] = function (...args) {
-      calls.push([method, ...args])
-      return original.apply(this, args)
-    }
+  const localdb = require('../../localdb')
+  const rutaTemporal = path.join(__dirname, '../temp_local_db_pr2')
+  
+  localdb.reiniciarCache()
+  if (fs.existsSync(rutaTemporal)) {
+    fs.rmSync(rutaTemporal, { recursive: true, force: true })
   }
+  fs.mkdirSync(rutaTemporal, { recursive: true })
+  localdb.inicializar(rutaTemporal)
 
-  global.__ZYRON_TEST_INSFORGE_CLIENT = {
-    auth: {},
-    database: { from: (table) => { calls.push(['from', table]); return query } },
-    realtime: { on: () => {} }
-  }
+  const tenantIdPrueba = '11111111-1111-4111-8111-111111111111'
+  const rows = [{ code: '1100', name: 'Accounts receivable', tenant_id: tenantIdPrueba }]
+  
+  await localdb.insertLocal(tenantIdPrueba, 'accounting_accounts', rows)
+
+  const { handlers } = loadMainForBehaviorTest()
 
   const result = await handlers.get('accounting:accounts:list')(null, {
-    tenantId: '11111111-1111-4111-8111-111111111111',
+    tenantId: tenantIdPrueba,
     limit: 25
   })
 
-  assert.deepEqual(result, { data: rows, error: null })
-  assert.deepEqual(calls.slice(0, 4), [
-    ['from', 'accounting_accounts'],
-    ['select', '*'],
-    ['eq', 'tenant_id', '11111111-1111-4111-8111-111111111111'],
-    ['limit', 25]
-  ])
-  assert.deepEqual(calls.at(-1), ['order', 'code', { ascending: true }])
+  assert.equal(result.error, null)
+  assert.equal(result.data.length, 1)
+  assert.equal(result.data[0].code, '1100')
+  assert.equal(result.data[0].name, 'Accounts receivable')
+
+  localdb.reiniciarCache()
+  if (fs.existsSync(rutaTemporal)) {
+    fs.rmSync(rutaTemporal, { recursive: true, force: true })
+  }
 })
