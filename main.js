@@ -70,6 +70,9 @@ let insforgeClientPromise = null
 let authRecoveryPromise = null
 let realtimeForwardersInstalled = false
 let currentRefreshToken = null
+let sessionRefreshInterval = null
+
+const SESSION_REFRESH_INTERVAL_MS = 9 * 60 * 1000
 
 const realtimeRegistry = new Map()
 const REALTIME_RETRY_BASE_MS = 750
@@ -519,14 +522,18 @@ const requestAuthRecovery = async (client, reason) => {
       zyronLog('auth:recovery:ok', { hasUser: Boolean(result?.data?.user) })
       return { ok: true }
     } catch (error) {
-      zyronLog('auth:recovery:failed', serializeError(error, AUTH_RELOGIN_REQUIRED))
-      try { client.auth?.signOut?.() } catch (_) {}
-      currentRefreshToken = null
-      notifyRenderer('auth-session-expired', {
-        code: AUTH_RELOGIN_REQUIRED,
-        message: 'Tu sesion expiro. Vuelve a iniciar sesion para continuar.'
-      })
-      return { ok: false, error }
+      if (isAuthError(error)) {
+        zyronLog('auth:recovery:failed', serializeError(error, AUTH_RELOGIN_REQUIRED))
+        try { client.auth?.signOut?.() } catch (_) {}
+        currentRefreshToken = null
+        notifyRenderer('auth-session-expired', {
+          code: AUTH_RELOGIN_REQUIRED,
+          message: 'Tu sesion expiro. Vuelve a iniciar sesion para continuar.'
+        })
+        return { ok: false, error }
+      }
+      zyronLog('auth:recovery:transient-error', serializeError(error))
+      return { ok: false, error, transient: true }
     } finally {
       authRecoveryPromise = null
     }
@@ -607,10 +614,31 @@ const getInsforgeClient = async () => {
       baseUrl: cfg.baseUrl,
       anonKey: cfg.anonKey,
       isServerMode: true,
-      autoRefreshToken: true
+      autoRefreshToken: false
     })
     installRealtimeForwarders(client)
     sync.establecerClienteInsforge(client, true)
+    
+    if (sessionRefreshInterval) clearInterval(sessionRefreshInterval)
+    sessionRefreshInterval = setInterval(async () => {
+      if (!currentRefreshToken) return
+      try {
+        const result = await client.auth.refreshSession({ refreshToken: currentRefreshToken })
+        if (result?.error) {
+          if (isAuthError(result.error)) {
+            zyronLog('auth:interval-refresh:unauthorized', serializeError(result.error))
+            forceAuthRelogin(client, result.error)
+          } else {
+            zyronLog('auth:interval-refresh:transient-error', serializeError(result.error))
+          }
+        } else if (result?.data) {
+          applyAuthSessionFromPayload(client, result.data)
+        }
+      } catch (e) {
+        if (isAuthError(e)) forceAuthRelogin(client, e)
+      }
+    }, SESSION_REFRESH_INTERVAL_MS)
+
     return client
   })()
   insforgeClientPromise = attempt.catch((err) => {
