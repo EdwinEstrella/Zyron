@@ -9,7 +9,8 @@ jobs:
   production-readiness:
     runs-on: ubuntu-latest
     env:
-      INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL }}
+      INSFORGE_BASE_URL: ${{ secrets.INSFORGE_BASE_URL || secrets.INSFORGE_PUBLIC_URL }}
+      INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL || secrets.INSFORGE_BASE_URL }}
       INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
       TEST_USER_EMAIL: ${{ secrets.TEST_USER_EMAIL }}
       TEST_USER_PASSWORD: ${{ secrets.TEST_USER_PASSWORD }}

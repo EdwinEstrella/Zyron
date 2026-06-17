@@ -40,6 +40,9 @@ ALTER TABLE public.products
   ADD COLUMN IF NOT EXISTS tracks_stock boolean NOT NULL DEFAULT true;
 
 ALTER TABLE public.products
+  ADD COLUMN IF NOT EXISTS min_stock numeric(14,2) NOT NULL DEFAULT 0;
+
+ALTER TABLE public.products
   ADD COLUMN IF NOT EXISTS tax_rate_default numeric;
 
 ALTER TABLE public.products
@@ -52,5 +55,6 @@ ALTER TABLE public.products
   ADD COLUMN IF NOT EXISTS is_active boolean NOT NULL DEFAULT true;
 
 COMMENT ON COLUMN public.products.item_kind IS 'product | service (servicios no mueven stock si tracks_stock es false)';
+COMMENT ON COLUMN public.products.min_stock IS 'Minimum stock threshold used for low-stock alerts';
 COMMENT ON COLUMN public.products.tax_rate_default IS 'ITBIS/IVA sugerido al agregar linea en factura';
 COMMENT ON COLUMN public.products.discount_default IS 'Descuento fijo por linea sugerido al facturar';

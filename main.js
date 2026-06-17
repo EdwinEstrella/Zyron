@@ -50,6 +50,18 @@ const loadEnvFromDotEnvFiles = () => {
 }
 loadEnvFromDotEnvFiles()
 
+const applyPlaywrightUserDataOverride = () => {
+  const rawUserDataRoot = String(process.env.PW_ELECTRON_USER_DATA_ROOT || '').trim()
+  if (!rawUserDataRoot) return null
+
+  const resolvedUserDataRoot = path.resolve(rawUserDataRoot)
+  fs.mkdirSync(resolvedUserDataRoot, { recursive: true })
+  app.setPath('userData', resolvedUserDataRoot)
+  return resolvedUserDataRoot
+}
+
+const playwrightUserDataRoot = applyPlaywrightUserDataOverride()
+
 // Transitive deps still touch Node's deprecated built-in `punycode` (DEP0040); avoid noisy stderr in dev.
 const origEmitWarning = process.emitWarning.bind(process)
 process.emitWarning = (...args) => {
@@ -1353,7 +1365,10 @@ if (process.env.ZYRON_MAIN_TEST_HOOKS === '1') {
   app.whenReady().then(() => {
     try {
       localdb.inicializar(app.getPath('userData'))
-      zyronLog('localdb:inicializado', { ruta: app.getPath('userData') })
+      zyronLog('localdb:inicializado', {
+        ruta: app.getPath('userData'),
+        testUserDataOverride: playwrightUserDataRoot || null
+      })
     } catch (e) {
       zyronLog('localdb:inicializacion:error', e.message)
     }

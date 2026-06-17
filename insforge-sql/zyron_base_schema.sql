@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS public.products (
   description text,
   price numeric(14,2) NOT NULL DEFAULT 0,
   stock numeric(14,2) NOT NULL DEFAULT 0,
+  min_stock numeric(14,2) NOT NULL DEFAULT 0,
   item_kind text NOT NULL DEFAULT 'product',
   tax_rate_default numeric(7,3) DEFAULT 18,
   discount_default numeric(7,3) DEFAULT 0,

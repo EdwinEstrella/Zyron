@@ -27,12 +27,14 @@ jobs:
           npm run build:css
           npm run build:runtime-config
         env:
-          INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL }}
+          INSFORGE_BASE_URL: ${{ secrets.INSFORGE_BASE_URL || secrets.INSFORGE_PUBLIC_URL }}
+          INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL || secrets.INSFORGE_BASE_URL }}
           INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
 
       - name: Build and Publish Release
         run: npm run release:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL }}
+          INSFORGE_BASE_URL: ${{ secrets.INSFORGE_BASE_URL || secrets.INSFORGE_PUBLIC_URL }}
+          INSFORGE_PUBLIC_URL: ${{ secrets.INSFORGE_PUBLIC_URL || secrets.INSFORGE_BASE_URL }}
           INSFORGE_ANON_KEY: ${{ secrets.INSFORGE_ANON_KEY }}
