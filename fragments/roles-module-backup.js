@@ -43,7 +43,7 @@
                 document.getElementById('roles-tenant-open')?.addEventListener('click', async () => {
                     const v = document.getElementById('roles-tenant-select')?.value?.trim();
                     if (!v) {
-                        window.alert('Selecciona una empresa.');
+                        window.ZyronDialog.alert('Selecciona una empresa.');
                         return;
                     }
                     state.rolesContextTenantId = v;
@@ -309,7 +309,7 @@
             confirmBtn?.addEventListener('click', async () => {
                 const label = document.getElementById('roles-new-label')?.value?.trim();
                 const level = 50; // Default custom level
-                if (!label) return window.alert('Ingresa un nombre para el rol.');
+                if (!label) return window.ZyronDialog.alert('Ingresa un nombre para el rol.');
                 
                 const roleKey = slugifyTenant(label).replace(/-/g, '_');
                 const selectedKeys = Array.from(modal.querySelectorAll('[data-role-perm-role="new"]:checked'))
@@ -330,7 +330,7 @@
                 });
 
                 if (roleError) {
-                    window.alert('Error al crear el rol: ' + (roleError.message || String(roleError)));
+                    window.ZyronDialog.alert('Error al crear el rol: ' + (roleError.message || String(roleError)));
                     confirmBtn.disabled = false;
                     confirmBtn.innerHTML = 'Guardar rol';
                     return;
@@ -426,7 +426,7 @@
             dashboardContent.querySelectorAll('[data-role-delete]').forEach((button) => {
                 button.addEventListener('click', async () => {
                     const roleId = button.getAttribute('data-role-delete');
-                    if (!window.confirm('¿Estás seguro de eliminar este rol personalizado?')) return;
+                    if (!window.ZyronDialog.confirm('¿Estás seguro de eliminar este rol personalizado?')) return;
                     
                     const { error } = await dbDelete({
                         table: 'role_catalog',
@@ -434,7 +434,7 @@
                     });
 
                     if (error) {
-                        window.alert('Error al eliminar: ' + (error.message || String(error)));
+                        window.ZyronDialog.alert('Error al eliminar: ' + (error.message || String(error)));
                     } else {
                         await renderRolesModule();
                     }

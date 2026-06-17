@@ -1,3 +1,108 @@
+(() => {
+    const ensureDialogStyles = () => {
+        if (document.getElementById('zyron-app-dialog-styles')) return;
+        const style = document.createElement('style');
+        style.id = 'zyron-app-dialog-styles';
+        style.textContent = `
+            .zyron-dialog-backdrop { position: fixed; inset: 0; z-index: 99999; display: flex; align-items: center; justify-content: center; background: rgba(15, 23, 42, 0.42); padding: 1rem; }
+            .zyron-dialog-card { width: min(100%, 28rem); border: 1px solid rgba(148, 163, 184, 0.45); border-radius: 1rem; background: #fff; box-shadow: 0 24px 70px rgba(15, 39, 68, 0.22); color: #0f172a; }
+            .zyron-dialog-body { padding: 1.25rem; }
+            .zyron-dialog-title { margin: 0 0 0.5rem; font-size: 1rem; font-weight: 800; color: #0f2744; }
+            .zyron-dialog-message { white-space: pre-wrap; font-size: 0.875rem; line-height: 1.45rem; color: #475569; }
+            .zyron-dialog-input { margin-top: 1rem; width: 100%; border-radius: 0.625rem; border: 1px solid #cbd5e1; padding: 0.65rem 0.75rem; font-size: 0.875rem; }
+            .zyron-dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; border-top: 1px solid rgba(203, 213, 225, 0.65); padding: 0.85rem 1.25rem; }
+            .zyron-dialog-btn { border-radius: 0.625rem; border: 1px solid rgba(100, 116, 139, 0.35); padding: 0.55rem 0.9rem; font-size: 0.875rem; font-weight: 700; }
+            .zyron-dialog-btn-primary { border-color: #0f2744; background: #0f2744; color: #fff; }
+            .zyron-dialog-btn-secondary { background: #f8fafc; color: #0f2744; }
+        `;
+        document.head.appendChild(style);
+    };
+
+    const appDialog = ({ title = 'Zyron', message = '', kind = 'alert', defaultValue = '' } = {}) => {
+        ensureDialogStyles();
+        return new Promise((resolve) => {
+            const backdrop = document.createElement('div');
+            backdrop.className = 'zyron-dialog-backdrop';
+            backdrop.setAttribute('role', 'presentation');
+
+            const card = document.createElement('div');
+            card.className = 'zyron-dialog-card';
+            card.setAttribute('role', 'dialog');
+            card.setAttribute('aria-modal', 'true');
+            card.setAttribute('aria-labelledby', 'zyron-dialog-title');
+
+            const body = document.createElement('div');
+            body.className = 'zyron-dialog-body';
+            const heading = document.createElement('h2');
+            heading.id = 'zyron-dialog-title';
+            heading.className = 'zyron-dialog-title';
+            heading.textContent = title;
+            const text = document.createElement('div');
+            text.className = 'zyron-dialog-message';
+            text.textContent = String(message ?? '');
+            body.append(heading, text);
+
+            let input = null;
+            if (kind === 'prompt') {
+                input = document.createElement('input');
+                input.className = 'zyron-dialog-input';
+                input.value = String(defaultValue ?? '');
+                body.appendChild(input);
+            }
+
+            const actions = document.createElement('div');
+            actions.className = 'zyron-dialog-actions';
+            const finish = (value) => {
+                document.removeEventListener('keydown', onKeyDown);
+                backdrop.remove();
+                resolve(value);
+            };
+            const makeButton = (label, className, value) => {
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.className = `zyron-dialog-btn ${className}`;
+                button.textContent = label;
+                button.addEventListener('click', () => finish(value));
+                return button;
+            };
+            const cancelValue = kind === 'prompt' ? null : false;
+            if (kind !== 'alert') actions.appendChild(makeButton('Cancelar', 'zyron-dialog-btn-secondary', cancelValue));
+            actions.appendChild(
+                makeButton(kind === 'confirm' ? 'Confirmar' : 'Aceptar', 'zyron-dialog-btn-primary', kind === 'prompt' ? () => input.value : true)
+            );
+            actions.querySelectorAll('button').forEach((button) => {
+                const previous = button.onclick;
+                button.onclick = null;
+                button.addEventListener('click', () => {
+                    const raw = button.textContent === 'Aceptar' && kind === 'prompt' ? input.value : null;
+                    if (raw !== null) finish(raw);
+                });
+                if (previous) button.onclick = previous;
+            });
+
+            function onKeyDown(event) {
+                if (event.key === 'Escape') finish(kind === 'alert' ? true : cancelValue);
+                if (event.key === 'Enter' && kind !== 'alert') finish(kind === 'prompt' ? input.value : true);
+            }
+
+            card.append(body, actions);
+            backdrop.appendChild(card);
+            document.body.appendChild(backdrop);
+            document.addEventListener('keydown', onKeyDown);
+            (input || actions.querySelector('.zyron-dialog-btn-primary'))?.focus();
+        }).then((value) => (typeof value === 'function' ? value() : value));
+    };
+
+    const appAlert = (message) => appDialog({ title: 'Aviso', message, kind: 'alert' }).then(() => undefined);
+    const appConfirm = (message) => appDialog({ title: 'Confirmar accion', message, kind: 'confirm' });
+    const appPrompt = (message, defaultValue = '') => appDialog({ title: 'Entrada requerida', message, kind: 'prompt', defaultValue });
+
+    Object.defineProperty(window, 'alert', { configurable: true, writable: true, value: appAlert });
+    Object.defineProperty(window, 'confirm', { configurable: true, writable: true, value: appConfirm });
+    Object.defineProperty(window, 'prompt', { configurable: true, writable: true, value: appPrompt });
+    window.ZyronDialog = { alert: appAlert, confirm: appConfirm, prompt: appPrompt };
+})();
+
 const updateMaximizeIcon = (isMaximized) => {
     const maxIcon = document.getElementById('max-icon');
     const restoreIcon = document.getElementById('restore-icon');
@@ -753,7 +858,10 @@ const paintOutletFromFragment = async (moduleKey) => {
 };
 
 const unwrapFnInvoke = (result) => {
-    if (result?.error) return { err: result.error.message || String(result.error), data: null };
+    if (result?.error) {
+        if (result.error.reauthRequired) return { err: 'AUTH_EXPIRED', data: null }; // Suppress alert, app will redirect to login
+        return { err: result.error.message || String(result.error), data: null };
+    }
     let d = result?.data;
     if (d == null) return { err: null, data: null };
     if (typeof d === 'string') {
@@ -957,7 +1065,7 @@ const startImpersonation = async (tenantId) => {
         await openModule('panel');
     } catch (err) {
         console.error('[Zyron:startImpersonation]', err);
-        window.alert('No se pudo iniciar el modo asistencia de soporte.');
+        window.ZyronDialog.alert('No se pudo iniciar el modo asistencia de soporte.');
     }
 };
 
@@ -997,7 +1105,7 @@ const stopImpersonation = async () => {
         await openModule('empresas');
     } catch (err) {
         console.error('[Zyron:stopImpersonation]', err);
-        window.alert('Error al salir del modo asistencia de soporte.');
+        window.ZyronDialog.alert('Error al salir del modo asistencia de soporte.');
     }
 };
 
@@ -1383,7 +1491,7 @@ const approveAccessRequestViaDb = async (requestId, action) => {
 
 const runApproveAccessRequest = async (requestId, action, requestedEmail = null) => {
     if (!requestId) {
-        window.alert('Solicitud invalida.');
+        window.ZyronDialog.alert('Solicitud invalida.');
         return { error: { message: 'Missing requestId' } };
     }
     zyronLog('approveAccessRequest', { requestId, action, requestedEmail });
@@ -1393,21 +1501,21 @@ const runApproveAccessRequest = async (requestId, action, requestedEmail = null)
         zyronLog('approveAccessRequest:error', res.error);
         const fallback = await approveAccessRequestViaDb(requestId, action);
         if (fallback.error) {
-            window.alert(
+            window.ZyronDialog.alert(
                 fallback.error.message ||
                     res.error.message ||
                     'No se pudo completar la accion. Revisa que la funcion approve-access-request este desplegada.'
             );
             return fallback;
         }
-        window.alert(action === 'approve' ? 'Solicitud aprobada desde base de datos.' : 'Solicitud rechazada.');
+        window.ZyronDialog.alert(action === 'approve' ? 'Solicitud aprobada desde base de datos.' : 'Solicitud rechazada.');
         return fallback;
     }
     const body = res.data;
     if (body && typeof body === 'object' && body.ok !== true && body.error) {
         const msg = typeof body.error === 'string' ? body.error : body.error?.message || String(body.error);
         zyronLog('approveAccessRequest:bodyError', body);
-        window.alert(msg || 'La funcion respondio con error.');
+        window.ZyronDialog.alert(msg || 'La funcion respondio con error.');
         return { data: null, error: { message: msg } };
     }
     console.log('[Zyron:approveAccessRequest:okBody]', body);
@@ -1417,7 +1525,7 @@ const runApproveAccessRequest = async (requestId, action, requestedEmail = null)
             console.warn('[Zyron:approveAccessRequest] app_users no se pudo actualizar desde el cliente; revisa RLS.', patch);
         }
     }
-    window.alert(
+    window.ZyronDialog.alert(
         action === 'approve'
             ? 'Solicitud aprobada: empresa creada y usuario en estado Aprobado. La fila sale de solicitudes pendientes. Para cobros usa Suspender / Reactivar en Usuarios del sistema.'
             : 'Solicitud rechazada.'
@@ -2548,8 +2656,8 @@ const renderEmpresasModule = async () => {
                 targetEmail: email,
                 reason: 'Super admin solicito restablecimiento'
             });
-            if (error) window.alert(error.message || 'No se pudo enviar el correo de restablecimiento.');
-            else window.alert('Se envio un correo para restablecer la contraseña.');
+            if (error) window.ZyronDialog.alert(error.message || 'No se pudo enviar el correo de restablecimiento.');
+            else window.ZyronDialog.alert('Se envio un correo para restablecer la contraseña.');
         });
     });
 
@@ -2901,8 +3009,8 @@ const renderSuperAccessModule = async () => {
                 reason: 'Super admin — modulo Acceso'
             });
             const u = unwrapFnInvoke(r);
-            if (u.err) window.alert(u.err);
-            else window.alert('Correo de restablecimiento enviado (si el proveedor lo permite).');
+            if (u.err) window.ZyronDialog.alert(u.err);
+            else window.ZyronDialog.alert('Correo de restablecimiento enviado (si el proveedor lo permite).');
         });
     });
 
@@ -2915,7 +3023,7 @@ const renderSuperAccessModule = async () => {
             const next = normalized === 'inactive' ? 'active' : 'inactive';
             const r = await invokeFn('manage-super-access', { action: 'patch_app_user', appUserId: userId, status: next });
             const u = unwrapFnInvoke(r);
-            if (u.err || u.data?.error) window.alert(u.err || u.data?.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data?.error || 'Error');
             else void renderSuperAccessModule();
         });
     });
@@ -2923,10 +3031,10 @@ const renderSuperAccessModule = async () => {
     dashboardContent.querySelectorAll('[data-sa-delete-user]').forEach((button) => {
         button.addEventListener('click', async () => {
             const userId = button.getAttribute('data-sa-delete-user');
-            if (!window.confirm('Eliminar usuario y todas sus membresías? Esta acción no se puede deshacer.')) return;
+            if (!window.ZyronDialog.confirm('Eliminar usuario y todas sus membresías? Esta acción no se puede deshacer.')) return;
             const r = await invokeFn('manage-super-access', { action: 'delete_platform_user', appUserId: userId });
             const u = unwrapFnInvoke(r);
-            if (u.err || u.data?.error) window.alert(u.err || u.data?.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data?.error || 'Error');
             else void renderSuperAccessModule();
         });
     });
@@ -2934,10 +3042,10 @@ const renderSuperAccessModule = async () => {
     dashboardContent.querySelectorAll('[data-sa-demote]').forEach((button) => {
         button.addEventListener('click', async () => {
             const userId = button.getAttribute('data-sa-demote');
-            if (!window.confirm('Degradar a usuario de plataforma (global_role: user)? Requiere haber otro super admin activo.')) return;
+            if (!window.ZyronDialog.confirm('Degradar a usuario de plataforma (global_role: user)? Requiere haber otro super admin activo.')) return;
             const r = await invokeFn('manage-super-access', { action: 'patch_app_user', appUserId: userId, globalRole: 'user' });
             const u = unwrapFnInvoke(r);
-            if (u.err || u.data?.error) window.alert(u.err || u.data?.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data?.error || 'Error');
             else void renderSuperAccessModule();
         });
     });
@@ -2967,7 +3075,7 @@ const renderSuperAccessModule = async () => {
                 isOwner
             });
             const u = unwrapFnInvoke(r);
-            if (u.err || u.data?.error) window.alert(u.err || u.data?.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data?.error || 'Error');
             else void renderSuperAccessModule();
         });
     });
@@ -3056,7 +3164,7 @@ const renderRolesModule = async (opts = {}) => {
             </div>`;
         document.getElementById('roles-tenant-open')?.addEventListener('click', async () => {
             const v = document.getElementById('roles-tenant-select')?.value?.trim();
-            if (!v) return window.alert('Selecciona una empresa.');
+            if (!v) return window.ZyronDialog.alert('Selecciona una empresa.');
             state.rolesContextTenantId = v;
             await renderRolesModule();
         });
@@ -3190,12 +3298,12 @@ const renderRolesModule = async (opts = {}) => {
     modal?.querySelectorAll('[data-role-perm-role="new"]').forEach((checkbox) => checkbox.addEventListener('change', (event) => applyPermissionSelection('new', event.target.getAttribute('data-role-perm-key'), event.target.checked)));
     confirmBtn?.addEventListener('click', async () => {
         const label = document.getElementById('roles-new-label')?.value?.trim();
-        if (!label) return window.alert('Ingresa un nombre para el rol.');
+        if (!label) return window.ZyronDialog.alert('Ingresa un nombre para el rol.');
         const roleKey = slugifyTenant(label).replace(/-/g, '_');
         const selectedKeys = Array.from(modal.querySelectorAll('[data-role-perm-role="new"]:checked')).map((checkbox) => checkbox.getAttribute('data-role-perm-key'));
         confirmBtn.disabled = true; confirmBtn.textContent = 'Guardando...';
         const { data: inserted, error: roleError } = await dbInsert({ table: 'role_catalog', values: [{ tenant_id: effectiveTenantId, role_key: roleKey, label, hierarchy_level: 50, is_system: false }] });
-        if (roleError) { window.alert('Error al crear el rol: ' + (roleError.message || String(roleError))); confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; return; }
+        if (roleError) { window.ZyronDialog.alert('Error al crear el rol: ' + (roleError.message || String(roleError))); confirmBtn.disabled = false; confirmBtn.textContent = 'Guardar'; return; }
         if (inserted?.[0] && selectedKeys.length > 0) {
             const permissionByKey = new Map((permissionRows || []).map((perm) => [perm.permission_key, perm.id]));
             const payload = selectedKeys.map((key) => permissionByKey.get(key)).filter(Boolean).map((permissionId) => ({ role_id: inserted[0].id, permission_id: permissionId }));
@@ -6501,7 +6609,7 @@ const buildInvoiceDocumentHtml = (ctx) => {
 
 const openInvoiceDocumentPreview = async (html, autoPrint) => {
     if (!window.electronAPI?.openHtmlPreview) {
-        window.alert('No se pudo abrir la vista previa del documento.');
+        window.ZyronDialog.alert('No se pudo abrir la vista previa del documento.');
         return;
     }
 
@@ -6511,7 +6619,7 @@ const openInvoiceDocumentPreview = async (html, autoPrint) => {
     );
     const u = unwrapFnInvoke(res);
     if (u.err || u.data?.error) {
-        window.alert(u.err || u.data?.error || 'No se pudo abrir la vista previa del documento.');
+        window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo abrir la vista previa del documento.');
     }
 };
 
@@ -6533,10 +6641,10 @@ const exportInvoiceDocumentPdf = async (filename, html) => {
         );
         const u = unwrapFnInvoke(res);
         if (u.err || u.data?.error) {
-            window.alert(u.err || u.data?.error || 'No se pudo guardar el PDF.');
+            window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo guardar el PDF.');
             return;
         }
-        if (u.data?.ok && u.data?.path) window.alert(`PDF guardado en:\n${u.data.path}`);
+        if (u.data?.ok && u.data?.path) window.ZyronDialog.alert(`PDF guardado en:\n${u.data.path}`);
         return;
     }
     openInvoiceDocumentPreview(html, true);
@@ -7186,7 +7294,7 @@ const renderFacturasModule = async () => {
     document.getElementById('factura-template-save')?.addEventListener('click', async () => {
         const templateId = document.getElementById('factura-template')?.value || docSettings.templateId;
         await persistFacturaTemplateChoice(templateId);
-        window.alert('Plantilla actualizada.');
+        window.ZyronDialog.alert('Plantilla actualizada.');
     });
     document.getElementById('factura-add-line')?.addEventListener('click', () => {
         const tbody = document.getElementById('facturas-lines-tbody');
@@ -7261,15 +7369,15 @@ const renderFacturasModule = async () => {
     document.getElementById('factura-save-draft')?.addEventListener('click', async () => {
         const items = collectLines();
         if (!items.length) {
-            window.alert('Anade al menos una linea valida (cantidad > 0).');
+            window.ZyronDialog.alert('Anade al menos una linea valida (cantidad > 0).');
             return;
         }
         const meta = readSheetMeta();
         if ((meta.invoiceType === 'credit_note' || meta.invoiceType === 'debit_note') && !meta.parentInvoiceId) {
-            window.alert('Selecciona el documento padre para NC/ND.');
+            window.ZyronDialog.alert('Selecciona el documento padre para NC/ND.');
             return;
         }
-        if (state.tenantPreferences?.confirmBeforeIssue !== false && !window.confirm('Emitir esta factura?')) return;
+        if (state.tenantPreferences?.confirmBeforeIssue !== false && !window.ZyronDialog.confirm('Emitir esta factura?')) return;
         await persistFacturaTemplateChoice(meta.templateId);
         const iid = document.getElementById('factura-sheet-invoice-id').value.trim();
         if (!iid) {
@@ -7285,11 +7393,11 @@ const renderFacturasModule = async () => {
             });
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) {
-                window.alert(u.err || u.data?.error || 'No se pudo crear el borrador.');
+                window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo crear el borrador.');
                 return;
             }
             document.getElementById('factura-sheet-invoice-id').value = u.data.invoice?.id || '';
-            window.alert('Borrador guardado.');
+            window.ZyronDialog.alert('Borrador guardado.');
         } else {
             const res = await invokeFn('update-invoice', {
                 tenantId: tid,
@@ -7304,10 +7412,10 @@ const renderFacturasModule = async () => {
             });
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) {
-                window.alert(u.err || u.data?.error || 'No se pudo actualizar.');
+                window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo actualizar.');
                 return;
             }
-            window.alert('Borrador actualizado.');
+            window.ZyronDialog.alert('Borrador actualizado.');
         }
         await renderFacturasModule();
     });
@@ -7315,12 +7423,12 @@ const renderFacturasModule = async () => {
     document.getElementById('factura-issue-btn')?.addEventListener('click', async () => {
         const items = collectLines();
         if (!items.length) {
-            window.alert('Anade al menos una linea valida.');
+            window.ZyronDialog.alert('Anade al menos una linea valida.');
             return;
         }
         const meta = readSheetMeta();
         if ((meta.invoiceType === 'credit_note' || meta.invoiceType === 'debit_note') && !meta.parentInvoiceId) {
-            window.alert('Selecciona el documento padre para NC/ND.');
+            window.ZyronDialog.alert('Selecciona el documento padre para NC/ND.');
             return;
         }
         await persistFacturaTemplateChoice(meta.templateId);
@@ -7339,7 +7447,7 @@ const renderFacturasModule = async () => {
             });
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) {
-                window.alert(u.err || u.data?.error || 'No se pudo emitir.');
+                window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo emitir.');
                 return;
             }
             closeSheet();
@@ -7360,7 +7468,7 @@ const renderFacturasModule = async () => {
         });
         const u = unwrapFnInvoke(res);
         if (u.err || !u.data?.ok) {
-            window.alert(u.err || u.data?.error || 'No se pudo emitir.');
+            window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo emitir.');
             return;
         }
         closeSheet();
@@ -7453,14 +7561,14 @@ const renderFacturasModule = async () => {
         if (act === 'dup') {
             const res = await invokeFn('duplicate-invoice', { tenantId: tid, invoiceId: id });
             const u = unwrapFnInvoke(res);
-            if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Duplicar fallo.');
+            if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Duplicar fallo.');
             await renderFacturasModule();
         }
         if (act === 'del') {
-            if (!window.confirm('Eliminar esta factura?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar esta factura?')) return;
             const res = await invokeFn('delete-invoice', { tenantId: tid, invoiceId: id });
             const u = unwrapFnInvoke(res);
-            if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Eliminar fallo.');
+            if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Eliminar fallo.');
             await renderFacturasModule();
         }
         if (act === 'pdf' || act === 'doc-html') {
@@ -7504,17 +7612,17 @@ const renderFacturasModule = async () => {
             isDefault
         });
         const u = unwrapFnInvoke(res);
-        if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo guardar la serie.');
+        if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo guardar la serie.');
         await renderFacturasModule();
     });
 
     document.querySelectorAll('[data-series-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
             const sid = btn.getAttribute('data-series-del');
-            if (!window.confirm('Eliminar esta serie?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar esta serie?')) return;
             const res = await invoiceSeriesDeleteViaDb(tid, sid);
             const u = unwrapFnInvoke(res);
-            if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo eliminar.');
+            if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo eliminar.');
             await renderFacturasModule();
         });
     });
@@ -7527,7 +7635,7 @@ const renderFacturasModule = async () => {
             try {
                 templatePayload = JSON.parse(raw);
             } catch (_) {
-                window.alert('Payload JSON invalido.');
+                window.ZyronDialog.alert('Payload JSON invalido.');
                 return;
             }
         }
@@ -7541,17 +7649,17 @@ const renderFacturasModule = async () => {
             templatePayload
         });
         const u = unwrapFnInvoke(res);
-        if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo crear la plantilla.');
+        if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo crear la plantilla.');
         await renderFacturasModule();
     });
 
     document.querySelectorAll('[data-rec-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
             const rid = btn.getAttribute('data-rec-del');
-            if (!window.confirm('Eliminar plantilla?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar plantilla?')) return;
             const res = await invoiceRecurrenceDeleteViaDb(tid, rid);
             const u = unwrapFnInvoke(res);
-            if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo eliminar.');
+            if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo eliminar.');
             await renderFacturasModule();
         });
     });
@@ -7565,7 +7673,7 @@ const renderFacturasModule = async () => {
                 isActive: !active
             });
             const u = unwrapFnInvoke(res);
-            if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'No se pudo actualizar.');
+            if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo actualizar.');
             await renderFacturasModule();
         });
     });
@@ -7585,7 +7693,7 @@ const renderFacturasModule = async () => {
             if (rm) rm.value = '';
             if (!f) return;
             if (f.size > 380000) {
-                window.alert('Imagen demasiado grande; usa una por debajo de ~300 KB.');
+                window.ZyronDialog.alert('Imagen demasiado grande; usa una por debajo de ~300 KB.');
                 ev.target.value = '';
                 return;
             }
@@ -7639,7 +7747,7 @@ const renderFacturasModule = async () => {
         document.getElementById('doc-preview-sample')?.addEventListener('click', async () => {
             const inv = (invoices || [])[0];
             if (!inv) {
-                window.alert('No hay facturas en la lista para previsualizar.');
+                window.ZyronDialog.alert('No hay facturas en la lista para previsualizar.');
                 return;
             }
             const { data: lineRows } = await dbSelect({
@@ -8059,10 +8167,10 @@ const renderPresupuestosModule = async () => {
     const saveOrIssue = async (issue) => {
         const items = collectLines();
         if (!items.length) {
-            window.alert('Anade al menos una linea valida.');
+            window.ZyronDialog.alert('Anade al menos una linea valida.');
             return;
         }
-        if (issue && state.tenantPreferences?.confirmBeforeIssue !== false && !window.confirm('Emitir este presupuesto?')) return;
+        if (issue && state.tenantPreferences?.confirmBeforeIssue !== false && !window.ZyronDialog.confirm('Emitir este presupuesto?')) return;
         const id = document.getElementById('estimate-sheet-id').value.trim();
         const payload = {
             tenantId: tid,
@@ -8090,11 +8198,11 @@ const renderPresupuestosModule = async () => {
               });
         const u = unwrapFnInvoke(res);
         if (u.err || !u.data?.ok) {
-            window.alert(u.err || u.data?.error || 'No se pudo guardar el presupuesto.');
+            window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo guardar el presupuesto.');
             return;
         }
         if (issue) closeSheet();
-        else window.alert(id ? 'Borrador actualizado.' : 'Borrador guardado.');
+        else window.ZyronDialog.alert(id ? 'Borrador actualizado.' : 'Borrador guardado.');
         await renderPresupuestosModule();
     };
 
@@ -8115,7 +8223,7 @@ const renderPresupuestosModule = async () => {
         if (templateId && templateId !== docSettings.templateId) {
             await invoiceDocumentBrandingUpsertViaDb(tid, { ...docSettings, templateId });
         }
-        window.alert('Plantilla actualizada.');
+        window.ZyronDialog.alert('Plantilla actualizada.');
     });
     document.getElementById('estimate-add-line')?.addEventListener('click', () => {
         const tbody = document.getElementById('estimates-lines-tbody');
@@ -8210,7 +8318,7 @@ const renderPresupuestosModule = async () => {
                     { op: 'eq', column: 'id', value: id }
                 ]
             });
-            if (error) window.alert(error.message || 'No se pudo cambiar el estado.');
+            if (error) window.ZyronDialog.alert(error.message || 'No se pudo cambiar el estado.');
             await renderPresupuestosModule();
         }
         if (act === 'convert') {
@@ -8225,7 +8333,7 @@ const renderPresupuestosModule = async () => {
             });
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) {
-                window.alert(u.err || u.data?.error || 'No se pudo convertir.');
+                window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo convertir.');
                 return;
             }
             await dbUpdate({
@@ -8236,20 +8344,20 @@ const renderPresupuestosModule = async () => {
                     { op: 'eq', column: 'id', value: id }
                 ]
             });
-            window.alert('Presupuesto convertido a factura borrador.');
+            window.ZyronDialog.alert('Presupuesto convertido a factura borrador.');
             await renderPresupuestosModule();
         }
         if (act === 'dup') {
             const res = await invokeFn('duplicate-invoice', { tenantId: tid, invoiceId: id });
             const u = unwrapFnInvoke(res);
-            if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Duplicar fallo.');
+            if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Duplicar fallo.');
             await renderPresupuestosModule();
         }
         if (act === 'del') {
-            if (!window.confirm('Eliminar este presupuesto?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar este presupuesto?')) return;
             const res = await invokeFn('delete-invoice', { tenantId: tid, invoiceId: id });
             const u = unwrapFnInvoke(res);
-            if (u.err || !u.data?.ok) window.alert(u.err || u.data?.error || 'Eliminar fallo.');
+            if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Eliminar fallo.');
             await renderPresupuestosModule();
         }
         if (act === 'pdf' || act === 'html') {
@@ -8609,7 +8717,7 @@ const renderPagosModule = async () => {
     document.getElementById('pay-reg-submit')?.addEventListener('click', async () => {
         const amount = Number(document.getElementById('pay-reg-amount')?.value || 0);
         if (!(amount > 0)) {
-            window.alert('Indica un monto mayor a cero.');
+            window.ZyronDialog.alert('Indica un monto mayor a cero.');
             return;
         }
         const invSel = document.getElementById('pay-reg-invoice');
@@ -8629,9 +8737,9 @@ const renderPagosModule = async () => {
             allocations
         });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else {
-            window.alert('Pago registrado.');
+            window.ZyronDialog.alert('Pago registrado.');
             await renderPagosModule();
         }
     });
@@ -8644,7 +8752,7 @@ const renderPagosModule = async () => {
             const dueDate = v ? new Date(`${v}T12:00:00`).toISOString() : null;
             const res = await paymentsSetInvoiceDueDateViaDb(tid, invId, dueDate);
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else await renderPagosModule();
         });
     });
@@ -8652,7 +8760,7 @@ const renderPagosModule = async () => {
     document.getElementById('pay-seed-methods')?.addEventListener('click', async () => {
         const res = await paymentsSeedMethodsViaDb(tid);
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else await renderPagosModule();
     });
 
@@ -8664,7 +8772,7 @@ const renderPagosModule = async () => {
             const ref = row?.querySelector('[data-reco-field="ref"]')?.value?.trim() || null;
             const res = await paymentsSetReconciliationViaDb(tid, pid, st, ref);
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else await renderPagosModule();
         });
     });
@@ -8676,7 +8784,7 @@ const renderPagosModule = async () => {
             try {
                 payload = JSON.parse(raw);
             } catch (_) {
-                window.alert('Payload JSON invalido.');
+                window.ZyronDialog.alert('Payload JSON invalido.');
                 return;
             }
         }
@@ -8687,17 +8795,17 @@ const renderPagosModule = async () => {
             payload
         );
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
-        else window.alert(`Evento OK. Pago enlazado: ${u.data.matchedPaymentId || 'ninguno'}`);
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
+        else window.ZyronDialog.alert(`Evento OK. Pago enlazado: ${u.data.matchedPaymentId || 'ninguno'}`);
     });
 
     document.getElementById('pay-rem-run')?.addEventListener('click', async () => {
         const horizonDays = Number(document.getElementById('pay-rem-horizon')?.value || 7);
         const res = await paymentsRunRemindersViaDb(tid, horizonDays);
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else {
-            window.alert(`Registros creados: ${u.data.queued ?? 0} (candidatos ${u.data.candidates ?? 0})`);
+            window.ZyronDialog.alert(`Registros creados: ${u.data.queued ?? 0} (candidatos ${u.data.candidates ?? 0})`);
             await renderPagosModule();
         }
     });
@@ -9066,7 +9174,7 @@ const renderClientesModule = async () => {
                 isActive: !active
             });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else await renderClientesModule();
         });
     });
@@ -9075,7 +9183,7 @@ const renderClientesModule = async () => {
         const res = await customersManageViaDb({ tenantId: tid, action: 'export_customers', format: 'csv' });
         const u = unwrapFnInvoke(res);
         if (u.err || u.data?.error || !u.data?.csv) {
-            window.alert(u.err || u.data?.error || 'Export fallo');
+            window.ZyronDialog.alert(u.err || u.data?.error || 'Export fallo');
             return;
         }
         const blob = new Blob([u.data.csv], { type: 'text/csv;charset=utf-8' });
@@ -9089,7 +9197,7 @@ const renderClientesModule = async () => {
     document.getElementById('cli-seg-seed')?.addEventListener('click', async () => {
         const res = await customersManageViaDb({ tenantId: tid, action: 'seed_segments' });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else await renderClientesModule();
     });
 
@@ -9099,20 +9207,20 @@ const renderClientesModule = async () => {
         const color = document.getElementById('cli-seg-color')?.value?.trim() || null;
         const res = await customersManageViaDb({ tenantId: tid, action: 'upsert_segment', code, label, color });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else await renderClientesModule();
     });
 
     dashboardContent.querySelectorAll('[data-seg-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.confirm('Eliminar segmento?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar segmento?')) return;
             const res = await customersManageViaDb({
                 tenantId: tid,
                 action: 'delete_segment',
                 segmentId: btn.getAttribute('data-seg-del')
             });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else await renderClientesModule();
         });
     });
@@ -9142,7 +9250,7 @@ const renderClientesModule = async () => {
             res = await customersManageViaDb({ ...payload, action: 'create_customer' });
         }
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else {
             closeSheet();
         }
@@ -9432,15 +9540,15 @@ const renderInventarioModule = async () => {
             const isDefault = Boolean(document.getElementById('inv-wh-default')?.checked);
             const res = await inventoryUpsertWarehouseViaDb(tid, { code, label, isDefault });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else void renderInventarioModule();
         });
         dashboardContent.querySelectorAll('[data-inv-wh-del]').forEach((btn) => {
             btn.addEventListener('click', async () => {
-                if (!window.confirm('Eliminar almacen vacio?')) return;
+                if (!window.ZyronDialog.confirm('Eliminar almacen vacio?')) return;
                 const res = await inventoryDeleteWarehouseViaDb(tid, btn.getAttribute('data-inv-wh-del'));
                 const u = unwrapFnInvoke(res);
-                if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+                if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
                 else void renderInventarioModule();
             });
         });
@@ -9454,9 +9562,9 @@ const renderInventarioModule = async () => {
                 reason: fd.get('reason')
             });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else {
-                window.alert('Ajuste registrado.');
+                window.ZyronDialog.alert('Ajuste registrado.');
                 void renderInventarioModule();
             }
         });
@@ -9759,7 +9867,7 @@ const renderInventarioModule = async () => {
                 isActive: !active
             });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else await renderInventarioModule();
         });
     });
@@ -9768,7 +9876,7 @@ const renderInventarioModule = async () => {
         const res = await productsManageViaDb({ tenantId: tid, action: 'export_catalog' });
         const u = unwrapFnInvoke(res);
         if (u.err || !u.data?.csv) {
-            window.alert(u.err || u.data?.error || 'Export fallo');
+            window.ZyronDialog.alert(u.err || u.data?.error || 'Export fallo');
             return;
         }
         const blob = new Blob([u.data.csv], { type: 'text/csv;charset=utf-8' });
@@ -9782,7 +9890,7 @@ const renderInventarioModule = async () => {
     document.getElementById('inv-cat-seed')?.addEventListener('click', async () => {
         const res = await productsManageViaDb({ tenantId: tid, action: 'seed_categories' });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else await renderInventarioModule();
     });
 
@@ -9791,16 +9899,16 @@ const renderInventarioModule = async () => {
         const label = document.getElementById('inv-cat-label')?.value?.trim();
         const res = await productsManageViaDb({ tenantId: tid, action: 'upsert_category', code, label });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else await renderInventarioModule();
     });
 
     dashboardContent.querySelectorAll('[data-inv-cat-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.confirm('Eliminar categoria?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar categoria?')) return;
             const res = await productsManageViaDb({ tenantId: tid, action: 'delete_category', categoryId: btn.getAttribute('data-inv-cat-del') });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else await renderInventarioModule();
         });
     });
@@ -9808,16 +9916,16 @@ const renderInventarioModule = async () => {
     document.getElementById('inv-unit-seed')?.addEventListener('click', async () => {
         const res = await productsManageViaDb({ tenantId: tid, action: 'seed_units' });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else await renderInventarioModule();
     });
 
     dashboardContent.querySelectorAll('[data-inv-unit-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.confirm('Eliminar unidad?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar unidad?')) return;
             const res = await productsManageViaDb({ tenantId: tid, action: 'delete_unit', unitId: btn.getAttribute('data-inv-unit-del') });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else await renderInventarioModule();
         });
     });
@@ -9847,7 +9955,7 @@ const renderInventarioModule = async () => {
         if (editId) res = await productsManageViaDb({ ...payload, action: 'update_product', productId: editId });
         else res = await productsManageViaDb({ ...payload, action: 'create_product' });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else closeSheet();
     });
 
@@ -10015,13 +10123,13 @@ const renderFiscalModule = async (opts = {}) => {
             withholdingItbisOnTaxPct: fd.get('withholding_itbis_on_tax_pct')
         });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else void renderFiscalModule(opts);
     });
     document.getElementById('fisc-seed-rates')?.addEventListener('click', async () => {
         const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'seed_tax_rates_do' });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else void renderFiscalModule(opts);
     });
     document.getElementById('fisc-rate-add')?.addEventListener('click', async () => {
@@ -10034,15 +10142,15 @@ const renderFiscalModule = async (opts = {}) => {
             isDefault: Boolean(document.getElementById('fisc-rate-def')?.checked)
         });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else void renderFiscalModule(opts);
     });
     target.querySelectorAll('[data-fisc-del-rate]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.confirm('Eliminar tasa?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar tasa?')) return;
             const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'delete_tax_rate', id: btn.getAttribute('data-fisc-del-rate') });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else void renderFiscalModule(opts);
         });
     });
@@ -10057,7 +10165,7 @@ const renderFiscalModule = async (opts = {}) => {
             nextCorrelative: document.getElementById('fisc-ncf-next')?.value
         });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else void renderFiscalModule(opts);
     });
     document.getElementById('fisc-ncf-prev-btn')?.addEventListener('click', async () => {
@@ -10072,21 +10180,21 @@ const renderFiscalModule = async (opts = {}) => {
     });
     target.querySelectorAll('[data-fisc-del-ncf]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.confirm('Eliminar secuencia?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar secuencia?')) return;
             const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'delete_ncf_sequence', id: btn.getAttribute('data-fisc-del-ncf') });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else void renderFiscalModule(opts);
         });
     });
     document.getElementById('fisc-ack-save')?.addEventListener('click', async () => {
         if (!document.getElementById('fisc-ack')?.checked) {
-            window.alert('Marca la casilla.');
+            window.ZyronDialog.alert('Marca la casilla.');
             return;
         }
         const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'upsert_settings', complianceAckAt: new Date().toISOString() });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else void renderFiscalModule(opts);
     });
     zyronLog('render:fiscal:done', { tab });
@@ -10094,7 +10202,7 @@ const renderFiscalModule = async (opts = {}) => {
 
 const printReportPdf = async (title, rows) => {
     if (!rows || !rows.length) {
-        window.alert('No hay filas para imprimir.');
+        window.ZyronDialog.alert('No hay filas para imprimir.');
         return;
     }
     const keys = Object.keys(rows[0]);
@@ -10112,7 +10220,7 @@ const printReportPdf = async (title, rows) => {
         <p style="font-size:11px;color:#666">Use el dialogo de impresion del sistema y elija "Guardar como PDF" si esta disponible.</p>
         <script>window.onload=function(){window.focus();window.print();}<\/script></body></html>`;
     if (!window.electronAPI?.openHtmlPreview) {
-        window.alert('No se pudo abrir la vista previa de impresion.');
+        window.ZyronDialog.alert('No se pudo abrir la vista previa de impresion.');
         return;
     }
     const res = await safeCall(
@@ -10121,7 +10229,7 @@ const printReportPdf = async (title, rows) => {
     );
     const u = unwrapFnInvoke(res);
     if (u.err || u.data?.error) {
-        window.alert(u.err || u.data?.error || 'No se pudo abrir la vista previa de impresion.');
+        window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo abrir la vista previa de impresion.');
     }
 };
 
@@ -10289,7 +10397,7 @@ const renderReportesModule = async () => {
         const res = await reportsManageViaDb({ tenantId: tid, action: 'run_report', reportKey: t, format: 'csv', ...rangePayload });
         const u = unwrapFnInvoke(res);
         if (u.err || u.data?.ok === false || !u.data?.csv) {
-            window.alert(u.err || u.data?.error || 'Export fallo');
+            window.ZyronDialog.alert(u.err || u.data?.error || 'Export fallo');
             return;
         }
         const blob = new Blob([u.data.csv], { type: 'text/csv;charset=utf-8' });
@@ -10319,7 +10427,7 @@ const renderReportesModule = async () => {
             filterJson
         });
         const u = unwrapFnInvoke(res);
-        if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else void renderReportesModule();
     });
     dashboardContent.querySelectorAll('[data-rep-run-custom]').forEach((btn) => {
@@ -10328,7 +10436,7 @@ const renderReportesModule = async () => {
             const res = await reportsManageViaDb({ tenantId: tid, action: 'run_custom_definition', id, format: 'json', ...rangePayload });
             const u = unwrapFnInvoke(res);
             if (u.err || u.data?.error || u.data?.ok === false) {
-                window.alert(u.err || u.data?.error || 'Error');
+                window.ZyronDialog.alert(u.err || u.data?.error || 'Error');
                 return;
             }
             state._reportesLastRows = u.data.rows || [];
@@ -10363,7 +10471,7 @@ const renderReportesModule = async () => {
                     const r2 = await reportsManageViaDb({ tenantId: tid, action: 'run_custom_definition', id, format: 'csv', ...rangePayload });
                     const u2 = unwrapFnInvoke(r2);
                     if (u2.err || u2.data?.ok === false || !u2.data?.csv) {
-                        window.alert(u2.err || u2.data?.error || 'Export fallo');
+                        window.ZyronDialog.alert(u2.err || u2.data?.error || 'Export fallo');
                         return;
                     }
                     const blob = new Blob([u2.data.csv], { type: 'text/csv;charset=utf-8' });
@@ -10381,10 +10489,10 @@ const renderReportesModule = async () => {
     });
     dashboardContent.querySelectorAll('[data-rep-del-custom]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.confirm('Eliminar plantilla?')) return;
+            if (!window.ZyronDialog.confirm('Eliminar plantilla?')) return;
             const res = await reportsManageViaDb({ tenantId: tid, action: 'delete_custom_definition', id: btn.getAttribute('data-rep-del-custom') });
             const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.alert(u.err || u.data.error || 'Error');
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
             else void renderReportesModule();
         });
     });
@@ -11193,7 +11301,7 @@ const renderContabilidadModule = async () => {
 
         // Sembrar Catálogo
         document.getElementById('acc-seed-btn')?.addEventListener('click', async () => {
-            if (!window.confirm('¿Deseas sembrar la nomenclatura estándar del catálogo de cuentas en español?')) return;
+            if (!window.ZyronDialog.confirm('¿Deseas sembrar la nomenclatura estándar del catálogo de cuentas en español?')) return;
             
             try {
                 // Limpieza opcional de cuentas inglesas vacías del tenant
@@ -11248,11 +11356,11 @@ const renderContabilidadModule = async () => {
                     }
                 }
 
-                window.alert('¡Nomenclatura estándar en español sembrada exitosamente!');
+                window.ZyronDialog.alert('¡Nomenclatura estándar en español sembrada exitosamente!');
                 void renderContabilidadModule();
             } catch (err) {
                 console.error(err);
-                window.alert('Error al sembrar la nomenclatura contable: ' + err.message);
+                window.ZyronDialog.alert('Error al sembrar la nomenclatura contable: ' + err.message);
             }
         });
     }
@@ -11288,7 +11396,7 @@ const renderContabilidadModule = async () => {
         dashboardContent.querySelectorAll('[data-ent-reverse]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const id = btn.getAttribute('data-ent-reverse');
-                if (!window.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
+                if (!window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
                 
                 try {
                     const originalEntry = entries.find(e => e.id === id);
@@ -11353,11 +11461,11 @@ const renderContabilidadModule = async () => {
                         values: { status: 'reversed' }
                     });
 
-                    window.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
+                    window.ZyronDialog.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
                     void renderContabilidadModule();
                 } catch (err) {
                     console.error(err);
-                    window.alert('Error al reversar asiento: ' + err.message);
+                    window.ZyronDialog.alert('Error al reversar asiento: ' + err.message);
                 }
             });
         });
@@ -11365,14 +11473,14 @@ const renderContabilidadModule = async () => {
         dashboardContent.querySelectorAll('[data-ent-del]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const id = btn.getAttribute('data-ent-del');
-                if (!window.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
+                if (!window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
                 
                 try {
                     await dbDelete({ table: 'accounting_journal_entries', id });
-                    window.alert('¡Borrador eliminado exitosamente!');
+                    window.ZyronDialog.alert('¡Borrador eliminado exitosamente!');
                     void renderContabilidadModule();
                 } catch (err) {
-                    window.alert('Error al eliminar asiento: ' + err.message);
+                    window.ZyronDialog.alert('Error al eliminar asiento: ' + err.message);
                 }
             });
         });
@@ -11417,10 +11525,10 @@ const renderContabilidadModule = async () => {
                 });
 
                 if (res.error) throw new Error(res.error.message);
-                window.alert('¡Cuenta contable creada con éxito!');
+                window.ZyronDialog.alert('¡Cuenta contable creada con éxito!');
                 closeModal();
             } catch (err) {
-                window.alert('Error al crear cuenta contable: ' + err.message);
+                window.ZyronDialog.alert('Error al crear cuenta contable: ' + err.message);
             }
         });
     }
@@ -11499,7 +11607,7 @@ const renderContabilidadModule = async () => {
 
             row.querySelector('.ent-line-del-btn').addEventListener('click', () => {
                 if (linesBody.querySelectorAll('.ent-line-row').length <= 2) {
-                    window.alert('Un asiento contable requiere de al menos dos apuntes (líneas).');
+                    window.ZyronDialog.alert('Un asiento contable requiere de al menos dos apuntes (líneas).');
                     return;
                 }
                 row.remove();
@@ -11552,7 +11660,7 @@ const renderContabilidadModule = async () => {
             const entry_date = document.getElementById('ent-date').value;
 
             if (!memo) {
-                window.alert('El concepto general del asiento es obligatorio.');
+                window.ZyronDialog.alert('El concepto general del asiento es obligatorio.');
                 return;
             }
 
@@ -11569,12 +11677,12 @@ const renderContabilidadModule = async () => {
                 const credit_amount = Number(r.querySelector('.ent-line-credit').value || 0);
 
                 if (!account_id) {
-                    window.alert(`Por favor, selecciona una cuenta válida en la fila ${i + 1}.`);
+                    window.ZyronDialog.alert(`Por favor, selecciona una cuenta válida en la fila ${i + 1}.`);
                     return;
                 }
 
                 if (debit_amount === 0 && credit_amount === 0) {
-                    window.alert(`Por favor, ingresa un monto mayor a cero en la fila ${i + 1}.`);
+                    window.ZyronDialog.alert(`Por favor, ingresa un monto mayor a cero en la fila ${i + 1}.`);
                     return;
                 }
 
@@ -11591,7 +11699,7 @@ const renderContabilidadModule = async () => {
             }
 
             if (status === 'posted' && Math.abs(totalDebit - totalCredit) > 0.005) {
-                window.alert('No se puede contabilizar un asiento contable desbalanceado.');
+                window.ZyronDialog.alert('No se puede contabilizar un asiento contable desbalanceado.');
                 return;
             }
 
@@ -11648,11 +11756,11 @@ const renderContabilidadModule = async () => {
                     }
                 }
 
-                window.alert(status === 'posted' ? '¡Asiento contable contabilizado exitosamente!' : '¡Asiento borrador guardado correctamente!');
+                window.ZyronDialog.alert(status === 'posted' ? '¡Asiento contable contabilizado exitosamente!' : '¡Asiento borrador guardado correctamente!');
                 closeModal();
             } catch (err) {
                 console.error(err);
-                window.alert('Error al guardar asiento contable: ' + err.message);
+                window.ZyronDialog.alert('Error al guardar asiento contable: ' + err.message);
             }
         };
 
@@ -11675,7 +11783,7 @@ const renderContabilidadModule = async () => {
 
         // Reversar desde detalle
         document.getElementById('ent-detail-reverse')?.addEventListener('click', async () => {
-            if (!window.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
+            if (!window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
             
             try {
                 // 1. Crear asiento de reversión
@@ -11728,22 +11836,22 @@ const renderContabilidadModule = async () => {
                     values: { status: 'reversed' }
                 });
 
-                window.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
+                window.ZyronDialog.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
                 closeSheet();
             } catch (err) {
                 console.error(err);
-                window.alert('Error al reversar asiento: ' + err.message);
+                window.ZyronDialog.alert('Error al reversar asiento: ' + err.message);
             }
         });
 
         // Publicar desde detalle
         document.getElementById('ent-detail-post')?.addEventListener('click', async () => {
             if (Math.abs(selectedEntry.debitoTotal - selectedEntry.creditoTotal) > 0.005) {
-                window.alert('No se puede contabilizar un asiento contable desbalanceado.');
+                window.ZyronDialog.alert('No se puede contabilizar un asiento contable desbalanceado.');
                 return;
             }
             if (selectedEntry.linesCount < 2) {
-                window.alert('Un asiento contabilizado requiere al menos dos líneas contables.');
+                window.ZyronDialog.alert('Un asiento contabilizado requiere al menos dos líneas contables.');
                 return;
             }
 
@@ -11754,23 +11862,23 @@ const renderContabilidadModule = async () => {
                     values: { status: 'posted' }
                 });
                 if (res.error) throw new Error(res.error.message);
-                window.alert('¡Asiento contable contabilizado exitosamente!');
+                window.ZyronDialog.alert('¡Asiento contable contabilizado exitosamente!');
                 closeSheet();
             } catch (err) {
-                window.alert('Error al contabilizar asiento: ' + err.message);
+                window.ZyronDialog.alert('Error al contabilizar asiento: ' + err.message);
             }
         });
 
         // Eliminar borrador desde detalle
         document.getElementById('ent-detail-delete')?.addEventListener('click', async () => {
-            if (!window.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
+            if (!window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
             
             try {
                 await dbDelete({ table: 'accounting_journal_entries', id: selectedEntry.id });
-                window.alert('¡Borrador eliminado exitosamente!');
+                window.ZyronDialog.alert('¡Borrador eliminado exitosamente!');
                 closeSheet();
             } catch (err) {
-                window.alert('Error al eliminar asiento: ' + err.message);
+                window.ZyronDialog.alert('Error al eliminar asiento: ' + err.message);
             }
         });
     }
@@ -12216,10 +12324,10 @@ const renderConfigModule = async () => {
                     Zyron opera bajo una estructura de planes multi-inquilino escalable. Si necesitas actualizar tu plan para expandir tu equipo o emitir mas facturas mensuales, comunicate con el administrador global o el equipo de soporte tecnico.
                 </p>
                 <div class="mt-4 flex flex-wrap gap-2">
-                    <button type="button" class="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/95 shadow-sm transition-all" onclick="window.alert('Solicitud de cambio de plan enviada al soporte tecnico.')">
+                    <button type="button" class="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white hover:bg-primary/95 shadow-sm transition-all" onclick="window.ZyronDialog.alert('Solicitud de cambio de plan enviada al soporte tecnico.')">
                         Solicitar Cambio de Plan
                     </button>
-                    <button type="button" class="rounded-md border border-outline-variant/50 px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-high transition-all" onclick="window.alert('Tu ID de empresa es: ${tenantRow.id}')">
+                    <button type="button" class="rounded-md border border-outline-variant/50 px-3 py-1.5 text-xs font-semibold text-on-surface-variant hover:bg-surface-container-high transition-all" onclick="window.ZyronDialog.alert('Tu ID de empresa es: ${tenantRow.id}')">
                         Copiar ID de Empresa
                     </button>
                 </div>
@@ -12399,7 +12507,7 @@ const renderConfigModule = async () => {
         if (rm) rm.value = '';
         if (!f) return;
         if (f.size > 380000) {
-            window.alert('Imagen demasiado grande; usa una por debajo de ~300 KB.');
+            window.ZyronDialog.alert('Imagen demasiado grande; usa una por debajo de ~300 KB.');
             ev.target.value = '';
             return;
         }
