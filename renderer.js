@@ -653,20 +653,8 @@ const safeCall = async (handler, debugLabel = 'ipc') => {
 
 const handleSessionExpired = async (error = {}) => {
     zyronLog('auth:sessionExpired', { code: error.code, message: error.message });
-    state.sessionUser = null;
-    state.appUser = null;
-    state.membership = null;
-    state.membershipsList = [];
-    state.currentTenantId = null;
-    state.isSuperAdmin = false;
-    state.isStaff = false;
-    state.isGlobalAccess = false;
-    state.isImpersonating = false;
-    state.impersonatedTenantId = null;
-    state._rtTenantChannel = null;
-    state.realtimeStatus = { degraded: false, channels: [] };
-    showLogin();
-    setStatus(loginStatus, error.message || 'Tu sesion expiro. Vuelve a iniciar sesion para continuar.', true);
+    // Soft degradation: show an alert instead of completely blowing up the state
+    window.ZyronDialog.alert('Tu sesión ha expirado o es inválida. Te recomendamos guardar tus cambios y volver a iniciar sesión.');
 };
 
 window.insforgeAPI?.auth?.onSessionExpired?.((payload) => {
