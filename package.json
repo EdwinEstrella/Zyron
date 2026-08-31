@@ -36,7 +36,7 @@
     "@electron-forge/maker-zip": "^7.11.1",
     "@electron-forge/plugin-auto-unpack-natives": "^7.11.1",
     "@electron-forge/plugin-fuses": "^7.11.1",
-    "@electron/fuses": "^1.8.0",
+    "@electron/fuses": "^2.1.1",
     "@eslint/js": "^10.0.1",
     "@insforge/cli": "^0.1.81",
     "@playwright/test": "1.60.0",
