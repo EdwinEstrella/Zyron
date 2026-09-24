@@ -436,6 +436,217 @@ test('sync: flujo Pull baja cambios más nuevos del servidor y aplica Last-Write
   limpiarEntornoDb();
 });
 
+test('sync: una respuesta vacía no adelanta el cursor y registros históricos posteriores hidratan la caché', async () => {
+  prepararEntornoDb();
+
+  const fechaLegadaInsegura = '2026-09-24T21:59:20.000Z';
+  const fechaHistorica = '2026-09-24T21:33:48.000Z';
+  sync.__testHooks.guardarMetadatosSincronizacion(idInquilinoPrueba, {
+    last_pulled_at: fechaLegadaInsegura
+  });
+
+  let fase = 'rls-vacío';
+  const cursoresProductos = [];
+  const clienteMock = {
+    database: {
+      from: (tabla) => {
+        if (tabla === 'tenants' || tabla === 'planes_servicio') {
+          return construirQueryMockeado([{ data: [], error: null }]);
+        }
+        return {
+          select: () => ({
+            eq: () => ({
+              gt: (columna, cursor) => {
+                if (tabla === 'products') cursoresProductos.push({ columna, cursor });
+                const data = tabla === 'products' && fase === 'datos-visibles'
+                  ? [{
+                      id: 'producto-histórico',
+                      tenant_id: idInquilinoPrueba,
+                      name: 'Producto remoto histórico',
+                      created_at: fechaHistorica,
+                      updated_at: fechaHistorica
+                    }]
+                  : [];
+                return Promise.resolve({ data, error: null });
+              }
+            })
+          })
+        };
+      }
+    }
+  };
+
+  sync.establecerClienteInsforge(clienteMock, false);
+  await sync.__testHooks.ejecutarFlujoPull(idInquilinoPrueba);
+
+  const trasRespuestaVacia = sync.__testHooks.leerMetadatosSincronizacion(idInquilinoPrueba);
+  assert.equal(trasRespuestaVacia.pull_cursors.products, '1970-01-01T00:00:00.000Z');
+  assert.equal(trasRespuestaVacia.pull_cursors.invoices, '1970-01-01T00:00:00.000Z');
+
+  fase = 'datos-visibles';
+  await sync.__testHooks.ejecutarFlujoPull(idInquilinoPrueba);
+
+  const productos = await localdb.selectLocal(idInquilinoPrueba, 'products');
+  const metadatos = sync.__testHooks.leerMetadatosSincronizacion(idInquilinoPrueba);
+  assert.equal(cursoresProductos[0].cursor, '1970-01-01T00:00:00.000Z');
+  assert.equal(cursoresProductos[1].cursor, '1970-01-01T00:00:00.000Z');
+  assert.equal(productos.data[0].name, 'Producto remoto histórico');
+  assert.equal(metadatos.pull_cursors.products, fechaHistorica);
+  assert.equal(metadatos.last_pulled_at, fechaLegadaInsegura, 'El cursor global legado se preserva pero no se usa');
+
+  limpiarEntornoDb();
+});
+
+test('localdb: no inyecta ni envía updated_at para audit_logs y warehouses', async () => {
+  prepararEntornoDb();
+
+  const auditoria = await localdb.insertLocal(idInquilinoPrueba, 'audit_logs', { action: 'created' });
+  const almacen = await localdb.insertLocal(idInquilinoPrueba, 'warehouses', { code: 'PRINCIPAL', label: 'Principal' });
+  assert.equal(auditoria.data[0].updated_at, undefined);
+  assert.equal(almacen.data[0].updated_at, undefined);
+
+  const enviados = [];
+  sync.establecerClienteInsforge({
+    database: {
+      from: (tabla) => ({
+        upsert: async (filas) => {
+          enviados.push({ tabla, filas });
+          return { data: filas, error: null };
+        }
+      })
+    }
+  }, false);
+  await sync.__testHooks.ejecutarFlujoPush(idInquilinoPrueba);
+
+  for (const envio of enviados) {
+    assert.equal(envio.filas[0].updated_at, undefined, `${envio.tabla} no debe enviar updated_at`);
+    assert.equal(envio.filas[0]._dirty_at, undefined, `${envio.tabla} no debe enviar metadata local`);
+  }
+
+  limpiarEntornoDb();
+});
+
+test('sync: almacén local se reconcilia por código con el ID canónico y remapea existencias', async () => {
+  prepararEntornoDb();
+
+  const almacen = (await localdb.insertLocal(idInquilinoPrueba, 'warehouses', {
+    code: 'PRINCIPAL', label: 'Principal', is_default: true
+  })).data[0];
+  await localdb.insertLocal(idInquilinoPrueba, 'warehouse_stock', {
+    warehouse_id: almacen.id, product_id: 'producto-1', quantity: 5
+  });
+
+  const llamadasRpc = [];
+  const enviosStock = [];
+  sync.establecerClienteInsforge({
+    database: {
+      rpc: async (nombre, args) => {
+        llamadasRpc.push({ nombre, args });
+        return {
+          data: [{
+            id: 'almacen-canonico', tenant_id: idInquilinoPrueba, code: 'PRINCIPAL',
+            label: 'Principal', is_default: true, is_active: true, created_at: almacen.created_at
+          }],
+          error: null
+        };
+      },
+      from: (tabla) => ({
+        upsert: async (filas) => {
+          if (tabla === 'warehouse_stock') enviosStock.push(...filas);
+          return { data: filas, error: null };
+        }
+      })
+    }
+  }, false);
+
+  const resultado = await sync.__testHooks.ejecutarFlujoPush(idInquilinoPrueba);
+  const almacenes = await localdb.selectLocal(idInquilinoPrueba, 'warehouses');
+  const existencias = await localdb.selectLocal(idInquilinoPrueba, 'warehouse_stock');
+
+  assert.equal(resultado.ok, true);
+  assert.deepEqual(llamadasRpc[0], {
+    nombre: 'zyron_sync_warehouse',
+    args: {
+      p_tenant_id: idInquilinoPrueba,
+      p_local_id: almacen.id,
+      p_code: 'PRINCIPAL',
+      p_label: 'Principal',
+      p_is_default: true,
+      p_is_active: true
+    }
+  });
+  assert.equal(almacenes.data[0].id, 'almacen-canonico');
+  assert.equal(existencias.data[0].warehouse_id, 'almacen-canonico');
+  assert.equal(enviosStock[0].warehouse_id, 'almacen-canonico');
+
+  limpiarEntornoDb();
+});
+
+test('sync: un fallo de Push queda pendiente y el ciclo completo no informa éxito', async () => {
+  prepararEntornoDb();
+  await localdb.insertLocal(idInquilinoPrueba, 'customers', { nombre: 'No confirmar' });
+
+  sync.establecerClienteInsforge({
+    auth: { getUser: async () => ({ data: { user: { id: 'usuario-1' } }, error: null }) },
+    realtime: { status: async () => ({ ok: true }) },
+    database: {
+      from: (tabla) => ({
+        upsert: async () => tabla === 'customers'
+          ? { data: null, error: { code: '42501', message: 'denegado' } }
+          : { data: [], error: null },
+        select: () => construirQueryMockeado([{ data: [], error: null }])
+      })
+    }
+  }, false);
+
+  const resultado = await sync.sincronizarInquilino(idInquilinoPrueba);
+  const clientes = await localdb.selectLocal(idInquilinoPrueba, 'customers');
+
+  assert.equal(resultado, false);
+  assert.equal(clientes.data[0]._dirty, true, 'El registro fallido debe permanecer pendiente');
+
+  limpiarEntornoDb();
+});
+
+test('migración: el contrato de RLS y almacenes elimina exposición anónima y upserts genéricos', () => {
+  const sql = fs.readFileSync(
+    path.join(raizProyecto, 'supabase/migrations/20260925000000_security_advisor_and_warehouse_sync.sql'),
+    'utf8'
+  );
+
+  for (const tabla of ['app_settings', 'customers', 'tenants', 'payments', 'custom_report_definitions']) {
+    assert.ok(sql.includes(`ALTER TABLE public.${tabla} ENABLE ROW LEVEL SECURITY;`));
+  }
+  assert.match(sql, /REVOKE ALL ON TABLE[\s\S]*FROM anon/i);
+  assert.match(sql, /CREATE OR REPLACE FUNCTION public\.zyron_sync_warehouse/i);
+  assert.match(sql, /pg_advisory_xact_lock/i);
+  assert.match(sql, /ON CONFLICT \(tenant_id, code\) DO UPDATE/i);
+  assert.match(sql, /REVOKE ALL ON FUNCTION[\s\S]*FROM PUBLIC/i);
+  assert.match(sql, /SET search_path = pg_catalog, public/i);
+  assert.doesNotMatch(sql, /CREATE POLICY zyron_(customers|products|invoices|payments)[^;]*USING \(true\)/i);
+});
+
+test('sync: conectividad sin sesión autenticada no autoriza Push ni Pull', async () => {
+  prepararEntornoDb();
+
+  let consultaRemota = false;
+  sync.establecerClienteInsforge({
+    database: {
+      from: () => {
+        consultaRemota = true;
+        return construirQueryMockeado([{ data: [], error: null }]);
+      }
+    },
+    realtime: { status: async () => ({ ok: true }) }
+  }, false);
+
+  const sincronizado = await sync.sincronizarInquilino(idInquilinoPrueba);
+  assert.equal(sincronizado, false);
+  assert.equal(consultaRemota, false, 'La conectividad no debe sustituir una sesión autenticada');
+
+  limpiarEntornoDb();
+});
+
 test('sync: informa las tablas remotas actualizadas para refrescar la vista local activa', async () => {
   prepararEntornoDb();
 
@@ -649,15 +860,14 @@ test('localdb: validación de límites de facturas mensuales bloquea inserciones
   limpiarEntornoDb();
 });
 
-test('sync: flujo Pull maneja tablas sin updated_at usando created_at como columna incremental', async () => {
+test('sync: role_permissions usa created_at como columna incremental', async () => {
   prepararEntornoDb();
 
-  const fechaAntigua = new Date(Date.now() - 100000).toISOString();
   const fechaNueva = new Date().toISOString();
 
   // Registro remoto en una tabla de solo inserción (sin updated_at)
   const registroRemoto = {
-    id: 'linea-diario-1',
+    id: 'permiso-rol-1',
     created_at: fechaNueva,
     tenant_id: idInquilinoPrueba,
     descripcion: 'Línea de diario en la nube'
@@ -680,7 +890,7 @@ test('sync: flujo Pull maneja tablas sin updated_at usando created_at como colum
         return {
           select: () => ({
             eq: () => ({
-              gt: (columna, fecha) => {
+              gt: (columna, _fecha) => {
                 columnaFiltrada = columna;
                 return construirQueryMockeado([{ data: [registroRemoto], error: null }]);
               }
@@ -701,10 +911,10 @@ test('sync: flujo Pull maneja tablas sin updated_at usando created_at como colum
   await sync.__testHooks.ejecutarFlujoPull(idInquilinoPrueba, marcaCiclo);
 
   // Validaciones
-  assert.equal(columnaFiltrada, 'created_at', 'Debe haber filtrado usando created_at en lugar de updated_at para accounting_journal_lines');
+  assert.equal(columnaFiltrada, 'created_at', 'Debe haber filtrado usando created_at en lugar de updated_at para role_permissions');
 
   // Validar que se guardó localmente y resolvió LWW usando created_at
-  const resLocal = await localdb.selectLocal(idInquilinoPrueba, 'accounting_journal_lines');
+  const resLocal = await localdb.selectLocal(idInquilinoPrueba, 'role_permissions');
   assert.equal(resLocal.data.length, 1, 'Debe haberse insertado localmente');
   assert.equal(resLocal.data[0].descripcion, 'Línea de diario en la nube');
 

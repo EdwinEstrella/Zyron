@@ -14,6 +14,13 @@ let rutaBaseDatos = null
 const cacheMemoria = new Map() // Mapa de tenantId -> { [tabla]: [filas] }
 const eliminacionesPendientes = new Map() // Mapa de tenantId -> [ { tabla, id, eliminado_en } ]
 
+// Estas tablas son válidas en remoto sin `updated_at`; nunca se debe inventar esa columna.
+const TABLAS_SIN_UPDATED_AT = new Set(['audit_logs', 'warehouses'])
+
+function tablaUsaUpdatedAt(tabla) {
+  return !TABLAS_SIN_UPDATED_AT.has(tabla)
+}
+
 /**
  * Inicializa la ruta base del almacenamiento local.
  * @param {string} rutaBase - Ruta del directorio userData de Electron o ruta de pruebas.
@@ -411,7 +418,8 @@ async function insertLocal(tenantId, tabla, valores) {
         copia.id = crypto.randomUUID()
       }
       copia._dirty = true
-      copia.updated_at = ahora
+      copia._dirty_at = ahora
+      if (tablaUsaUpdatedAt(tabla)) copia.updated_at = ahora
       if (!copia.created_at) {
         copia.created_at = ahora
       }
@@ -472,8 +480,10 @@ async function updateLocal(tenantId, tabla, valores, filtros = []) {
         ...original,
         ...valores,
         _dirty: true,
-        updated_at: ahora
+        _dirty_at: ahora
       }
+      if (tablaUsaUpdatedAt(tabla)) actualizado.updated_at = ahora
+      else delete actualizado.updated_at
       filasExistentes[indice] = actualizado
       modificados.push(actualizado)
     }
@@ -581,8 +591,12 @@ async function limpiarMarcaSucia(tenantId, tabla, id, fechaCopiaRemota) {
   const indice = filas.findIndex((f) => f.id === id)
   if (indice !== -1) {
     // Solo limpiamos si el registro local no ha sido modificado de nuevo
-    if (filas[indice].updated_at <= fechaCopiaRemota) {
+    const fechaLocal = tablaUsaUpdatedAt(tabla)
+      ? filas[indice].updated_at
+      : filas[indice]._dirty_at || filas[indice].updated_at
+    if (!fechaLocal || fechaLocal <= fechaCopiaRemota) {
       filas[indice]._dirty = false
+      delete filas[indice]._dirty_at
       await guardarTablaEnDisco(tenantId, tabla)
     }
   }
@@ -595,6 +609,60 @@ const COLUMNAS_FECHA_TABLA = {
 }
 
 /**
+ * Reemplaza un identificador local de almacén por el canónico del servidor y
+ * conserva las existencias locales que todavía referencian el identificador anterior.
+ */
+async function reconciliarIdAlmacen(tenantId, idLocal, almacenCanonico) {
+  if (!idLocal || !almacenCanonico?.id || idLocal === almacenCanonico.id) return
+
+  const almacenes = asegurarTablaCargada(tenantId, 'warehouses')
+  const indiceLocal = almacenes.findIndex((fila) => fila.id === idLocal)
+  if (indiceLocal === -1) return
+
+  const indiceCanonico = almacenes.findIndex((fila) => fila.id === almacenCanonico.id)
+  const local = almacenes[indiceLocal]
+  const reconciliado = { ...local, ...almacenCanonico, id: almacenCanonico.id, _dirty: false }
+  delete reconciliado._dirty_at
+
+  if (indiceCanonico !== -1 && indiceCanonico !== indiceLocal) {
+    almacenes[indiceCanonico] = reconciliado
+    almacenes.splice(indiceLocal, 1)
+  } else {
+    almacenes[indiceLocal] = reconciliado
+  }
+
+  const existencias = asegurarTablaCargada(tenantId, 'warehouse_stock')
+  const porProducto = new Map()
+  const reconciliadas = []
+  for (const existencia of existencias) {
+    const actualizada =
+      existencia.warehouse_id === idLocal
+        ? {
+            ...existencia,
+            warehouse_id: almacenCanonico.id,
+            _dirty: true,
+            _dirty_at: new Date().toISOString()
+          }
+        : existencia
+    const clave = `${actualizada.warehouse_id}:${actualizada.product_id}`
+    const previa = porProducto.get(clave)
+    if (previa) {
+      previa.quantity = Number(previa.quantity || 0) + Number(actualizada.quantity || 0)
+      previa._dirty = true
+      previa._dirty_at = new Date().toISOString()
+    } else {
+      porProducto.set(clave, actualizada)
+      reconciliadas.push(actualizada)
+    }
+  }
+
+  const cacheTenant = cacheMemoria.get(tenantId)
+  cacheTenant.warehouse_stock = reconciliadas
+  await guardarTablaEnDisco(tenantId, 'warehouses')
+  await guardarTablaEnDisco(tenantId, 'warehouse_stock')
+}
+
+/**
  * Resuelve y aplica cambios remotos en la base de datos local usando Last-Write-Wins (LWW).
  * @param {string} tenantId - Identificador del inquilino.
  * @param {string} tabla - Nombre de la tabla de negocio.
@@ -604,14 +672,20 @@ async function upsertRemotoLWW(tenantId, tabla, registroRemoto) {
   const filas = asegurarTablaCargada(tenantId, tabla)
   const indice = filas.findIndex((f) => f.id === registroRemoto.id)
   const ahora = new Date().toISOString()
-  const columnaFecha = COLUMNAS_FECHA_TABLA[tabla] || 'updated_at'
+  const columnaFecha = tablaUsaUpdatedAt(tabla)
+    ? COLUMNAS_FECHA_TABLA[tabla] || 'updated_at'
+    : 'created_at'
 
   if (indice === -1) {
     // Si no existe localmente, lo insertamos directo sin flag dirty
     const copia = {
       ...registroRemoto,
-      _dirty: false,
-      updated_at: registroRemoto.updated_at || registroRemoto.created_at || ahora
+      _dirty: false
+    }
+    if (tablaUsaUpdatedAt(tabla)) {
+      copia.updated_at = registroRemoto.updated_at || registroRemoto.created_at || ahora
+    } else {
+      delete copia.updated_at
     }
     filas.push(copia)
     await guardarTablaEnDisco(tenantId, tabla)
@@ -630,8 +704,12 @@ async function upsertRemotoLWW(tenantId, tabla, registroRemoto) {
       // Ganador es el servidor.
       filas[indice] = {
         ...registroRemoto,
-        _dirty: false,
-        updated_at: registroRemoto.updated_at || registroRemoto.created_at || ahora
+        _dirty: false
+      }
+      if (tablaUsaUpdatedAt(tabla)) {
+        filas[indice].updated_at = registroRemoto.updated_at || registroRemoto.created_at || ahora
+      } else {
+        delete filas[indice].updated_at
       }
       await guardarTablaEnDisco(tenantId, tabla)
     } else if (fechaLocal === fechaRemota && local._dirty) {
@@ -673,10 +751,12 @@ module.exports = {
   deleteLocal,
   obtenerRegistrosSucios,
   limpiarMarcaSucia,
+  reconciliarIdAlmacen,
   upsertRemotoLWW,
   asegurarEliminacionesCargadas,
   limpiarEliminacionesProcesadas,
   reiniciarCache,
+  tablaUsaUpdatedAt,
   __testHooks: {
     cacheMemoria,
     eliminacionesPendientes,

@@ -24,8 +24,11 @@ const TABLAS_SINCRONIZABLES = [
   'invoices',
   'payments',
   'role_catalog',
-  'role_permissions'
+  'role_permissions',
+  'warehouses'
 ]
+
+const MARCA_INICIAL_PULL = new Date(0).toISOString()
 
 /**
  * Registra el cliente del SDK (Supabase o InsForge) a ser utilizado para las peticiones de red.
@@ -69,19 +72,38 @@ function obtenerRutaMetadatos(tenantId) {
 /**
  * Lee los metadatos de sincronización de un tenant.
  * @param {string} tenantId - Identificador del inquilino.
- * @returns {Object} Metadatos de sincronización ({ last_pulled_at, last_pushed_at }).
+ * @returns {Object} Metadatos de sincronización con cursores independientes por tabla.
  */
 function leerMetadatosSincronizacion(tenantId) {
   const ruta = obtenerRutaMetadatos(tenantId)
+  let metadatos = {}
   if (fs.existsSync(ruta)) {
     try {
       const contenidoRaw = fs.readFileSync(ruta, 'utf8')
-      return JSON.parse(contenidoRaw || '{}')
+      metadatos = JSON.parse(contenidoRaw || '{}')
     } catch (error) {
       console.error(`[Zyron:sync] Error leyendo metadatos para tenant ${tenantId}:`, error)
     }
   }
-  return { last_pulled_at: new Date(0).toISOString() } // Epoch por defecto
+
+  // El cursor global anterior no es seguro: pudo avanzar tras una respuesta vacía
+  // filtrada por RLS. Las tablas sin cursor vuelven a sincronizarse desde epoch.
+  const cursores =
+    metadatos.pull_cursors && typeof metadatos.pull_cursors === 'object'
+      ? metadatos.pull_cursors
+      : {}
+  let migrado = cursores !== metadatos.pull_cursors
+  for (const tabla of TABLAS_SINCRONIZABLES) {
+    if (typeof cursores[tabla] !== 'string' || Number.isNaN(new Date(cursores[tabla]).getTime())) {
+      cursores[tabla] = MARCA_INICIAL_PULL
+      migrado = true
+    }
+  }
+  metadatos.pull_cursors = cursores
+  metadatos.pull_cursor_version = 2
+
+  if (migrado) guardarMetadatosSincronizacion(tenantId, metadatos)
+  return metadatos
 }
 
 /**
@@ -122,6 +144,26 @@ async function validarConectividad() {
 }
 
 /**
+ * Confirma una sesión autenticada antes de ejecutar operaciones de sincronización.
+ * La conectividad de realtime o una respuesta de PostgREST no prueban autorización.
+ * @returns {Promise<boolean>} True solo cuando el SDK confirma un usuario autenticado.
+ */
+async function validarSesionAutenticada() {
+  if (!clienteInsforge?.auth) return false
+  try {
+    const respuesta =
+      typeof clienteInsforge.auth.getUser === 'function'
+        ? await clienteInsforge.auth.getUser()
+        : typeof clienteInsforge.auth.getCurrentUser === 'function'
+          ? await clienteInsforge.auth.getCurrentUser()
+          : null
+    return !respuesta?.error && Boolean(respuesta?.data?.user || respuesta?.user)
+  } catch (_) {
+    return false
+  }
+}
+
+/**
  * Limpia y prepara un registro local removiendo propiedades de control local-first
  * para poder guardarlo en el servidor remoto sin generar errores de esquema.
  * @param {Object} fila - Registro local.
@@ -131,6 +173,13 @@ function limpiarRegistroParaServidor(fila) {
   const copia = { ...fila }
   // Eliminar flags locales que no existen en las columnas del backend
   delete copia._dirty
+  delete copia._dirty_at
+  if (localdb.tablaUsaUpdatedAt(fila.__tabla_sincronizacion || '')) {
+    delete copia.__tabla_sincronizacion
+    return copia
+  }
+  delete copia.updated_at
+  delete copia.__tabla_sincronizacion
   return copia
 }
 
@@ -146,6 +195,7 @@ async function ejecutarFlujoPush(tenantId) {
   // 1. Procesar registros modificados o nuevos (_dirty = true)
   const registrosSucios = localdb.obtenerRegistrosSucios(tenantId)
   let subidasExitosas = 0
+  const fallos = []
 
   for (const tabla in registrosSucios) {
     if (Object.prototype.hasOwnProperty.call(registrosSucios, tabla)) {
@@ -156,25 +206,62 @@ async function ejecutarFlujoPush(tenantId) {
         console.log(`[Zyron:sync] Subiendo ${filas.length} registros sucios en tabla: ${tabla}`)
       }
 
+      if (tabla === 'warehouses') {
+        for (const fila of filas) {
+          try {
+            const respuesta = await sincronizarAlmacen(tenantId, fila)
+            if (respuesta.error) {
+              fallos.push({ tabla, id: fila.id, error: respuesta.error })
+              console.error(`[Zyron:sync] Error subiendo almacén ${fila.id}:`, respuesta.error)
+              continue
+            }
+            await localdb.limpiarMarcaSucia(
+              tenantId,
+              tabla,
+              respuesta.data.id,
+              fila._dirty_at || fila.created_at
+            )
+            subidasExitosas += 1
+          } catch (error) {
+            fallos.push({ tabla, id: fila.id, error })
+            console.error(`[Zyron:sync] Excepción subiendo almacén ${fila.id}:`, error)
+          }
+        }
+        continue
+      }
+
       // Preparar filas para upsert por lotes en el servidor
-      const filasLimpias = filas.map(limpiarRegistroParaServidor)
+      const filasActuales = localdb.obtenerRegistrosSucios(tenantId)[tabla] || filas
+      const filasLimpias = filasActuales.map((fila) =>
+        limpiarRegistroParaServidor({ ...fila, __tabla_sincronizacion: tabla })
+      )
 
       try {
         const db = obtenerBaseDatosRemota()
-        if (!db) continue
+        if (!db) {
+          fallos.push({ tabla, error: { message: 'No hay cliente remoto disponible.' } })
+          continue
+        }
         const respuesta = await db.from(tabla).upsert(filasLimpias)
         if (respuesta.error) {
           console.error(`[Zyron:sync] Error subiendo tabla ${tabla}:`, respuesta.error)
+          fallos.push({ tabla, error: respuesta.error })
           continue
         }
 
         // Confirmar éxito limpiando flag localmente
-        for (const fila of filas) {
-          await localdb.limpiarMarcaSucia(tenantId, tabla, fila.id, fila.updated_at)
+        for (const fila of filasActuales) {
+          await localdb.limpiarMarcaSucia(
+            tenantId,
+            tabla,
+            fila.id,
+            fila._dirty_at || fila.updated_at
+          )
         }
         subidasExitosas += filas.length
       } catch (error) {
         console.error(`[Zyron:sync] Excepción subiendo tabla ${tabla}:`, error)
+        fallos.push({ tabla, error })
       }
     }
   }
@@ -191,7 +278,14 @@ async function ejecutarFlujoPush(tenantId) {
     for (const item of eliminaciones) {
       try {
         const db = obtenerBaseDatosRemota()
-        if (!db) break
+        if (!db) {
+          fallos.push({
+            tabla: item.tabla,
+            id: item.id,
+            error: { message: 'No hay cliente remoto disponible.' }
+          })
+          break
+        }
         const respuesta = await db
           .from(item.tabla)
           .delete()
@@ -204,6 +298,7 @@ async function ejecutarFlujoPush(tenantId) {
           if (statusErr === 404 || respuesta.error.code === 'PGRST116') {
             eliminadosExitosos.push(item)
           } else {
+            fallos.push({ tabla: item.tabla, id: item.id, error: respuesta.error })
             console.error(
               `[Zyron:sync] Error eliminando ID ${item.id} en ${item.tabla}:`,
               respuesta.error
@@ -214,6 +309,7 @@ async function ejecutarFlujoPush(tenantId) {
         }
       } catch (error) {
         console.error(`[Zyron:sync] Excepción eliminando ID ${item.id} en ${item.tabla}:`, error)
+        fallos.push({ tabla: item.tabla, id: item.id, error })
       }
     }
 
@@ -227,34 +323,65 @@ async function ejecutarFlujoPush(tenantId) {
       `[Zyron:sync] Finalizado ciclo Push para ${tenantId}. Subidos: ${subidasExitosas}, Eliminados: ${eliminadosExitosos.length}`
     )
   }
+  return {
+    ok: fallos.length === 0,
+    subidasExitosas,
+    eliminadosExitosos: eliminadosExitosos.length,
+    fallos
+  }
 }
 
 // Mapeo específico de columnas de fecha incremental por tabla.
 // El libro mayor publicado no participa de LWW: se consulta remotamente y se
 // crea solo mediante RPCs atómicas.
 const COLUMNAS_FECHA_TABLA = {
-  role_permissions: 'created_at'
+  role_permissions: 'created_at',
+  warehouses: 'created_at'
+}
+
+async function sincronizarAlmacen(tenantId, fila) {
+  const db = obtenerBaseDatosRemota()
+  if (!db || typeof db.rpc !== 'function') {
+    return { error: { message: 'El cliente remoto no admite el RPC de almacenes.' } }
+  }
+
+  const respuesta = await db.rpc('zyron_sync_warehouse', {
+    p_tenant_id: tenantId,
+    p_local_id: fila.id,
+    p_code: fila.code,
+    p_label: fila.label,
+    p_is_default: Boolean(fila.is_default),
+    p_is_active: fila.is_active !== false
+  })
+  if (respuesta.error) return respuesta
+
+  const almacenCanonico = Array.isArray(respuesta.data) ? respuesta.data[0] : respuesta.data
+  if (!almacenCanonico?.id) {
+    return { error: { message: 'El RPC de almacenes no devolvió un almacén canónico.' } }
+  }
+
+  await localdb.reconciliarIdAlmacen(tenantId, fila.id, almacenCanonico)
+  return { data: almacenCanonico, error: null }
 }
 
 /**
  * Ejecuta el flujo Pull (descarga de cambios remotos posteriores a la última sincronización exitosa).
  * @param {string} tenantId - Identificador del inquilino.
- * @param {string} inicioCicloTimestamp - Marca de tiempo ISO tomada al iniciar este ciclo.
  */
-async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
+async function ejecutarFlujoPull(tenantId) {
   if (logueadoVerbose) {
     console.log(`[Zyron:sync] Iniciando ciclo Pull para tenant: ${tenantId}`)
   }
 
   const metadatos = leerMetadatosSincronizacion(tenantId)
-  const ultimaSincronizacion = metadatos.last_pulled_at || new Date(0).toISOString()
   let descargasExitosas = 0
-  let erroresRegistrados = false
   const tablasActualizadas = new Set()
+  const fallos = []
 
   for (const tabla of TABLAS_SINCRONIZABLES) {
     try {
       const columnaFecha = COLUMNAS_FECHA_TABLA[tabla] || 'updated_at'
+      const ultimaSincronizacion = metadatos.pull_cursors[tabla]
       if (logueadoVerbose) {
         console.log(
           `[Zyron:sync] Descargando cambios de ${tabla} desde: ${ultimaSincronizacion} usando columna: ${columnaFecha}`
@@ -272,7 +399,7 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
 
       if (respuesta.error) {
         console.error(`[Zyron:sync] Error descargando cambios de tabla ${tabla}:`, respuesta.error)
-        erroresRegistrados = true
+        fallos.push({ tabla, error: respuesta.error })
         continue
       }
 
@@ -284,22 +411,45 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
           )
         }
 
+        let fechaMasReciente = null
+        let todasLasFechasSonValidas = true
         for (const reg of remotos) {
           await localdb.upsertRemotoLWW(tenantId, tabla, reg)
+          const fechaFuente = reg[columnaFecha]
+          if (typeof fechaFuente === 'string' && !Number.isNaN(new Date(fechaFuente).getTime())) {
+            if (!fechaMasReciente || new Date(fechaFuente) > new Date(fechaMasReciente)) {
+              fechaMasReciente = fechaFuente
+            }
+          } else {
+            todasLasFechasSonValidas = false
+          }
+        }
+        // Solo avanzamos tras persistir todas las filas y hasta la fecha devuelta por origen.
+        if (todasLasFechasSonValidas && fechaMasReciente) {
+          metadatos.pull_cursors[tabla] = fechaMasReciente
         }
         descargasExitosas += remotos.length
         tablasActualizadas.add(tabla)
       }
     } catch (error) {
       console.error(`[Zyron:sync] Excepción descargando cambios de tabla ${tabla}:`, error)
-      erroresRegistrados = true
+      fallos.push({ tabla, error })
     }
   }
 
   // 3. Sincronizar datos de la propia empresa (tabla tenants)
   try {
     const db = obtenerBaseDatosRemota()
-    if (!db) return
+    if (!db) {
+      return {
+        ok: false,
+        descargasExitosas,
+        fallos: [
+          ...fallos,
+          { tabla: 'tenants', error: { message: 'No hay cliente remoto disponible.' } }
+        ]
+      }
+    }
     const respuestaTenant = await db.from('tenants').select('*').eq('id', tenantId).limit(1)
     if (!respuestaTenant.error && respuestaTenant.data && respuestaTenant.data.length > 0) {
       const registroEmpresa = respuestaTenant.data[0]
@@ -310,12 +460,22 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
       `[Zyron:sync] Excepción descargando datos de tenants para ${tenantId}:`,
       errorTenant
     )
+    fallos.push({ tabla: 'tenants', error: errorTenant })
   }
 
   // 4. Sincronizar catálogo global de planes de servicio (tabla planes_servicio)
   try {
     const db = obtenerBaseDatosRemota()
-    if (!db) return
+    if (!db) {
+      return {
+        ok: false,
+        descargasExitosas,
+        fallos: [
+          ...fallos,
+          { tabla: 'planes_servicio', error: { message: 'No hay cliente remoto disponible.' } }
+        ]
+      }
+    }
     const respuestaPlanes = await db.from('planes_servicio').select('*').eq('activo', true)
     if (!respuestaPlanes.error && respuestaPlanes.data) {
       for (const plan of respuestaPlanes.data) {
@@ -327,18 +487,10 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
       `[Zyron:sync] Excepción descargando planes_servicio para ${tenantId}:`,
       errorPlanes
     )
+    fallos.push({ tabla: 'planes_servicio', error: errorPlanes })
   }
 
-  // Si se completaron todas las consultas sin errores, actualizamos el timestamp del Pull exitoso
-  if (!erroresRegistrados) {
-    metadatos.last_pulled_at = inicioCicloTimestamp
-    guardarMetadatosSincronizacion(tenantId, metadatos)
-    if (logueadoVerbose) {
-      console.log(
-        `[Zyron:sync] Pull exitoso. Metadatos de última sincronización actualizados a: ${inicioCicloTimestamp}`
-      )
-    }
-  }
+  guardarMetadatosSincronizacion(tenantId, metadatos)
 
   if (tablasActualizadas.size > 0 && notificarActualizacionCache) {
     notificarActualizacionCache({ tenantId, tables: [...tablasActualizadas] })
@@ -349,6 +501,7 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
       `[Zyron:sync] Finalizado ciclo Pull para ${tenantId}. Descargados y resueltos: ${descargasExitosas}`
     )
   }
+  return { ok: fallos.length === 0, descargasExitosas, fallos }
 }
 
 /**
@@ -365,6 +518,16 @@ async function sincronizarInquilino(tenantId) {
     return false
   }
 
+  const sesionAutenticada = await validarSesionAutenticada()
+  if (!sesionAutenticada) {
+    if (logueadoVerbose) {
+      console.log(
+        `[Zyron:sync] Sin sesión autenticada. Sincronización omitida para tenant: ${tenantId}`
+      )
+    }
+    return false
+  }
+
   const enLinea = await validarConectividad()
   if (!enLinea) {
     if (logueadoVerbose) {
@@ -374,18 +537,23 @@ async function sincronizarInquilino(tenantId) {
   }
 
   sincronizandoPorTenant.set(tenantId, true)
-  const inicioCiclo = new Date().toISOString()
-
   try {
     console.log(
       `[Zyron:sync] === Iniciando sincronización bidireccional activa para tenant: ${tenantId} ===`
     )
 
     // Primero, subir cambios locales acumulados (Push)
-    await ejecutarFlujoPush(tenantId)
+    const resultadoPush = await ejecutarFlujoPush(tenantId)
 
     // Segundo, descargar modificaciones del servidor (Pull)
-    await ejecutarFlujoPull(tenantId, inicioCiclo)
+    const resultadoPull = await ejecutarFlujoPull(tenantId)
+
+    if (!resultadoPush.ok || !resultadoPull.ok) {
+      console.error(
+        `[Zyron:sync] Sincronización incompleta para ${tenantId}. Fallos: ${resultadoPush.fallos.length + resultadoPull.fallos.length}`
+      )
+      return false
+    }
 
     console.log(`[Zyron:sync] === Sincronización completada con éxito para tenant: ${tenantId} ===`)
     return true
@@ -470,6 +638,7 @@ module.exports = {
     sincronizandoPorTenant,
     temporizadoresSincronizacion,
     validarConectividad,
+    validarSesionAutenticada,
     ejecutarFlujoPush,
     ejecutarFlujoPull,
     establecerNotificadorActualizacionCache,
