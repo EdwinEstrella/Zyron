@@ -6,7 +6,10 @@ module.exports = {
   packagerConfig: {
     asar: true,
     icon: path.join(__dirname, 'logo.ico'),
-    extraResource: [path.join(__dirname, '.generated', 'insforge.json')],
+    extraResource: [
+      path.join(__dirname, '.generated', 'insforge.json'),
+      path.join(__dirname, '.generated', 'supabase.json')
+    ],
     ignore: [
       /^\/\.env(?:\..*)?$/,
       /(^|[\/\\])\.env(?:\..*)?$/,

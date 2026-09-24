@@ -126,6 +126,15 @@ const applyAuthSessionFromPayload = (client, raw) => {
   const user = raw.user ?? raw.User
   const refreshToken = raw.refreshToken ?? raw.refresh_token
   const csrfToken = raw.csrfToken ?? raw.csrf_token
+
+  if (refreshToken) currentRefreshToken = refreshToken
+
+  if (accessToken && refreshToken && typeof client.auth?.setSession === 'function') {
+    client.auth.setSession({ access_token: accessToken, refresh_token: refreshToken }).catch((err) => {
+      zyronLog('auth:setSession:error', { message: err?.message || String(err) })
+    })
+  }
+
   if (accessToken && user && typeof client.auth?.saveSessionFromResponse === 'function') {
     client.auth.saveSessionFromResponse({
       accessToken,
@@ -140,7 +149,6 @@ const applyAuthSessionFromPayload = (client, raw) => {
     if (accessToken && typeof client.tokenManager?.setAccessToken === 'function') client.tokenManager.setAccessToken(accessToken)
     if (user && typeof client.tokenManager?.setUser === 'function') client.tokenManager.setUser(user)
   }
-  if (refreshToken) currentRefreshToken = refreshToken
   if (refreshToken && typeof client.getHttpClient === 'function') {
     client.getHttpClient().setRefreshToken(refreshToken)
   }
@@ -164,16 +172,28 @@ const findProjectRootByPackageJson = (startDir) => {
 
 const isInsforgePlaceholder = (baseUrl, anonKey) => {
   if (!baseUrl || !anonKey) return true
-  if (/tu-instancia\.insforge\.app/i.test(baseUrl)) return true
-  if (/Pega_aqui|reemplaza_con_tu_jwt/i.test(anonKey)) return true
+  if (/tu-instancia\.insforge\.app|tu-proyecto|your-project/i.test(baseUrl)) return true
+  if (/Pega_aqui|reemplaza_con_tu_jwt|your_anon_key/i.test(anonKey)) return true
   return false
 }
 
 const readInsforgeFromEnv = () => {
   const baseUrl = String(
-    process.env.INSFORGE_BASE_URL || process.env.VITE_INSFORGE_BASE_URL || ''
+    process.env.SUPABASE_URL ||
+    process.env.SUPABASE_BASE_URL ||
+    process.env.VITE_SUPABASE_URL ||
+    process.env.VITE_SUPABASE_BASE_URL ||
+    process.env.INSFORGE_BASE_URL ||
+    process.env.VITE_INSFORGE_BASE_URL ||
+    ''
   ).trim()
-  const anonKey = String(process.env.INSFORGE_ANON_KEY || process.env.VITE_INSFORGE_ANON_KEY || '').trim()
+  const anonKey = String(
+    process.env.SUPABASE_ANON_KEY ||
+    process.env.VITE_SUPABASE_ANON_KEY ||
+    process.env.INSFORGE_ANON_KEY ||
+    process.env.VITE_INSFORGE_ANON_KEY ||
+    ''
+  ).trim()
   if (isInsforgePlaceholder(baseUrl, anonKey)) return null
   if (!baseUrl || !anonKey) return null
   return {
@@ -189,17 +209,24 @@ const readInsforgeJsonFile = (filePath) => {
     if (!filePath || !fs.existsSync(filePath)) return null
     const raw = fs.readFileSync(filePath, 'utf8')
     const j = JSON.parse(raw)
-    const baseUrl = typeof j.baseUrl === 'string' ? j.baseUrl.trim() : ''
-    const anonKey =
-      typeof j.anonKey === 'string'
-        ? j.anonKey.trim()
-        : typeof j.anon_key === 'string'
-          ? j.anon_key.trim()
+    const baseUrl =
+      typeof j.supabaseUrl === 'string'
+        ? j.supabaseUrl.trim()
+        : typeof j.baseUrl === 'string'
+          ? j.baseUrl.trim()
           : ''
+    const anonKey =
+      typeof j.supabaseAnonKey === 'string'
+        ? j.supabaseAnonKey.trim()
+        : typeof j.anonKey === 'string'
+          ? j.anonKey.trim()
+          : typeof j.anon_key === 'string'
+            ? j.anon_key.trim()
+            : ''
     if (isInsforgePlaceholder(baseUrl, anonKey)) {
       zyronLog('insforge:config:placeholder', {
         filePath,
-        hint: 'Edita baseUrl y anonKey con los valores reales de tu proyecto Insforge.'
+        hint: 'Edita baseUrl y anonKey con los valores reales de tu proyecto (Supabase o Insforge).'
       })
       return null
     }
@@ -226,14 +253,23 @@ const resolveInsforgeConfig = () => {
 
   // Raiz del repo: subiendo desde __dirname (p. ej. .vite/build) hasta package.json — mas fiable que cwd.
   const pkgRootFromMain = findProjectRootByPackageJson(__dirname)
-  if (pkgRootFromMain) push(path.join(pkgRootFromMain, 'insforge.local.json'))
+  if (pkgRootFromMain) {
+    push(path.join(pkgRootFromMain, 'supabase.local.json'))
+    push(path.join(pkgRootFromMain, 'insforge.local.json'))
+    push(path.join(pkgRootFromMain, '.generated', 'supabase.json'))
+    push(path.join(pkgRootFromMain, '.generated', 'insforge.json'))
+  }
 
+  push(path.join(process.cwd(), 'supabase.local.json'))
   push(path.join(process.cwd(), 'insforge.local.json'))
+  push(path.join(__dirname, 'supabase.local.json'))
   push(path.join(__dirname, 'insforge.local.json'))
   try {
+    push(path.join(app.getAppPath(), 'supabase.local.json'))
     push(path.join(app.getAppPath(), 'insforge.local.json'))
     const pkgFromApp = findProjectRootByPackageJson(app.getAppPath())
     if (pkgFromApp && pkgFromApp !== pkgRootFromMain) {
+      push(path.join(pkgFromApp, 'supabase.local.json'))
       push(path.join(pkgFromApp, 'insforge.local.json'))
     }
   } catch (_) {
@@ -241,17 +277,20 @@ const resolveInsforgeConfig = () => {
   }
 
   try {
+    push(path.join(app.getPath('userData'), 'supabase.json'))
     push(path.join(app.getPath('userData'), 'insforge.json'))
   } catch (_) {
     /* app.getPath puede fallar antes de ready */
   }
   try {
+    push(path.join(path.dirname(process.execPath), 'supabase.json'))
     push(path.join(path.dirname(process.execPath), 'insforge.json'))
   } catch (_) {
     /* ignore */
   }
   try {
     if (app.isPackaged && process.resourcesPath) {
+      push(path.join(process.resourcesPath, 'supabase.json'))
       push(path.join(process.resourcesPath, 'insforge.json'))
     }
   } catch (_) {
@@ -431,8 +470,20 @@ const asegurarSincronizacionActiva = (tenantId) => {
   }
 }
 
+const TABLAS_EXCLUSIVAMENTE_SERVIDOR = new Set([
+  'tenant_memberships',
+  'tenants',
+  'app_users',
+  'user_access_requests',
+  'planes_servicio',
+  'permission_catalog',
+  'role_system_presets',
+  'app_navigation_modules'
+])
+
 const obtenerTenantIdDeFiltrosOValores = (payload) => {
   if (!payload || typeof payload !== 'object') return null
+  if (payload.table && TABLAS_EXCLUSIVAMENTE_SERVIDOR.has(String(payload.table))) return null
 
   // 1. Buscar en filters
   if (Array.isArray(payload.filters)) {
@@ -621,13 +672,33 @@ const getInsforgeClient = async () => {
       zyronLog('insforge:client:abort', { msg })
       throw new Error(msg)
     }
-    const { createClient } = await import('@insforge/sdk')
-    const client = createClient({
-      baseUrl: cfg.baseUrl,
-      anonKey: cfg.anonKey,
-      isServerMode: true,
-      autoRefreshToken: false
-    })
+    let client
+    try {
+      const { createClient } = await import('@supabase/supabase-js')
+      client = createClient(cfg.baseUrl, cfg.anonKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false
+        }
+      })
+    } catch (_) {
+      const { createClient } = await import('@insforge/sdk')
+      client = createClient({
+        baseUrl: cfg.baseUrl,
+        anonKey: cfg.anonKey,
+        isServerMode: true,
+        autoRefreshToken: false
+      })
+    }
+
+    if (!client.database) {
+      client.database = {
+        from: (table) => client.from(table),
+        rpc: (name, args) => client.rpc(name, args)
+      }
+    }
+
     installRealtimeForwarders(client)
     sync.establecerClienteInsforge(client, true)
     
@@ -635,7 +706,11 @@ const getInsforgeClient = async () => {
     sessionRefreshInterval = setInterval(async () => {
       if (!currentRefreshToken) return
       try {
-        const result = await client.auth.refreshSession({ refreshToken: currentRefreshToken })
+        const refreshPayload = {
+          refresh_token: currentRefreshToken,
+          refreshToken: currentRefreshToken
+        }
+        const result = await client.auth.refreshSession(refreshPayload)
         if (result?.error) {
           if (isAuthError(result.error)) {
             zyronLog('auth:interval-refresh:unauthorized', serializeError(result.error))
@@ -643,6 +718,8 @@ const getInsforgeClient = async () => {
           } else {
             zyronLog('auth:interval-refresh:transient-error', serializeError(result.error))
           }
+        } else if (result?.data?.session) {
+          applyAuthSessionFromPayload(client, result.data.session)
         } else if (result?.data) {
           applyAuthSessionFromPayload(client, result.data)
         }
@@ -659,6 +736,8 @@ const getInsforgeClient = async () => {
   })
   return insforgeClientPromise
 }
+
+const activeSupabaseChannels = new Map()
 
 const getRealtimeEntry = (channel) => {
   const key = String(channel || '').trim()
@@ -719,7 +798,16 @@ const flushRealtimeQueue = async (client, entry) => {
   let flushed = 0
   for (const item of pending) {
     try {
-      await client.realtime.publish(entry.channel, item.event, item.payload)
+      if (typeof client.channel === 'function') {
+        let ch = activeSupabaseChannels.get(entry.channel)
+        if (!ch) {
+          ch = client.channel(entry.channel, { config: { broadcast: { self: true } } })
+          activeSupabaseChannels.set(entry.channel, ch)
+        }
+        await ch.send({ type: 'broadcast', event: item.event, payload: item.payload })
+      } else {
+        await client.realtime.publish(entry.channel, item.event, item.payload)
+      }
       flushed += 1
     } catch (error) {
       queueRealtimeEvent(entry, item.event, item.payload)
@@ -736,10 +824,31 @@ const subscribeRealtimeChannel = async (client, channel, options = {}) => {
   entry.degraded = false
   publishRealtimeStatus()
   try {
-    await client.realtime.connect()
-    const result = await client.realtime.subscribe(channel)
-    const ok = result == null || result.ok !== false
-    if (!ok) throw result.error || new Error('Realtime subscription rejected')
+    if (typeof client.channel === 'function') {
+      let ch = activeSupabaseChannels.get(channel)
+      if (!ch) {
+        ch = client.channel(channel, { config: { broadcast: { self: true } } })
+        ch.on('broadcast', { event: '*' }, (msg) => {
+          const eventName = msg.event || 'domain-event'
+          notifyRenderer('domain-event', { type: eventName, payload: msg.payload || msg, occurredAt: new Date().toISOString() })
+        })
+        activeSupabaseChannels.set(channel, ch)
+      }
+      await new Promise((resolve, reject) => {
+        ch.subscribe((status, err) => {
+          if (status === 'SUBSCRIBED') {
+            resolve(true)
+          } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            reject(err || new Error(`Realtime subscription status: ${status}`))
+          }
+        })
+      })
+    } else {
+      await client.realtime.connect()
+      const result = await client.realtime.subscribe(channel)
+      const ok = result == null || result.ok !== false
+      if (!ok) throw result.error || new Error('Realtime subscription rejected')
+    }
     entry.status = 'subscribed'
     entry.degraded = false
     entry.lastError = null
@@ -781,8 +890,22 @@ const publishRealtimeEvent = async (client, payload) => {
     return { data: { ok: true, queued: true, channel, queuedEvents: entry.pendingEvents.length, registry: realtimeSnapshot() }, error: null }
   }
   try {
-    const result = await client.realtime.publish(channel, event, eventBody)
-    return { data: result || { ok: true }, error: null }
+    if (typeof client.channel === 'function') {
+      let ch = activeSupabaseChannels.get(channel)
+      if (!ch) {
+        ch = client.channel(channel, { config: { broadcast: { self: true } } })
+        activeSupabaseChannels.set(channel, ch)
+      }
+      await ch.send({
+        type: 'broadcast',
+        event: event || 'domain-event',
+        payload: eventBody
+      })
+      return { data: { ok: true }, error: null }
+    } else {
+      const result = await client.realtime.publish(channel, event, eventBody)
+      return { data: result || { ok: true }, error: null }
+    }
   } catch (error) {
     queueRealtimeEvent(entry, event, eventBody)
     entry.status = 'degraded'
@@ -800,7 +923,15 @@ const unsubscribeRealtimeChannel = async (client, channel) => {
   if (entry.timer) clearTimeout(entry.timer)
   entry.timer = null
   try {
-    client.realtime.unsubscribe(channel)
+    if (typeof client.removeChannel === 'function') {
+      const ch = activeSupabaseChannels.get(channel)
+      if (ch) {
+        await client.removeChannel(ch)
+        activeSupabaseChannels.delete(channel)
+      }
+    } else if (client.realtime?.unsubscribe) {
+      client.realtime.unsubscribe(channel)
+    }
   } catch (error) {
     entry.lastError = serializeError(error)
   }
@@ -1029,7 +1160,14 @@ ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
   }
 })
 
-ipcMain.handle('insforge:config', async () => {
+const handleBackendIpc = (channelName, handler) => {
+  ipcMain.handle(channelName, handler)
+  if (channelName.startsWith('insforge:')) {
+    ipcMain.handle(channelName.replace(/^insforge:/, 'supabase:'), handler)
+  }
+}
+
+handleBackendIpc('insforge:config', async () => {
   const cfg = resolveInsforgeConfig()
   return {
     baseUrl: cfg?.baseUrl ?? null,
@@ -1040,7 +1178,7 @@ ipcMain.handle('insforge:config', async () => {
   }
 })
 
-ipcMain.handle('insforge:auth:signUp', async (_event, payload) => {
+handleBackendIpc('insforge:auth:signUp', async (_event, payload) => {
   const invalid = validateEmailPassword(payload)
   if (invalid) return invalid
   return runInsforgeOperation('auth:signUp', async (client) => {
@@ -1053,7 +1191,7 @@ ipcMain.handle('insforge:auth:signUp', async (_event, payload) => {
   }, { skipAuthRecovery: true })
 })
 
-ipcMain.handle('insforge:auth:signInWithPassword', async (_event, payload) => {
+handleBackendIpc('insforge:auth:signInWithPassword', async (_event, payload) => {
   const invalid = validateEmailPassword(payload)
   if (invalid) return invalid
   return runInsforgeOperation('auth:signIn', async (client) => {
@@ -1066,47 +1204,63 @@ ipcMain.handle('insforge:auth:signInWithPassword', async (_event, payload) => {
   }, { skipAuthRecovery: true })
 })
 
-ipcMain.handle('insforge:auth:signOut', async () => {
+handleBackendIpc('insforge:auth:signOut', async () => {
   return runInsforgeOperation('auth:signOut', async (client) => {
     const result = await client.auth.signOut()
     return result || { ok: true }
   }, { skipAuthRecovery: true })
 })
 
-ipcMain.handle('insforge:auth:getCurrentUser', async () => {
-  return runInsforgeOperation('auth:getCurrentUser', (client) => client.auth.getCurrentUser())
+handleBackendIpc('insforge:auth:getCurrentUser', async () => {
+  return runInsforgeOperation('auth:getCurrentUser', async (client) => {
+    if (typeof client.auth?.getUser === 'function') {
+      const res = await client.auth.getUser()
+      return { data: { user: res.data?.user || null }, error: res.error || null }
+    }
+    return client.auth.getCurrentUser()
+  })
 })
 
-ipcMain.handle('insforge:auth:getProfile', async (_event, userId) => {
+handleBackendIpc('insforge:auth:getProfile', async (_event, userId) => {
   const invalid = validateUserId(userId)
   if (invalid) return invalid
   return runInsforgeOperation('auth:getProfile', (client) => client.auth.getProfile(userId))
 })
 
-ipcMain.handle('insforge:auth:setProfile', async (_event, profile) => {
+handleBackendIpc('insforge:auth:setProfile', async (_event, profile) => {
   const invalid = validateAuthProfile(profile)
   if (invalid) return invalid
   return runInsforgeOperation('auth:setProfile', (client) => client.auth.setProfile(profile))
 })
 
-ipcMain.handle('insforge:auth:sendResetPasswordEmail', async (_event, payload) => {
+handleBackendIpc('insforge:auth:sendResetPasswordEmail', async (_event, payload) => {
   if (!isPlainObject(payload) || !isNonEmptyString(payload.email)) return validationError('email requerido.')
-  return runInsforgeOperation('auth:sendResetPasswordEmail', (client) => client.auth.sendResetPasswordEmail(payload), { skipAuthRecovery: true })
+  return runInsforgeOperation('auth:sendResetPasswordEmail', (client) => {
+    if (typeof client.auth?.resetPasswordForEmail === 'function') {
+      return client.auth.resetPasswordForEmail(payload.email)
+    }
+    return client.auth.sendResetPasswordEmail(payload)
+  }, { skipAuthRecovery: true })
 })
 
-ipcMain.handle('insforge:auth:exchangeResetPasswordToken', async (_event, payload) => {
+handleBackendIpc('insforge:auth:exchangeResetPasswordToken', async (_event, payload) => {
   if (!isPlainObject(payload)) return validationError('Payload de token invalido.')
   return runInsforgeOperation('auth:exchangeResetPasswordToken', (client) => client.auth.exchangeResetPasswordToken(payload), { skipAuthRecovery: true })
 })
 
-ipcMain.handle('insforge:auth:resetPassword', async (_event, payload) => {
+handleBackendIpc('insforge:auth:resetPassword', async (_event, payload) => {
   if (!isPlainObject(payload) || !isNonEmptyString(payload.newPassword) || !isNonEmptyString(payload.otp)) {
     return validationError('newPassword y otp son requeridos.')
   }
-  return runInsforgeOperation('auth:resetPassword', (client) => client.auth.resetPassword(payload), { skipAuthRecovery: true })
+  return runInsforgeOperation('auth:resetPassword', (client) => {
+    if (typeof client.auth?.updateUser === 'function') {
+      return client.auth.updateUser({ password: payload.newPassword })
+    }
+    return client.auth.resetPassword(payload)
+  }, { skipAuthRecovery: true })
 })
 
-ipcMain.handle('insforge:db:select', async (_event, payload) => {
+handleBackendIpc('insforge:db:select', async (_event, payload) => {
   const invalid = validateDbReadPayload(payload)
   if (invalid) return invalid
 
@@ -1159,7 +1313,7 @@ ipcMain.handle('insforge:db:select', async (_event, payload) => {
 })
 
 
-ipcMain.handle('insforge:db:insert', async (_event, payload) => {
+handleBackendIpc('insforge:db:insert', async (_event, payload) => {
   const invalid = validateDbInsertPayload(payload)
   if (invalid) return invalid
 
@@ -1194,7 +1348,7 @@ ipcMain.handle('insforge:db:insert', async (_event, payload) => {
   })
 })
 
-ipcMain.handle('insforge:db:update', async (_event, payload) => {
+handleBackendIpc('insforge:db:update', async (_event, payload) => {
   const invalid = validateDbMutatePayload(payload)
   if (invalid) return invalid
 
@@ -1218,7 +1372,7 @@ ipcMain.handle('insforge:db:update', async (_event, payload) => {
   })
 })
 
-ipcMain.handle('insforge:db:delete', async (_event, payload) => {
+handleBackendIpc('insforge:db:delete', async (_event, payload) => {
   const invalid = validateDbMutatePayload(payload)
   if (invalid) return invalid
 
@@ -1243,7 +1397,7 @@ ipcMain.handle('insforge:db:delete', async (_event, payload) => {
 })
 
 
-ipcMain.handle('insforge:db:rpc', async (_event, payload) => {
+handleBackendIpc('insforge:db:rpc', async (_event, payload) => {
   const invalid = validateRpcPayload(payload)
   if (invalid) return invalid
   return runInsforgeOperation('db:rpc', async (client) => {
@@ -1278,7 +1432,7 @@ ipcMain.handle('accounting:journal-lines:list', async (_event, payload) => {
   })
 })
 
-ipcMain.handle('insforge:functions:invoke', async (_event, payload) => {
+handleBackendIpc('insforge:functions:invoke', async (_event, payload) => {
   const invalid = validateFunctionInvokePayload(payload)
   if (invalid) return invalid
   return runInsforgeOperation('fn:invoke', async (client) => {
@@ -1298,38 +1452,38 @@ ipcMain.handle('insforge:functions:invoke', async (_event, payload) => {
   })
 })
 
-ipcMain.handle('insforge:realtime:connect', async () => {
+handleBackendIpc('insforge:realtime:connect', async () => {
   return runInsforgeOperation('realtime:connect', async (client) => {
     const result = await client.realtime.connect()
     return result || { ok: true }
   })
 })
 
-ipcMain.handle('insforge:realtime:subscribe', async (_event, channel) => {
+handleBackendIpc('insforge:realtime:subscribe', async (_event, channel) => {
   const invalid = validateChannel(channel)
   if (invalid) return invalid
   return runInsforgeOperation('realtime:subscribe', (client) => subscribeRealtimeChannel(client, channel))
 })
 
-ipcMain.handle('insforge:realtime:unsubscribe', async (_event, channel) => {
+handleBackendIpc('insforge:realtime:unsubscribe', async (_event, channel) => {
   const invalid = validateChannel(channel)
   if (invalid) return invalid
   return runInsforgeOperation('realtime:unsubscribe', (client) => unsubscribeRealtimeChannel(client, channel))
 })
 
-ipcMain.handle('insforge:realtime:retry', async (_event, channel) => {
+handleBackendIpc('insforge:realtime:retry', async (_event, channel) => {
   const invalid = validateChannel(channel)
   if (invalid) return invalid
   return runInsforgeOperation('realtime:retry', (client) => retryRealtimeChannel(client, channel))
 })
 
-ipcMain.handle('insforge:realtime:publish', async (_event, payload) => {
+handleBackendIpc('insforge:realtime:publish', async (_event, payload) => {
   const invalid = validatePublishPayload(payload)
   if (invalid) return invalid
   return runInsforgeOperation('realtime:publish', (client) => publishRealtimeEvent(client, payload))
 })
 
-ipcMain.handle('insforge:realtime:disconnect', async () => {
+handleBackendIpc('insforge:realtime:disconnect', async () => {
   return runInsforgeOperation('realtime:disconnect', async (client) => {
     const result = await client.realtime.disconnect()
     realtimeRegistry.forEach((entry) => {
@@ -1341,7 +1495,7 @@ ipcMain.handle('insforge:realtime:disconnect', async () => {
   })
 })
 
-ipcMain.handle('insforge:realtime:status', async () => normalizeResult({ channels: realtimeSnapshot() }))
+handleBackendIpc('insforge:realtime:status', async () => normalizeResult({ channels: realtimeSnapshot() }))
 
 if (process.env.ZYRON_MAIN_TEST_HOOKS === '1') {
   module.exports = {

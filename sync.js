@@ -30,13 +30,24 @@ const TABLAS_SINCRONIZABLES = [
 ]
 
 /**
- * Registra el cliente del SDK de InsForge a ser utilizado para las peticiones de red.
- * @param {Object} cliente - Cliente de la base de datos de InsForge.
+ * Registra el cliente del SDK (Supabase o InsForge) a ser utilizado para las peticiones de red.
+ * @param {Object} cliente - Cliente de la base de datos (Supabase o InsForge).
  * @param {boolean} verbose - Habilitar logs verbosos.
  */
 function establecerClienteInsforge(cliente, verbose = false) {
   clienteInsforge = cliente
   logueadoVerbose = verbose
+}
+
+const establecerClienteSupabase = establecerClienteInsforge
+
+/**
+ * Retorna la interfaz de base de datos del cliente activo (compatible con Supabase y InsForge).
+ * @returns {Object|null}
+ */
+function obtenerBaseDatosRemota() {
+  if (!clienteInsforge) return null
+  return typeof clienteInsforge.from === 'function' ? clienteInsforge : clienteInsforge.database
 }
 
 /**
@@ -99,10 +110,9 @@ async function validarConectividad() {
       if (status && status.ok !== false) return true
     }
     // Fallback: consulta ultra ligera a una tabla de sistema remota
-    const rawResult = await clienteInsforge.database
-      .from('permission_catalog')
-      .select('id')
-      .limit(1)
+    const db = obtenerBaseDatosRemota()
+    if (!db) return false
+    const rawResult = await db.from('permission_catalog').select('id').limit(1)
     return !rawResult.error
   } catch (_) {
     return false
@@ -148,7 +158,9 @@ async function ejecutarFlujoPush(tenantId) {
       const filasLimpias = filas.map(limpiarRegistroParaServidor)
 
       try {
-        const respuesta = await clienteInsforge.database.from(tabla).upsert(filasLimpias)
+        const db = obtenerBaseDatosRemota()
+        if (!db) continue
+        const respuesta = await db.from(tabla).upsert(filasLimpias)
         if (respuesta.error) {
           console.error(`[Zyron:sync] Error subiendo tabla ${tabla}:`, respuesta.error)
           continue
@@ -176,7 +188,9 @@ async function ejecutarFlujoPush(tenantId) {
 
     for (const item of eliminaciones) {
       try {
-        const respuesta = await clienteInsforge.database
+        const db = obtenerBaseDatosRemota()
+        if (!db) break
+        const respuesta = await db
           .from(item.tabla)
           .delete()
           .eq('id', item.id)
@@ -243,7 +257,10 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
         )
       }
 
-      const respuesta = await clienteInsforge.database
+      const db = obtenerBaseDatosRemota()
+      if (!db) break
+
+      const respuesta = await db
         .from(tabla)
         .select('*')
         .eq('tenant_id', tenantId)
@@ -276,11 +293,9 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
 
   // 3. Sincronizar datos de la propia empresa (tabla tenants)
   try {
-    const respuestaTenant = await clienteInsforge.database
-      .from('tenants')
-      .select('*')
-      .eq('id', tenantId)
-      .limit(1)
+    const db = obtenerBaseDatosRemota()
+    if (!db) return
+    const respuestaTenant = await db.from('tenants').select('*').eq('id', tenantId).limit(1)
     if (!respuestaTenant.error && respuestaTenant.data && respuestaTenant.data.length > 0) {
       const registroEmpresa = respuestaTenant.data[0]
       await localdb.upsertRemotoLWW(tenantId, 'tenants', registroEmpresa)
@@ -294,10 +309,9 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
 
   // 4. Sincronizar catálogo global de planes de servicio (tabla planes_servicio)
   try {
-    const respuestaPlanes = await clienteInsforge.database
-      .from('planes_servicio')
-      .select('*')
-      .eq('activo', true)
+    const db = obtenerBaseDatosRemota()
+    if (!db) return
+    const respuestaPlanes = await db.from('planes_servicio').select('*').eq('activo', true)
     if (!respuestaPlanes.error && respuestaPlanes.data) {
       for (const plan of respuestaPlanes.data) {
         await localdb.upsertRemotoLWW(tenantId, 'planes_servicio', plan)
@@ -437,6 +451,7 @@ function detenerTodos() {
 
 module.exports = {
   establecerClienteInsforge,
+  establecerClienteSupabase,
   sincronizarInquilino,
   iniciarSincronizacionPeriodica,
   detenerSincronizacionPeriodica,

@@ -11,8 +11,8 @@
     "format": "prettier . --write",
     "prepare": "husky",
     "build:css": "tailwindcss -c ./tailwind.config.cjs -i ./styles/tailwind.css -o ./public/tailwind.css --minify",
-    "build:runtime-config": "node ./scripts/write-insforge-config.cjs",
-    "build:runtime-config:required": "node ./scripts/write-insforge-config.cjs --require",
+    "build:runtime-config": "node ./scripts/write-supabase-config.cjs",
+    "build:runtime-config:required": "node ./scripts/write-supabase-config.cjs --require",
     "prepackage": "npm run build:css && npm run build:runtime-config:required",
     "package": "electron-forge package",
     "premake": "npm run build:css && npm run build:runtime-config:required",
@@ -55,6 +55,7 @@
   },
   "dependencies": {
     "@insforge/sdk": "^1.2.9",
+    "@supabase/supabase-js": "^2.117.1",
     "dotenv": "^17.4.2",
     "electron-log": "^5.4.4",
     "electron-updater": "^6.8.3"
@@ -97,6 +98,7 @@
       "fragments/**/*",
       "public/**/*",
       ".generated/insforge.json",
+      ".generated/supabase.json",
       "node_modules/**/*"
     ],
     "extraResources": [
@@ -107,6 +109,10 @@
       {
         "from": ".generated/insforge.json",
         "to": "insforge.json"
+      },
+      {
+        "from": ".generated/supabase.json",
+        "to": "supabase.json"
       }
     ],
     "asar": true,

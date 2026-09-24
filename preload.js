@@ -17,7 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onWindowMaximized: (callback) => onMainEvent('window-maximized', callback)
 })
 
-contextBridge.exposeInMainWorld('insforgeAPI', {
+const backendAPI = {
   config: () => ipcRenderer.invoke('insforge:config'),
   auth: {
     signUp: (payload) => ipcRenderer.invoke('insforge:auth:signUp', payload),
@@ -58,7 +58,10 @@ contextBridge.exposeInMainWorld('insforgeAPI', {
     onStatusChanged: (callback) => onMainEvent('realtime-status-changed', callback),
     onDomainEvent: (callback) => onMainEvent('domain-event', callback)
   }
-})
+}
+
+contextBridge.exposeInMainWorld('supabaseAPI', backendAPI)
+contextBridge.exposeInMainWorld('insforgeAPI', backendAPI)
 
 window.addEventListener('DOMContentLoaded', () => {
   const replaceText = (selector, text) => {
