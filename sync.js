@@ -14,6 +14,7 @@ const sincronizandoPorTenant = new Map() // tenantId -> booleano
 const temporizadoresSincronizacion = new Map() // tenantId -> Timer
 let clienteInsforge = null
 let logueadoVerbose = false
+let notificarActualizacionCache = null
 
 // Tablas de negocio que requieren sincronización bidireccional estricta
 const TABLAS_SINCRONIZABLES = [
@@ -34,6 +35,10 @@ const TABLAS_SINCRONIZABLES = [
 function establecerClienteInsforge(cliente, verbose = false) {
   clienteInsforge = cliente
   logueadoVerbose = verbose
+}
+
+function establecerNotificadorActualizacionCache(notificador) {
+  notificarActualizacionCache = typeof notificador === 'function' ? notificador : null
 }
 
 const establecerClienteSupabase = establecerClienteInsforge
@@ -245,6 +250,7 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
   const ultimaSincronizacion = metadatos.last_pulled_at || new Date(0).toISOString()
   let descargasExitosas = 0
   let erroresRegistrados = false
+  const tablasActualizadas = new Set()
 
   for (const tabla of TABLAS_SINCRONIZABLES) {
     try {
@@ -282,6 +288,7 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
           await localdb.upsertRemotoLWW(tenantId, tabla, reg)
         }
         descargasExitosas += remotos.length
+        tablasActualizadas.add(tabla)
       }
     } catch (error) {
       console.error(`[Zyron:sync] Excepción descargando cambios de tabla ${tabla}:`, error)
@@ -331,6 +338,10 @@ async function ejecutarFlujoPull(tenantId, inicioCicloTimestamp) {
         `[Zyron:sync] Pull exitoso. Metadatos de última sincronización actualizados a: ${inicioCicloTimestamp}`
       )
     }
+  }
+
+  if (tablasActualizadas.size > 0 && notificarActualizacionCache) {
+    notificarActualizacionCache({ tenantId, tables: [...tablasActualizadas] })
   }
 
   if (logueadoVerbose) {
@@ -450,6 +461,7 @@ function detenerTodos() {
 module.exports = {
   establecerClienteInsforge,
   establecerClienteSupabase,
+  establecerNotificadorActualizacionCache,
   sincronizarInquilino,
   iniciarSincronizacionPeriodica,
   detenerSincronizacionPeriodica,
@@ -460,6 +472,7 @@ module.exports = {
     validarConectividad,
     ejecutarFlujoPush,
     ejecutarFlujoPull,
+    establecerNotificadorActualizacionCache,
     leerMetadatosSincronizacion,
     guardarMetadatosSincronizacion
   }

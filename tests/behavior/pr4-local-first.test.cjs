@@ -436,6 +436,37 @@ test('sync: flujo Pull baja cambios más nuevos del servidor y aplica Last-Write
   limpiarEntornoDb();
 });
 
+test('sync: informa las tablas remotas actualizadas para refrescar la vista local activa', async () => {
+  prepararEntornoDb();
+
+  const fechaNueva = new Date().toISOString();
+  const tablasNotificadas = [];
+  const registrosPorTabla = {
+    products: [{ id: 'producto-remoto', tenant_id: idInquilinoPrueba, name: 'Producto remoto', updated_at: fechaNueva, created_at: fechaNueva }],
+    invoices: [{ id: 'factura-remota', tenant_id: idInquilinoPrueba, status: 'draft', updated_at: fechaNueva, created_at: fechaNueva }]
+  };
+  const clienteMock = {
+    database: {
+      from: (tabla) => ({
+        select: () => construirQueryMockeado([{ data: registrosPorTabla[tabla] || [], error: null }])
+      })
+    }
+  };
+
+  sync.establecerClienteInsforge(clienteMock, false);
+  sync.establecerNotificadorActualizacionCache((actualizacion) => tablasNotificadas.push(actualizacion));
+  await sync.__testHooks.ejecutarFlujoPull(idInquilinoPrueba, fechaNueva);
+
+  assert.deepEqual(tablasNotificadas, [{ tenantId: idInquilinoPrueba, tables: ['products', 'invoices'] }]);
+  const productos = await localdb.selectLocal(idInquilinoPrueba, 'products');
+  const facturas = await localdb.selectLocal(idInquilinoPrueba, 'invoices');
+  assert.equal(productos.data[0].name, 'Producto remoto');
+  assert.equal(facturas.data[0].status, 'draft');
+
+  sync.establecerNotificadorActualizacionCache(null);
+  limpiarEntornoDb();
+});
+
 test('sync: Last-Write-Wins mantiene cambio local si es más nuevo que el servidor', async () => {
   prepararEntornoDb();
 

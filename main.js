@@ -589,6 +589,10 @@ const notifyRenderer = (channel, payload) => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
 }
 
+sync.establecerNotificadorActualizacionCache((payload) => {
+  notifyRenderer('local-cache-updated', payload)
+})
+
 const requestAuthRecovery = async (client, reason) => {
   if (authRecoveryPromise) return authRecoveryPromise
   authRecoveryPromise = (async () => {

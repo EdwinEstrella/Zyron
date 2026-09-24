@@ -39,6 +39,9 @@ const backendAPI = {
     delete: (payload) => ipcRenderer.invoke('insforge:db:delete', payload),
     rpc: (payload) => ipcRenderer.invoke('insforge:db:rpc', payload)
   },
+  cache: {
+    onUpdated: (callback) => onMainEvent('local-cache-updated', callback)
+  },
   accounting: {
     listAccounts: (payload) => ipcRenderer.invoke('accounting:accounts:list', payload),
     listJournalEntries: (payload) => ipcRenderer.invoke('accounting:journal-entries:list', payload),
