@@ -44,7 +44,7 @@ Deno.serve(async (req: Request) => {
     if (findError || !rows?.[0])
       return json({ error: findError?.message || 'Documento no encontrado' }, 404)
     const status = String(rows[0].status || '').toLowerCase()
-    if (!['draft', 'pending', 'rejected', 'cancelled'].includes(status)) {
+    if (!['draft', 'rejected', 'cancelled'].includes(status)) {
       return json({ error: 'Este estado no permite eliminacion directa' }, 400)
     }
 

@@ -151,7 +151,6 @@ Deno.serve(async (req: Request) => {
       notes: body.notes ?? existing.notes ?? null,
       updated_at: new Date().toISOString()
     }
-    if (issue) patch.status = 'pending'
 
     const { data: updated, error: updateError } = await client
       .from('invoices')
@@ -171,6 +170,14 @@ Deno.serve(async (req: Request) => {
     }))
     const { error: lineError } = await client.from('invoice_items').insert(itemRows)
     if (lineError) return json({ error: lineError.message || 'Error guardando lineas' }, 400)
+
+    if (issue) {
+      const { error: postingError } = await client.rpc('zyron_post_invoice_issue', {
+        p_tenant_id: tenantId,
+        p_invoice_id: invoiceId
+      })
+      if (postingError) return json({ error: postingError.message || 'No se pudo contabilizar la emisión' }, 400)
+    }
 
     await client.from('audit_logs').insert([
       {

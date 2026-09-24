@@ -104,37 +104,6 @@ const nextNumber = async (
   return String(data || '').trim() || String(Date.now())
 }
 
-const adjustStockOnIssue = async (
-  client: ReturnType<typeof createClient>,
-  tenantId: string,
-  itemRows: any[],
-  invoiceType: string,
-  isDraft: boolean
-) => {
-  if (isDraft || invoiceType !== 'standard') return
-  for (const line of itemRows) {
-    if (line.line_kind !== 'product' || !line.product_id) continue
-    const { data: rows } = await client
-      .from('products')
-      .select('id,stock,tracks_stock,item_kind')
-      .eq('tenant_id', tenantId)
-      .eq('id', line.product_id)
-      .limit(1)
-    const product = rows?.[0]
-    if (
-      !product ||
-      product.tracks_stock === false ||
-      String(product.item_kind || '').toLowerCase() === 'service'
-    )
-      continue
-    await client
-      .from('products')
-      .update({ stock: round2(num(product.stock) - num(line.quantity)) })
-      .eq('tenant_id', tenantId)
-      .eq('id', line.product_id)
-  }
-}
-
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers: corsHeaders })
@@ -178,7 +147,9 @@ Deno.serve(async (req: Request) => {
       subtotal: calc.subtotal,
       tax_total: calc.tax_total,
       total: calc.total,
-      status: isDraft ? 'draft' : 'pending',
+      // A document becomes issued only in the accounting RPC, after its event
+      // and any inventory movement have been committed together.
+      status: 'draft',
       due_date: body.dueDate || body.due_date || null,
       notes: body.notes || null,
       created_by: actorId
@@ -201,7 +172,13 @@ Deno.serve(async (req: Request) => {
     if (itemError)
       return json({ error: itemError.message || 'No se pudieron crear las lineas' }, 400)
 
-    await adjustStockOnIssue(client, tenantId, itemRows, invoiceType, isDraft)
+    if (!isDraft) {
+      const { error: postingError } = await client.rpc('zyron_post_invoice_issue', {
+        p_tenant_id: tenantId,
+        p_invoice_id: invoice.id
+      })
+      if (postingError) return json({ error: postingError.message || 'No se pudo contabilizar la emisión' }, 400)
+    }
 
     await client.from('audit_logs').insert([
       {

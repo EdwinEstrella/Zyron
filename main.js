@@ -426,8 +426,25 @@ const validateDbMutatePayload = (payload) => {
   if (payload.values != null && !isPlainObject(payload.values)) return validationError('values debe ser un objeto.')
   const filterError = validateFilters(payload.filters)
   if (filterError) return validationError(filterError)
+  if (payload.id != null && !isNonEmptyString(String(payload.id))) return validationError('id debe ser un texto no vacio.')
+  if ((!Array.isArray(payload.filters) || payload.filters.length === 0) && !isNonEmptyString(String(payload.id || ''))) {
+    return validationError('Las mutaciones requieren filters o id.')
+  }
   if (payload.selectColumns != null && typeof payload.selectColumns !== 'string') return validationError('selectColumns debe ser string.')
   return null
+}
+
+// `id` was accepted by renderer callers but silently discarded. Normalize it at
+// the IPC boundary so both local-first and remote mutations target one record.
+const includeRecordIdFilter = (payload) => {
+  if (!payload?.id) return payload
+  const filters = Array.isArray(payload.filters) ? [...payload.filters] : []
+  const idFilter = filters.find((filter) => filter?.column === 'id' && filter?.op === 'eq')
+  if (idFilter && String(idFilter.value) !== String(payload.id)) {
+    return { ...payload, __recordIdConflict: true }
+  }
+  if (!idFilter) filters.push({ op: 'eq', column: 'id', value: payload.id })
+  return { ...payload, filters }
 }
 
 const validateRpcPayload = (payload) => {
@@ -1355,6 +1372,8 @@ handleBackendIpc('insforge:db:insert', async (_event, payload) => {
 handleBackendIpc('insforge:db:update', async (_event, payload) => {
   const invalid = validateDbMutatePayload(payload)
   if (invalid) return invalid
+  payload = includeRecordIdFilter(payload)
+  if (payload.__recordIdConflict) return validationError('id no coincide con el filtro id.')
 
   const tenantId = obtenerTenantIdDeFiltrosOValores(payload)
   if (tenantId) {
@@ -1379,6 +1398,8 @@ handleBackendIpc('insforge:db:update', async (_event, payload) => {
 handleBackendIpc('insforge:db:delete', async (_event, payload) => {
   const invalid = validateDbMutatePayload(payload)
   if (invalid) return invalid
+  payload = includeRecordIdFilter(payload)
+  if (payload.__recordIdConflict) return validationError('id no coincide con el filtro id.')
 
   const tenantId = obtenerTenantIdDeFiltrosOValores(payload)
   if (tenantId) {

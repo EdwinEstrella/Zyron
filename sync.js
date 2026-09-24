@@ -22,9 +22,6 @@ const TABLAS_SINCRONIZABLES = [
   'products',
   'invoices',
   'payments',
-  'accounting_accounts',
-  'accounting_journal_entries',
-  'accounting_journal_lines',
   'role_catalog',
   'role_permissions'
 ]
@@ -227,9 +224,10 @@ async function ejecutarFlujoPush(tenantId) {
   }
 }
 
-// Mapeo específico de columnas de fecha incremental por tabla
+// Mapeo específico de columnas de fecha incremental por tabla.
+// El libro mayor publicado no participa de LWW: se consulta remotamente y se
+// crea solo mediante RPCs atómicas.
 const COLUMNAS_FECHA_TABLA = {
-  accounting_journal_lines: 'created_at',
   role_permissions: 'created_at'
 }
 

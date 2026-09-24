@@ -729,6 +729,23 @@ const dbDelete = (payload) =>
     );
 const dbRpc = (functionName, args = {}) =>
     safeCall(() => (window.supabaseAPI || window.insforgeAPI).database.rpc({ functionName, args }), `db.rpc:${functionName}`);
+const viewAccountingEntryForSource = async (sourceType, sourceId) => {
+    const { data: entries, error } = await dbSelect({
+        table: 'accounting_journal_entries',
+        filters: [
+            { op: 'eq', column: 'source_type', value: sourceType },
+            { op: 'eq', column: 'source_id', value: sourceId }
+        ],
+        order: { column: 'entry_date', ascending: false },
+        limit: 20
+    });
+    if (error || !entries?.length) {
+        window.ZyronDialog.alert('Este documento aún no tiene un asiento contable publicado.');
+        return;
+    }
+    state.contabilidadUi = { ...(state.contabilidadUi || {}), tab: 'asientos', sheet: 'detalle_asiento', editId: entries[0].id };
+    await openModule('contabilidad');
+};
 const invokeFn = (slug, body = {}, method = 'POST') => {
     let b = body;
     if (body && typeof body === 'object' && !state.isGlobalAccess && state.currentTenantId) {
@@ -6363,100 +6380,36 @@ const inventoryManualAdjustViaDb = async (tenantId, body) => {
             error: null
         };
     }
-    const { data: whCheck } = await dbSelect({
-        table: 'warehouses',
-        columns: 'id',
-        filters: [
-            { op: 'eq', column: 'id', value: warehouseId },
-            { op: 'eq', column: 'tenant_id', value: tenantId }
-        ],
-        limit: 1
+    const result = await dbRpc('zyron_post_inventory_adjustment', {
+        p_tenant_id: tenantId,
+        p_product_id: productId,
+        p_warehouse_id: warehouseId,
+        p_quantity_delta: delta,
+        p_unit_cost: body.unitCost ?? body.unit_cost ?? null,
+        p_reason: reason
     });
-    if (!whCheck?.length) return { data: { error: 'Almacen no encontrado' }, error: null };
-    const { data: prodRows, error: prodErr } = await dbSelect({
-        table: 'products',
-        columns: 'id,stock,price,tracks_stock,item_kind',
-        filters: [
-            { op: 'eq', column: 'id', value: productId },
-            { op: 'eq', column: 'tenant_id', value: tenantId }
-        ],
-        limit: 1
-    });
-    if (prodErr || !prodRows?.length) return { data: { error: 'Producto no encontrado' }, error: null };
-    const prod = prodRows[0];
-    const track = prod && Object.prototype.hasOwnProperty.call(prod, 'tracks_stock') ? prod.tracks_stock !== false : true;
-    const isService = String(prod?.item_kind || '').toLowerCase() === 'service';
-    if (!track || isService) {
-        return { data: { error: 'Este articulo no admite ajustes de inventario' }, error: null };
-    }
-    const curP = inventoryNumOr(prod.stock, 0);
-    const nextP = Math.max(0, curP + delta);
-    const { data: wsExist } = await dbSelect({
-        table: 'warehouse_stock',
-        columns: 'quantity',
-        filters: [
-            { op: 'eq', column: 'warehouse_id', value: warehouseId },
-            { op: 'eq', column: 'product_id', value: productId }
-        ],
-        limit: 1
-    });
-    const curW = wsExist?.length ? inventoryNumOr(wsExist[0].quantity, 0) : curP;
-    const nextW = Math.max(0, curW + delta);
-    const nowIso = new Date().toISOString();
-    if (wsExist?.length) {
-        const uWs = await dbUpdate({
-            table: 'warehouse_stock',
-            values: { quantity: nextW, updated_at: nowIso },
-            filters: [
-                { op: 'eq', column: 'warehouse_id', value: warehouseId },
-                { op: 'eq', column: 'product_id', value: productId }
-            ]
-        });
-        if (uWs.error) return { data: { error: uWs.error.message || 'warehouse_stock failed' }, error: null };
-    } else {
-        const uWs = await dbInsert({
-            table: 'warehouse_stock',
-            values: { warehouse_id: warehouseId, product_id: productId, quantity: nextW, updated_at: nowIso }
-        });
-        if (uWs.error) return { data: { error: uWs.error.message || 'warehouse_stock failed' }, error: null };
-    }
-    const uP = await dbUpdate({
-        table: 'products',
-        values: { stock: nextP },
-        filters: [
-            { op: 'eq', column: 'id', value: productId },
-            { op: 'eq', column: 'tenant_id', value: tenantId }
-        ]
-    });
-    if (uP.error) return { data: { error: uP.error.message || 'products update failed' }, error: null };
-    const actorId = state.appUser?.id || null;
-    const kPayload = {
+    if (result.error) return { data: { error: result.error.message || 'No se pudo registrar el ajuste' }, error: null };
+    return { data: { ok: true, journalEntryId: result.data }, error: null };
+};
+
+const saveProductAccountMappingViaDb = async (tenantId, productId, values) => {
+    const mapping = {
         tenant_id: tenantId,
-        warehouse_id: warehouseId,
         product_id: productId,
-        movement_type: 'adjustment',
-        quantity: delta,
-        unit_cost: inventoryNumOr(prod.price, 0),
-        reference_type: 'manual',
-        reference_id: null,
-        notes: reason,
-        created_by: actorId
+        sales_account_id: values.sales_account_id || null,
+        inventory_account_id: values.inventory_account_id || null,
+        cost_of_sales_account_id: values.cost_of_sales_account_id || null
     };
-    let kIns = await dbInsert({ table: 'inventory_kardex', values: kPayload });
-    if (kIns.error && /column .* does not exist/i.test(String(kIns.error.message || ''))) {
-        const slim = {
-            tenant_id: tenantId,
-            product_id: productId,
-            movement_type: 'adjustment',
-            quantity: delta,
-            unit_cost: inventoryNumOr(prod.price, 0),
-            reference_type: 'manual',
-            created_by: actorId
-        };
-        kIns = await dbInsert({ table: 'inventory_kardex', values: slim });
-    }
-    if (kIns.error) return { data: { error: String(kIns.error.message || kIns.error || 'kardex failed') }, error: null };
-    return { data: { ok: true, productStock: nextP, warehouseStock: nextW }, error: null };
+    const { data: existing, error: readError } = await dbSelect({
+        table: 'product_account_mappings',
+        filters: [{ op: 'eq', column: 'product_id', value: productId }],
+        limit: 1
+    });
+    if (readError) return readError;
+    const result = existing?.length
+        ? await dbUpdate({ table: 'product_account_mappings', values: mapping, filters: [{ op: 'eq', column: 'product_id', value: productId }] })
+        : await dbInsert({ table: 'product_account_mappings', values: mapping });
+    return result.error || null;
 };
 
 const fmtDocMoneyInvoice = (n, currency) => {
@@ -6967,6 +6920,7 @@ const renderFacturasModule = async () => {
                     <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="history" data-id="${
                         invoice.id
                     }">Historial</button>
+                    <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-inv-action="accounting" data-id="${invoice.id}" aria-label="Ver asiento contable de ${doc}">Ver asiento contable</button>
                     ${
                         st === 'draft'
                             ? `<button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="edit" data-id="${invoice.id}">Editar</button>
@@ -7626,6 +7580,10 @@ const renderFacturasModule = async () => {
         if (!btn) return;
         const id = btn.getAttribute('data-id');
         const act = btn.getAttribute('data-inv-action');
+        if (act === 'accounting') {
+            await viewAccountingEntryForSource('invoice', id);
+            return;
+        }
         if (act === 'history') {
             const { data: logs } = await dbSelect({
                 table: 'audit_logs',
@@ -8591,6 +8549,7 @@ const renderPagosModule = async () => {
                 <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-pay-alloc="${escapeHtml(
                     r.id
                 )}">Aplicaciones</button>
+                <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-pay-accounting="${escapeHtml(r.id)}" aria-label="Ver asiento contable del pago">Ver asiento contable</button>
             </td>
         </tr>`
         )
@@ -8851,6 +8810,9 @@ const renderPagosModule = async () => {
 
     dashboardContent.querySelectorAll('[data-pay-alloc]').forEach((btn) => {
         btn.addEventListener('click', () => showAlloc(btn.getAttribute('data-pay-alloc')));
+    });
+    dashboardContent.querySelectorAll('[data-pay-accounting]').forEach((btn) => {
+        btn.addEventListener('click', () => void viewAccountingEntryForSource('payment', btn.getAttribute('data-pay-accounting')));
     });
 
     document.getElementById('pay-reg-invoice')?.addEventListener('change', (ev) => {
@@ -9719,7 +9681,7 @@ const renderInventarioModule = async () => {
         return;
     }
 
-    const [catRes, listRes, unitRes] = await Promise.all([
+    const [catRes, listRes, unitRes, accountsRes] = await Promise.all([
         productsManageViaDb({ tenantId: tid, action: 'list_categories' }),
         productsManageViaDb({
             tenantId: tid,
@@ -9729,7 +9691,8 @@ const renderInventarioModule = async () => {
             itemKind: itemKind || undefined,
             includeInactive
         }),
-        productsManageViaDb({ tenantId: tid, action: 'list_units' })
+        productsManageViaDb({ tenantId: tid, action: 'list_units' }),
+        dbSelect({ table: 'accounting_accounts', filters: [{ op: 'eq', column: 'is_active', value: true }], order: { column: 'code', ascending: true }, limit: 500 })
     ]);
     const catU = unwrapFnInvoke(catRes);
     const listU = unwrapFnInvoke(listRes);
@@ -9737,6 +9700,7 @@ const renderInventarioModule = async () => {
     const categories = catU.err || !catU.data?.ok ? [] : catU.data.rows || [];
     const rows = listU.err || !listU.data?.ok ? [] : listU.data.rows || [];
     const units = unitU.err || !unitU.data?.ok ? [] : unitU.data.rows || [];
+    const accountingAccounts = accountsRes.error ? [] : accountsRes.data || [];
     const fnErr =
         listU.err || catU.err || unitU.err
             ? `<div class="mb-3 rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error">Catalogo: ${escapeHtml(
@@ -9749,6 +9713,11 @@ const renderInventarioModule = async () => {
         const gRes = await productsManageViaDb({ tenantId: tid, action: 'get_product', productId: editId });
         const gU = unwrapFnInvoke(gRes);
         if (!gU.err && gU.data?.ok) editRow = gU.data.product;
+    }
+    let accountMapping = {};
+    if (editId) {
+        const { data: mappingRows } = await dbSelect({ table: 'product_account_mappings', filters: [{ op: 'eq', column: 'product_id', value: editId }], limit: 1 });
+        accountMapping = mappingRows?.[0] || {};
     }
 
     const money = (n) => {
@@ -9781,6 +9750,7 @@ const renderInventarioModule = async () => {
             <td class="py-2 text-xs">${escapeHtml(p.category?.label || '—')}</td>
             <td class="py-2 text-xs">${escapeHtml(p.unit?.label || p.unit?.code || '—')}</td>
             <td class="py-2 text-right whitespace-nowrap">
+                <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-inv-accounting="${escapeHtml(p.id)}" aria-label="Ver asientos contables de ${escapeHtml(p.name || '')}">Ver asiento contable</button>
                 <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-edit="${escapeHtml(p.id)}">Editar</button>
                 <button type="button" class="rounded border px-2 py-1 text-xs" data-inv-toggle="${escapeHtml(p.id)}" data-active="${
                     p.is_active === false ? '0' : '1'
@@ -9875,6 +9845,9 @@ const renderInventarioModule = async () => {
     const unitSel = (units || [])
         .map((u) => `<option value="${escapeHtml(u.id)}" ${String(fc.unit_id) === String(u.id) ? 'selected' : ''}>${escapeHtml(u.label)} (${escapeHtml(u.code)})</option>`)
         .join('');
+    const accountOptions = (selectedId) => `<option value="">Usar configuración de categoría/control</option>${accountingAccounts
+        .map((account) => `<option value="${escapeHtml(account.id)}" ${String(selectedId || '') === String(account.id) ? 'selected' : ''}>${escapeHtml(account.code)} · ${escapeHtml(account.name)}</option>`)
+        .join('')}`;
     const formPanel = `
         <form id="inv-form" class="grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
             <label class="block text-sm">SKU *<input name="sku" required class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
@@ -9913,6 +9886,15 @@ const renderInventarioModule = async () => {
             )}" /></label>
             <label class="block text-sm">Categoria<select name="category_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm"><option value="">—</option>${catSel}</select></label>
             <label class="block text-sm">Unidad<select name="unit_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm"><option value="">—</option>${unitSel}</select></label>
+            <fieldset class="sm:col-span-2 rounded-md border border-outline-variant/40 p-3">
+                <legend class="px-1 text-sm font-semibold">Configuración contable</legend>
+                <p class="mb-3 text-xs text-on-surface-variant">La creación del producto no genera un asiento. Estas cuentas se usarán en eventos confirmados; vacío aplica categoría o cuentas de control.</p>
+                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <label class="text-sm">Ingresos<select name="sales_account_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${accountOptions(accountMapping.sales_account_id)}</select></label>
+                    <label class="text-sm">Inventario<select name="inventory_account_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${accountOptions(accountMapping.inventory_account_id)}</select></label>
+                    <label class="text-sm">Costo de ventas<select name="cost_of_sales_account_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${accountOptions(accountMapping.cost_of_sales_account_id)}</select></label>
+                </div>
+            </fieldset>
             <div class="sm:col-span-2 flex gap-2">
                 <button type="submit" class="rounded-md bg-primary px-4 py-2 text-sm text-white">${editId ? 'Guardar' : 'Crear'}</button>
                 <button type="button" id="inv-form-cancel" class="rounded-md border px-4 py-2 text-sm">Cerrar</button>
@@ -10000,6 +9982,20 @@ const renderInventarioModule = async () => {
         btn.addEventListener('click', () => {
             state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: btn.getAttribute('data-inv-edit') };
             void renderInventarioModule();
+        });
+    });
+    dashboardContent.querySelectorAll('[data-inv-accounting]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            const result = await dbRpc('zyron_product_accounting_entries', {
+                p_tenant_id: tid,
+                p_product_id: btn.getAttribute('data-inv-accounting')
+            });
+            if (result.error || !result.data?.length) {
+                window.ZyronDialog.alert('Este producto aún no tiene asientos contables asociados.');
+                return;
+            }
+            state.contabilidadUi = { ...(state.contabilidadUi || {}), tab: 'asientos', sheet: 'detalle_asiento', editId: result.data[0].entry_id };
+            await openModule('contabilidad');
         });
     });
 
@@ -10102,6 +10098,18 @@ const renderInventarioModule = async () => {
         if (editId) res = await productsManageViaDb({ ...payload, action: 'update_product', productId: editId });
         else res = await productsManageViaDb({ ...payload, action: 'create_product' });
         const u = unwrapFnInvoke(res);
+        const productId = u.data?.product?.id;
+        if (!u.err && u.data?.ok && productId) {
+            const mappingError = await saveProductAccountMappingViaDb(tid, productId, {
+                sales_account_id: fd.get('sales_account_id'),
+                inventory_account_id: fd.get('inventory_account_id'),
+                cost_of_sales_account_id: fd.get('cost_of_sales_account_id')
+            });
+            if (mappingError) {
+                window.ZyronDialog.alert(mappingError.message || 'El artículo se guardó, pero no su configuración contable.');
+                return;
+            }
+        }
         if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else closeSheet();
     });
@@ -10936,7 +10944,6 @@ const renderContabilidadModule = async () => {
     let contentHtml = '';
 
     if (ui.tab === 'cuentas') {
-        const noCuentas = accounts.length === 0;
         const rowsHtml = filteredAccounts.map(acc => {
             const parts = acc.code.split('.');
             const indent = (parts.length - 1) * 16; // Sangría en px basada en nivel
@@ -10972,12 +10979,6 @@ const renderContabilidadModule = async () => {
                         <button id="acc-search-clear" type="button" class="rounded-lg bg-surface-container-low hover:bg-surface-container-highest px-3 py-2 text-sm text-on-surface transition-all">Limpiar</button>
                     </div>
                     <div class="flex items-center gap-2">
-                        ${noCuentas ? `
-                            <button id="acc-seed-btn" type="button" class="flex items-center gap-2 rounded-lg bg-secondary px-4 py-2 text-sm font-semibold text-on-secondary shadow hover:bg-secondary-container transition-all">
-                                <span class="material-symbols-outlined text-sm">auto_awesome</span>
-                                <span>Sembrar Nomenclatura Estándar</span>
-                            </button>
-                        ` : ''}
                         <button id="acc-new-btn" type="button" class="flex items-center gap-2 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-md hover:bg-primary/90 transition-all">
                             <span class="material-symbols-outlined text-sm">add</span>
                             <span>Nueva Cuenta</span>
@@ -11300,6 +11301,7 @@ const renderContabilidadModule = async () => {
                     <td class="py-2.5 px-3 font-mono text-xs text-on-surface-variant">${escapeHtml(acc.code || '')}</td>
                     <td class="py-2.5 px-3 font-medium text-on-surface">${escapeHtml(acc.name || '')}</td>
                     <td class="py-2.5 px-3 text-on-surface-variant">${escapeHtml(line.description || '—')}</td>
+                    <td class="py-2.5 px-3 font-mono text-xs text-on-surface-variant">${escapeHtml(line.source_line_id || '—')}</td>
                     <td class="py-2.5 px-3 text-right font-mono text-xs text-success">${line.debit_amount > 0 ? formatMoneda(line.debit_amount) : '—'}</td>
                     <td class="py-2.5 px-3 text-right font-mono text-xs text-primary">${line.credit_amount > 0 ? formatMoneda(line.credit_amount) : '—'}</td>
                 </tr>
@@ -11336,6 +11338,10 @@ const renderContabilidadModule = async () => {
                             <span class="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">Concepto General / Memo</span>
                             <span class="text-sm font-medium text-on-surface">${escapeHtml(selectedEntry.memo || '—')}</span>
                         </div>
+                        <div class="flex flex-col gap-0.5 md:col-span-3 border-t border-outline-variant/20 pt-2 mt-1">
+                            <span class="text-[10px] font-semibold text-on-surface-variant uppercase tracking-wider">Origen</span>
+                            <span class="text-sm font-medium text-on-surface">${escapeHtml(selectedEntry.source_label || selectedEntry.source_type || 'Asiento manual')} · ${escapeHtml(selectedEntry.source_id || '—')}</span>
+                        </div>
                     </div>
 
                     <div class="flex flex-col gap-2 mt-2">
@@ -11346,7 +11352,8 @@ const renderContabilidadModule = async () => {
                                     <tr class="border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant select-none">
                                         <th class="py-2.5 px-3 w-32">Código</th>
                                         <th class="py-2.5 px-3">Cuenta Contable</th>
-                                        <th class="py-2.5 px-3">Descripción de Apunte</th>
+                                         <th class="py-2.5 px-3">Descripción de Apunte</th>
+                                         <th class="py-2.5 px-3">Línea origen</th>
                                         <th class="py-2.5 px-3 w-40 text-right">Débitos</th>
                                         <th class="py-2.5 px-3 w-40 text-right">Créditos</th>
                                     </tr>
@@ -11356,7 +11363,7 @@ const renderContabilidadModule = async () => {
                                 </tbody>
                                 <tfoot>
                                     <tr class="bg-surface-container-low font-bold">
-                                        <td colspan="3" class="p-3 text-right">Totales del Asiento:</td>
+                                        <td colspan="4" class="p-3 text-right">Totales del Asiento:</td>
                                         <td class="p-3 text-right font-mono text-xs text-success">${formatMoneda(selectedEntry.debitoTotal)}</td>
                                         <td class="p-3 text-right font-mono text-xs text-primary">${formatMoneda(selectedEntry.creditoTotal)}</td>
                                     </tr>
@@ -11448,6 +11455,8 @@ const renderContabilidadModule = async () => {
 
         // Sembrar Catálogo
         document.getElementById('acc-seed-btn')?.addEventListener('click', async () => {
+            window.ZyronDialog.alert('El catálogo contable se gestiona desde las cuentas de control de la base de datos. No se reemplazan cuentas existentes.');
+            return;
             if (!window.ZyronDialog.confirm('¿Deseas sembrar la nomenclatura estándar del catálogo de cuentas en español?')) return;
             
             try {
@@ -11544,69 +11553,9 @@ const renderContabilidadModule = async () => {
             btn.addEventListener('click', async () => {
                 const id = btn.getAttribute('data-ent-reverse');
                 if (!window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
-                
                 try {
-                    const originalEntry = entries.find(e => e.id === id);
-                    if (!originalEntry) return;
-
-                    const originalLinesRes = await dbSelect({
-                        table: 'accounting_journal_lines',
-                        filters: [
-                            { op: 'eq', column: 'journal_entry_id', value: id },
-                            { op: 'eq', column: 'tenant_id', value: tid }
-                        ]
-                    });
-                    const originalLines = originalLinesRes?.data || [];
-
-                    // 1. Crear asiento de reversión
-                    const revEntryRes = await dbInsert({
-                        table: 'accounting_journal_entries',
-                        values: [{
-                            tenant_id: tid,
-                            entry_date: new Date().toISOString().split('T')[0],
-                            status: 'draft',
-                            memo: `Reversión de asiento ${originalEntry.entry_number} - ${originalEntry.memo || ''}`,
-                            reversal_of_entry_id: originalEntry.id,
-                            created_by: state.appUser?.id || null
-                        }]
-                    });
-
-                    if (revEntryRes.error || !revEntryRes.data || !revEntryRes.data[0]) {
-                        throw new Error(revEntryRes.error?.message || 'No se pudo crear el asiento de reversión.');
-                    }
-                    const newEntryId = revEntryRes.data[0].id;
-
-                    // 2. Crear líneas invertidas
-                    for (let i = 0; i < originalLines.length; i++) {
-                        const line = originalLines[i];
-                        await dbInsert({
-                            table: 'accounting_journal_lines',
-                            values: [{
-                                tenant_id: tid,
-                                journal_entry_id: newEntryId,
-                                account_id: line.account_id,
-                                line_no: line.line_no,
-                                description: `Inversión: ${line.description || 'Apunte reversado'}`,
-                                debit_amount: line.credit_amount, // Invertido
-                                credit_amount: line.debit_amount, // Invertido
-                                currency: line.currency || 'DOP'
-                            }]
-                        });
-                    }
-
-                    // 3. Contabilizar asiento de reversión
-                    await dbUpdate({
-                        table: 'accounting_journal_entries',
-                        id: newEntryId,
-                        values: { status: 'posted' }
-                    });
-
-                    // 4. Actualizar original a reversed
-                    await dbUpdate({
-                        table: 'accounting_journal_entries',
-                        id: originalEntry.id,
-                        values: { status: 'reversed' }
-                    });
+                    const result = await dbRpc('zyron_reverse_journal_entry', { p_tenant_id: tid, p_entry_id: id });
+                    if (result.error) throw new Error(result.error.message || 'No se pudo reversar el asiento.');
 
                     window.ZyronDialog.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
                     void renderContabilidadModule();
@@ -11623,7 +11572,8 @@ const renderContabilidadModule = async () => {
                 if (!window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
                 
                 try {
-                    await dbDelete({ table: 'accounting_journal_entries', id });
+                    const result = await dbRpc('zyron_delete_draft_journal', { p_tenant_id: tid, p_entry_id: id });
+                    if (result.error) throw new Error(result.error.message || 'No se pudo eliminar el borrador.');
                     window.ZyronDialog.alert('¡Borrador eliminado exitosamente!');
                     void renderContabilidadModule();
                 } catch (err) {
@@ -11851,59 +11801,19 @@ const renderContabilidadModule = async () => {
             }
 
             try {
-                // 1. Crear el asiento en borrador ('draft') siempre primero para evitar fallos de triggers
-                const entryRes = await dbInsert({
-                    table: 'accounting_journal_entries',
-                    values: [{
-                        tenant_id: tid,
-                        entry_date,
-                        status: 'draft',
-                        memo,
-                        created_by: state.appUser?.id || null
-                    }]
+                if (status !== 'posted') {
+                    window.ZyronDialog.alert('Los asientos nuevos se contabilizan en una sola operación atómica. Revisa las líneas y usa Contabilizar.');
+                    return;
+                }
+                const result = await dbRpc('zyron_create_manual_journal', {
+                    p_tenant_id: tid,
+                    p_entry_date: entry_date,
+                    p_memo: memo,
+                    p_currency: 'DOP',
+                    p_lines: linesData.map((line) => ({ account_id: line.account_id, description: line.description, debit: line.debit_amount, credit: line.credit_amount }))
                 });
-
-                if (entryRes.error || !entryRes.data || !entryRes.data[0]) {
-                    throw new Error(entryRes.error?.message || 'No se pudo crear el asiento contable.');
-                }
-                const newEntryId = entryRes.data[0].id;
-
-                // 2. Insertar las líneas secuencialmente
-                for (const line of linesData) {
-                    const lineRes = await dbInsert({
-                        table: 'accounting_journal_lines',
-                        values: [{
-                            tenant_id: tid,
-                            journal_entry_id: newEntryId,
-                            account_id: line.account_id,
-                            line_no: line.line_no,
-                            description: line.description,
-                            debit_amount: line.debit_amount,
-                            credit_amount: line.credit_amount,
-                            currency: 'DOP'
-                        }]
-                    });
-                    if (lineRes.error) {
-                        // Si falla, borramos el asiento en cascada y lanzamos error
-                        await dbDelete({ table: 'accounting_journal_entries', id: newEntryId });
-                        throw new Error(lineRes.error.message);
-                    }
-                }
-
-                // 3. Si se pidió contabilizar (publicar), actualizamos a 'posted'
-                if (status === 'posted') {
-                    const postRes = await dbUpdate({
-                        table: 'accounting_journal_entries',
-                        id: newEntryId,
-                        values: { status: 'posted' }
-                    });
-                    if (postRes.error) {
-                        // Devolver a borrador o informar
-                        throw new Error('Las líneas se guardaron en borrador pero la contabilización falló: ' + postRes.error.message);
-                    }
-                }
-
-                window.ZyronDialog.alert(status === 'posted' ? '¡Asiento contable contabilizado exitosamente!' : '¡Asiento borrador guardado correctamente!');
+                if (result.error) throw new Error(result.error.message || 'No se pudo contabilizar el asiento.');
+                window.ZyronDialog.alert('¡Asiento contable contabilizado exitosamente!');
                 closeModal();
             } catch (err) {
                 console.error(err);
@@ -11933,55 +11843,8 @@ const renderContabilidadModule = async () => {
             if (!window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
             
             try {
-                // 1. Crear asiento de reversión
-                const revEntryRes = await dbInsert({
-                    table: 'accounting_journal_entries',
-                    values: [{
-                        tenant_id: tid,
-                        entry_date: new Date().toISOString().split('T')[0],
-                        status: 'draft',
-                        memo: `Reversión de asiento ${selectedEntry.entry_number} - ${selectedEntry.memo || ''}`,
-                        reversal_of_entry_id: selectedEntry.id,
-                        created_by: state.appUser?.id || null
-                    }]
-                });
-
-                if (revEntryRes.error || !revEntryRes.data || !revEntryRes.data[0]) {
-                    throw new Error(revEntryRes.error?.message || 'No se pudo crear el asiento de reversión.');
-                }
-                const newEntryId = revEntryRes.data[0].id;
-
-                // 2. Crear líneas invertidas
-                for (let i = 0; i < selectedLines.length; i++) {
-                    const line = selectedLines[i];
-                    await dbInsert({
-                        table: 'accounting_journal_lines',
-                        values: [{
-                            tenant_id: tid,
-                            journal_entry_id: newEntryId,
-                            account_id: line.account_id,
-                            line_no: line.line_no,
-                            description: `Inversión: ${line.description || 'Apunte reversado'}`,
-                            debit_amount: line.credit_amount,
-                            credit_amount: line.debit_amount,
-                            currency: line.currency || 'DOP'
-                        }]
-                    });
-                }
-
-                // 3. Contabilizar asiento de reversión
-                await dbUpdate({
-                    table: 'accounting_journal_entries',
-                    id: newEntryId,
-                    values: { status: 'posted' }
-                });
-
-                // 4. Actualizar original a reversed
-                await dbUpdate({
-                    table: 'accounting_journal_entries',
-                    id: selectedEntry.id,
-                    values: { status: 'reversed' }
-                });
+                const result = await dbRpc('zyron_reverse_journal_entry', { p_tenant_id: tid, p_entry_id: selectedEntry.id });
+                if (result.error) throw new Error(result.error.message || 'No se pudo reversar el asiento.');
 
                 window.ZyronDialog.alert('¡Asiento reversado y contra-asiento contabilizado con éxito!');
                 closeSheet();
@@ -12003,11 +11866,7 @@ const renderContabilidadModule = async () => {
             }
 
             try {
-                const res = await dbUpdate({
-                    table: 'accounting_journal_entries',
-                    id: selectedEntry.id,
-                    values: { status: 'posted' }
-                });
+                const res = await dbRpc('zyron_publish_draft_journal', { p_tenant_id: tid, p_entry_id: selectedEntry.id });
                 if (res.error) throw new Error(res.error.message);
                 window.ZyronDialog.alert('¡Asiento contable contabilizado exitosamente!');
                 closeSheet();
@@ -12021,7 +11880,8 @@ const renderContabilidadModule = async () => {
             if (!window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
             
             try {
-                await dbDelete({ table: 'accounting_journal_entries', id: selectedEntry.id });
+                const result = await dbRpc('zyron_delete_draft_journal', { p_tenant_id: tid, p_entry_id: selectedEntry.id });
+                if (result.error) throw new Error(result.error.message || 'No se pudo eliminar el borrador.');
                 window.ZyronDialog.alert('¡Borrador eliminado exitosamente!');
                 closeSheet();
             } catch (err) {

@@ -94,6 +94,31 @@ test('invalid IPC payloads return serialized data/null error response', async ()
   assert.match(result.error.message, /values debe ser un arreglo/i)
 })
 
+test('db update normalizes an id payload into an id equality filter', async () => {
+  const { handlers } = loadMainForBehaviorTest()
+  const filters = []
+  const query = {
+    eq: (column, value) => {
+      filters.push({ column, value })
+      return query
+    },
+    select: async () => ({ data: [{ id: 'record-1' }], error: null })
+  }
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    database: { from: () => ({ update: () => query }) },
+    realtime: { on: () => {} }
+  }
+
+  const result = await handlers.get('insforge:db:update')(null, {
+    table: 'accounting_journal_entries',
+    id: 'record-1',
+    values: { status: 'draft' }
+  })
+
+  assert.equal(result.error, null)
+  assert.deepEqual(filters, [{ column: 'id', value: 'record-1' }])
+})
+
 test('401/AUTH_UNAUTHORIZED refreshes once and retries without surfacing re-login', async () => {
   const { handlers } = loadMainForBehaviorTest()
   const selectResults = [
