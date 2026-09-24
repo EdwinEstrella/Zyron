@@ -159,7 +159,15 @@ const DEFAULT_PERMISSION_UI = Object.freeze([
     { key: 'reports.view', label: 'Reportes' },
     { key: 'fiscal.manage', label: 'Fiscal / cumplimiento' },
     { key: 'accounting.ledger.view', label: 'Ver contabilidad' },
-    { key: 'accounting.ledger.manage', label: 'Gestionar contabilidad' }
+    { key: 'accounting.ledger.manage', label: 'Gestionar contabilidad' },
+    { key: 'hr.manage', label: 'Recursos Humanos (RRHH)' },
+    { key: 'crm.manage', label: 'CRM de Ventas' },
+    { key: 'projects.manage', label: 'Gestion de Proyectos' },
+    { key: 'mrp.manage', label: 'Produccion y Manufactura' },
+    { key: 'scm.manage', label: 'Cadena de Suministro / Compras' },
+    { key: 'ecommerce.manage', label: 'Comercio Electronico (E-commerce)' },
+    { key: 'quality.manage', label: 'Gestion de Calidad' },
+    { key: 'dms.manage', label: 'Gestion Documental' }
 ]);
 
 const DEFAULT_NAV_SUPER = Object.freeze([
@@ -176,6 +184,14 @@ const DEFAULT_NAV_TENANT = Object.freeze([
     { key: 'pagos', label: 'Pagos y cobros', icon: 'payments' },
     { key: 'inventario', label: 'Inventario', icon: 'inventory_2' },
     { key: 'clientes', label: 'Clientes', icon: 'groups' },
+    { key: 'rrhh', label: 'RRHH', icon: 'badge' },
+    { key: 'crm', label: 'CRM Ventas', icon: 'handshake' },
+    { key: 'proyectos', label: 'Proyectos', icon: 'assignment' },
+    { key: 'produccion', label: 'Producción', icon: 'precision_manufacturing' },
+    { key: 'cadena_suministro', label: 'Cadena Suministro', icon: 'local_shipping' },
+    { key: 'ecommerce', label: 'E-commerce', icon: 'storefront' },
+    { key: 'calidad', label: 'Calidad', icon: 'verified' },
+    { key: 'documental', label: 'Gestión Documental', icon: 'folder_shared' },
     { key: 'reportes', label: 'Reportes', icon: 'monitoring' },
     { key: 'contabilidad', label: 'Contabilidad', icon: 'account_balance' },
     { key: 'config', label: 'Configuracion', icon: 'settings' }
@@ -753,6 +769,651 @@ const viewAccountingEntryForSource = async (sourceType, sourceId) => {
     state.contabilidadUi = { ...(state.contabilidadUi || {}), tab: 'asientos', sheet: 'detalle_asiento', editId: entries[0].id };
     await openModule('contabilidad');
 };
+
+// ============================================================================
+// Drill-down empresarial: trazabilidad navegable de documentos -> libro mayor.
+// Patrón reusable. Se estrena en la Factura (documento que postea al ledger) y
+// luego se replica a pagos, compras, etc. sin reescribir la lógica contable.
+//   - renderInvoiceDetailScreen(id): pantalla-detalle con su asiento contable.
+//   - renderAccountLedgerScreen(id): mayor de una cuenta con saldo acumulado.
+// ============================================================================
+
+const ACCOUNT_TYPE_LABELS = {
+    asset: 'Activo',
+    liability: 'Pasivo',
+    equity: 'Patrimonio',
+    revenue: 'Ingreso',
+    expense: 'Gasto'
+};
+const accountTypeLabel = (t) => ACCOUNT_TYPE_LABELS[String(t || '')] || (t || '—');
+
+const drillStatusBadge = (status, dict) => {
+    const s = String(status || '').toLowerCase();
+    const map = {
+        draft: ['Borrador', 'bg-warning/10 text-warning'],
+        pending: ['Pendiente', 'bg-warning/10 text-warning'],
+        issued: ['Emitida', 'bg-success/10 text-success'],
+        posted: ['Contabilizada', 'bg-success/10 text-success'],
+        paid: ['Pagada', 'bg-success/10 text-success'],
+        partial: ['Pago parcial', 'bg-primary/10 text-primary'],
+        reversed: ['Reversado', 'bg-error/10 text-error'],
+        void: ['Anulada', 'bg-error/10 text-error'],
+        cancelled: ['Cancelada', 'bg-error/10 text-error']
+    };
+    const src = dict || map;
+    const [label, cls] = src[s] || [status || '—', 'bg-surface-container-highest text-on-surface-variant'];
+    return `<span class="inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${cls}">${escapeHtml(label)}</span>`;
+};
+
+/**
+ * Tabla de un asiento contable: cada línea muestra la cuenta (código + nombre),
+ * su cuenta de control padre, la descripción y el débito/crédito. La fila es
+ * clickable para saltar al mayor de esa cuenta (data-ledger-account).
+ */
+const renderAsientoTraceTable = (entry, lines, accountById) => {
+    let dr = 0;
+    let cr = 0;
+    const body = (lines || [])
+        .slice()
+        .sort((a, b) => Number(a.line_no || 0) - Number(b.line_no || 0))
+        .map((line) => {
+            const acc = accountById.get(line.account_id) || {};
+            const parent = acc.parent_account_id ? accountById.get(acc.parent_account_id) : null;
+            dr += Number(line.debit_amount || 0);
+            cr += Number(line.credit_amount || 0);
+            const controlChip = parent
+                ? `<div class="mt-0.5 text-[10px] text-on-surface-variant">Control: <span class="font-mono">${escapeHtml(parent.code || '')}</span> · ${escapeHtml(parent.name || '')}</div>`
+                : '';
+            return `<tr class="border-b border-outline-variant/20 cursor-pointer hover:bg-primary/5" data-ledger-account="${escapeHtml(line.account_id)}" title="Ver mayor de esta cuenta">
+                <td class="py-2.5 px-3 align-top font-mono text-xs text-on-surface-variant">${escapeHtml(acc.code || '—')}</td>
+                <td class="py-2.5 px-3 align-top">
+                    <div class="font-medium text-on-surface">${escapeHtml(acc.name || 'Cuenta desconocida')}</div>
+                    <div class="text-[10px] uppercase tracking-wide text-on-surface-variant">${escapeHtml(accountTypeLabel(acc.account_type))}</div>
+                    ${controlChip}
+                </td>
+                <td class="py-2.5 px-3 align-top text-on-surface-variant">${escapeHtml(line.description || '—')}</td>
+                <td class="py-2.5 px-3 align-top text-right font-mono text-xs text-success">${Number(line.debit_amount) > 0 ? fmtMoneyPanel(line.debit_amount, entry.currency) : '—'}</td>
+                <td class="py-2.5 px-3 align-top text-right font-mono text-xs text-primary">${Number(line.credit_amount) > 0 ? fmtMoneyPanel(line.credit_amount, entry.currency) : '—'}</td>
+                <td class="py-2.5 px-2 align-top text-outline"><span class="material-symbols-outlined text-base">chevron_right</span></td>
+            </tr>`;
+        })
+        .join('');
+    const balanced = Math.abs(dr - cr) < 0.005;
+    const balanceRow = balanced
+        ? '<span class="inline-flex items-center gap-1 text-xs font-medium text-success"><span class="material-symbols-outlined text-sm">check_circle</span>Asiento balanceado</span>'
+        : '<span class="inline-flex items-center gap-1 text-xs font-medium text-error"><span class="material-symbols-outlined text-sm">error</span>Descuadre: ' + fmtMoneyPanel(dr - cr, entry.currency) + '</span>';
+    return `
+        <div class="overflow-hidden rounded-xl border border-outline-variant/30 shadow-sm">
+            <div class="flex flex-wrap items-center justify-between gap-2 border-b border-outline-variant/30 bg-surface-container-low px-4 py-2.5">
+                <div class="flex items-center gap-2">
+                    <span class="material-symbols-outlined text-primary">receipt_long</span>
+                    <span class="text-sm font-bold text-on-surface">Asiento ${escapeHtml(entry.entry_number || '(borrador)')}</span>
+                    ${drillStatusBadge(entry.status)}
+                </div>
+                <div class="text-xs text-on-surface-variant">${escapeHtml(toDateString(entry.entry_date))}${entry.memo ? ' · ' + escapeHtml(entry.memo) : ''}</div>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full min-w-[720px] border-collapse text-left text-sm">
+                    <thead>
+                        <tr class="select-none border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                            <th class="w-28 px-3 py-2.5">Código</th>
+                            <th class="px-3 py-2.5">Cuenta (control → subcuenta)</th>
+                            <th class="px-3 py-2.5">Descripción</th>
+                            <th class="w-36 px-3 py-2.5 text-right">Débito</th>
+                            <th class="w-36 px-3 py-2.5 text-right">Crédito</th>
+                            <th class="w-8 px-2 py-2.5"></th>
+                        </tr>
+                    </thead>
+                    <tbody>${body || '<tr><td colspan="6" class="px-3 py-4 text-center text-on-surface-variant">Sin líneas.</td></tr>'}</tbody>
+                    <tfoot>
+                        <tr class="bg-surface-container-low font-bold">
+                            <td colspan="3" class="px-3 py-3 text-right">Totales del asiento:</td>
+                            <td class="px-3 py-3 text-right font-mono text-xs text-success">${fmtMoneyPanel(dr, entry.currency)}</td>
+                            <td class="px-3 py-3 text-right font-mono text-xs text-primary">${fmtMoneyPanel(cr, entry.currency)}</td>
+                            <td class="px-2 py-3"></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            <div class="flex justify-end border-t border-outline-variant/30 bg-surface-container-lowest px-4 py-2">${balanceRow}</div>
+        </div>`;
+};
+
+/** Trae el catálogo de cuentas del inquilino como Map(id -> cuenta). */
+const fetchAccountsMap = async (tid) => {
+    const { data } = await dbSelect({
+        table: 'accounting_accounts',
+        filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+        limit: 2000
+    });
+    return new Map((data || []).map((a) => [a.id, a]));
+};
+
+/**
+ * Pantalla-detalle de una Factura con trazabilidad contable completa.
+ * Se pinta directamente sobre #dashboard-content; el botón "Volver" repinta la lista.
+ */
+const renderInvoiceDetailScreen = async (invoiceId) => {
+    const tid = state.currentTenantId;
+    if (!invoiceId || !tid) {
+        window.ZyronDialog.alert('No se pudo abrir el detalle de la factura.');
+        return;
+    }
+    dashboardContent.innerHTML = renderModuleHeader('Factura', 'Cargando detalle…');
+
+    const [{ data: invRows }, { data: itemRows }, { data: allocRows }, { data: entryRows }] = await Promise.all([
+        dbSelect({ table: 'invoices', filters: [{ op: 'eq', column: 'id', value: invoiceId }], limit: 1 }),
+        dbSelect({ table: 'invoice_items', filters: [{ op: 'eq', column: 'invoice_id', value: invoiceId }], order: { column: 'created_at', ascending: true } }),
+        dbSelect({ table: 'payment_allocations', filters: [{ op: 'eq', column: 'invoice_id', value: invoiceId }], order: { column: 'allocated_at', ascending: false } }),
+        dbSelect({
+            table: 'accounting_journal_entries',
+            filters: [
+                { op: 'eq', column: 'source_type', value: 'invoice' },
+                { op: 'eq', column: 'source_id', value: invoiceId }
+            ],
+            order: { column: 'entry_date', ascending: true },
+            limit: 20
+        })
+    ]);
+
+    const invoice = (invRows || [])[0];
+    if (!invoice) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Factura', 'No encontrada')}
+            <div class="rounded-xl border border-outline-variant/30 p-6 text-center text-on-surface-variant">Esta factura ya no existe.
+                <div class="mt-3"><button type="button" id="inv-detail-back" class="rounded-md border border-outline-variant px-3 py-1.5 text-sm">Volver a facturas</button></div>
+            </div>`;
+        document.getElementById('inv-detail-back')?.addEventListener('click', () => void renderFacturasModule());
+        return;
+    }
+
+    const entries = entryRows || [];
+    const entryIds = entries.map((e) => e.id);
+    const allocs = allocRows || [];
+    const paymentIds = [...new Set(allocs.map((a) => a.payment_id).filter(Boolean))];
+
+    const [{ data: lineRows }, { data: payRows }, customerRes, accountById] = await Promise.all([
+        entryIds.length
+            ? dbSelect({ table: 'accounting_journal_lines', filters: [{ op: 'in', column: 'journal_entry_id', value: entryIds }], limit: 500 })
+            : Promise.resolve({ data: [] }),
+        paymentIds.length
+            ? dbSelect({ table: 'payments', filters: [{ op: 'in', column: 'id', value: paymentIds }], limit: 200 })
+            : Promise.resolve({ data: [] }),
+        invoice.customer_id
+            ? dbSelect({ table: 'customers', filters: [{ op: 'eq', column: 'id', value: invoice.customer_id }], limit: 1 })
+            : Promise.resolve({ data: [] }),
+        fetchAccountsMap(tid)
+    ]);
+
+    const linesByEntry = new Map();
+    (lineRows || []).forEach((l) => {
+        if (!linesByEntry.has(l.journal_entry_id)) linesByEntry.set(l.journal_entry_id, []);
+        linesByEntry.get(l.journal_entry_id).push(l);
+    });
+    const paymentById = new Map((payRows || []).map((p) => [p.id, p]));
+    const customer = (customerRes.data || [])[0] || null;
+
+    const typeLabel = ({ standard: 'Factura', proforma: 'Proforma', estimate: 'Presupuesto', credit_note: 'Nota de crédito', debit_note: 'Nota de débito' }[String(invoice.invoice_type || 'standard')] || invoice.invoice_type);
+    const docNo = `${escapeHtml(invoice.series || '')}-${escapeHtml(invoice.number || '')}`;
+    const cur = invoice.currency || 'DOP';
+    const total = Number(invoice.total || 0);
+    const paid = Number(invoice.amount_paid || 0);
+    const balance = total - paid;
+
+    const itemsHtml = (itemRows || [])
+        .map((it) => {
+            const qty = Number(it.quantity || 0);
+            const price = Number(it.unit_price || 0);
+            return `<tr class="border-b border-outline-variant/20">
+                <td class="px-3 py-2.5">
+                    <div class="font-medium text-on-surface">${escapeHtml(it.description || '—')}</div>
+                    <div class="text-[10px] uppercase tracking-wide text-on-surface-variant">${escapeHtml(it.line_kind === 'product' ? 'Producto' : 'Servicio')}</div>
+                </td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs">${qty}</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs">${fmtMoneyPanel(price, cur)}</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs">${Number(it.tax_rate || 0)}%</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs">${Number(it.discount || 0)}</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs font-semibold">${fmtMoneyPanel(it.line_total, cur)}</td>
+            </tr>`;
+        })
+        .join('') || '<tr><td colspan="6" class="px-3 py-4 text-center text-on-surface-variant">Sin líneas.</td></tr>';
+
+    const paymentsHtml = allocs.length
+        ? allocs
+              .map((a) => {
+                  const p = paymentById.get(a.payment_id) || {};
+                  return `<tr class="border-b border-outline-variant/20">
+                    <td class="px-3 py-2.5 text-xs">${escapeHtml(toDateString(p.payment_date || a.allocated_at))}</td>
+                    <td class="px-3 py-2.5 text-xs">${escapeHtml(p.method || p.payment_method_code || '—')}</td>
+                    <td class="px-3 py-2.5 font-mono text-xs text-on-surface-variant">${escapeHtml(p.reference || '—')}</td>
+                    <td class="px-3 py-2.5 text-right font-mono text-xs font-semibold text-success">${fmtMoneyPanel(a.amount, cur)}</td>
+                </tr>`;
+              })
+              .join('')
+        : '<tr><td colspan="4" class="px-3 py-4 text-center text-on-surface-variant">Sin pagos aplicados.</td></tr>';
+
+    const asientosHtml = entries.length
+        ? entries.map((e) => renderAsientoTraceTable(e, linesByEntry.get(e.id) || [], accountById)).join('<div class="h-3"></div>')
+        : `<div class="rounded-xl border border-dashed border-outline-variant/40 bg-surface-container-lowest p-6 text-center">
+                <span class="material-symbols-outlined text-3xl text-outline">account_balance</span>
+                <p class="mt-2 text-sm text-on-surface-variant">Esta factura aún no generó un asiento contable.</p>
+                <p class="text-xs text-on-surface-variant">Los asientos se publican al emitir/contabilizar el documento.</p>
+           </div>`;
+
+    const fld = (label, value, opts = {}) =>
+        `<div class="flex flex-col gap-1">
+            <span class="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">${escapeHtml(label)}</span>
+            <div class="flex min-h-[38px] items-center rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface ${opts.mono ? 'font-mono' : ''} ${opts.strong ? 'font-semibold' : ''}">${value}</div>
+        </div>`;
+    const sectionBar = (icon, title, subtitle) =>
+        `<div class="flex items-center gap-2 rounded-t-xl border border-b-0 border-outline-variant/30 bg-primary/5 px-4 py-2.5">
+            <span class="material-symbols-outlined text-lg text-primary">${icon}</span>
+            <h4 class="text-sm font-bold text-on-surface">${escapeHtml(title)}</h4>
+            ${subtitle ? `<span class="ml-auto text-[11px] text-on-surface-variant">${escapeHtml(subtitle)}</span>` : ''}
+        </div>`;
+    const totalRow = (label, value, opts = {}) =>
+        `<div class="flex items-center justify-between px-4 py-2 ${opts.border ? 'border-t border-outline-variant/25' : ''}">
+            <span class="text-xs ${opts.strong ? 'font-bold text-on-surface' : 'text-on-surface-variant'}">${escapeHtml(label)}</span>
+            <span class="rounded border ${opts.accent ? 'border-primary/40 bg-primary/10 text-primary' : 'border-outline-variant/40 bg-surface-container-lowest text-on-surface'} px-2 py-1 font-mono text-sm ${opts.strong ? 'font-bold' : ''} ${opts.cls || ''}">${value}</span>
+        </div>`;
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Facturas', `Comprobante ${docNo}`)}
+        <div class="flex flex-col gap-4">
+            <!-- Cabecera del comprobante -->
+            <div class="overflow-hidden rounded-xl border border-outline-variant/30 shadow-sm">
+                <div class="flex flex-wrap items-center justify-between gap-3 bg-gradient-to-r from-primary/10 via-primary/[0.04] to-transparent px-5 py-4">
+                    <div class="flex items-center gap-3">
+                        <div class="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/15 text-primary"><span class="material-symbols-outlined">receipt_long</span></div>
+                        <div>
+                            <div class="flex items-center gap-2">
+                                <span class="text-lg font-bold text-on-surface">${escapeHtml(typeLabel)} ${docNo}</span>
+                                ${drillStatusBadge(invoice.status)}
+                            </div>
+                            <div class="text-xs text-on-surface-variant">NCF ${escapeHtml(invoice.ncf || '—')} · Emitida ${escapeHtml(toDateString(invoice.created_at))}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <button type="button" id="inv-detail-back" class="inline-flex items-center gap-1 rounded-lg border border-outline-variant px-3 py-1.5 text-sm text-on-surface hover:bg-surface-container-high">
+                            <span class="material-symbols-outlined text-base">arrow_back</span> Volver
+                        </button>
+                        <button type="button" id="inv-detail-accounting" class="inline-flex items-center gap-1 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white shadow-sm hover:bg-primary/90" data-id="${escapeHtml(invoice.id)}">
+                            <span class="material-symbols-outlined text-base">account_balance</span> Ver en contabilidad
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 gap-4 xl:grid-cols-3">
+                <!-- Datos del comprobante -->
+                <div class="xl:col-span-2">
+                    ${sectionBar('description', 'Datos del comprobante')}
+                    <div class="rounded-b-xl border border-outline-variant/30 bg-surface-container-lowest p-4">
+                        <div class="grid grid-cols-2 gap-3 md:grid-cols-3">
+                            ${fld('Documento', docNo, { mono: true, strong: true })}
+                            ${fld('NCF', escapeHtml(invoice.ncf || '—'), { mono: true })}
+                            ${fld('Tipo', escapeHtml(typeLabel))}
+                            ${fld('Fecha de emisión', escapeHtml(toDateString(invoice.created_at)))}
+                            ${fld('Vencimiento', escapeHtml(invoice.due_date ? toDateString(invoice.due_date) : '—'))}
+                            ${fld('Moneda', escapeHtml(cur), { mono: true })}
+                            <div class="col-span-2 md:col-span-3">
+                                ${fld(
+                                    'Cliente',
+                                    customer
+                                        ? `<button type="button" id="inv-detail-customer" class="flex items-center gap-1 font-semibold text-primary hover:underline"><span class="material-symbols-outlined text-base">person</span>${escapeHtml(customer.name || customer.email || '—')}</button>`
+                                        : '<span class="text-on-surface-variant">Consumidor final (sin cliente asociado)</span>'
+                                )}
+                            </div>
+                            ${invoice.notes ? `<div class="col-span-2 md:col-span-3">${fld('Notas', escapeHtml(invoice.notes))}</div>` : ''}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Totales -->
+                <div>
+                    ${sectionBar('calculate', 'Totales')}
+                    <div class="rounded-b-xl border border-outline-variant/30 bg-surface-container-low">
+                        ${totalRow('Subtotal', fmtMoneyPanel(invoice.subtotal, cur))}
+                        ${totalRow('ITBIS', fmtMoneyPanel(invoice.tax_total, cur))}
+                        ${totalRow('Total', fmtMoneyPanel(total, cur), { strong: true, accent: true, border: true })}
+                        ${totalRow('Pagado', fmtMoneyPanel(paid, cur), { cls: 'text-success', border: true })}
+                        ${totalRow('Balance', fmtMoneyPanel(balance, cur), { strong: true, cls: balance > 0.005 ? 'text-error' : 'text-success' })}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Líneas del documento -->
+            <div>
+                ${sectionBar('list_alt', 'Detalle de líneas', `${(itemRows || []).length} ítem(s)`)}
+                <div class="overflow-x-auto rounded-b-xl border border-outline-variant/30">
+                    <table class="w-full min-w-[640px] border-collapse text-left text-sm">
+                        <thead>
+                            <tr class="select-none border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                                <th class="px-3 py-2.5">Descripción</th>
+                                <th class="w-20 border-l border-outline-variant/20 px-3 py-2.5 text-right">Cant.</th>
+                                <th class="w-32 border-l border-outline-variant/20 px-3 py-2.5 text-right">Precio</th>
+                                <th class="w-20 border-l border-outline-variant/20 px-3 py-2.5 text-right">Imp.</th>
+                                <th class="w-20 border-l border-outline-variant/20 px-3 py-2.5 text-right">Desc.</th>
+                                <th class="w-36 border-l border-outline-variant/20 px-3 py-2.5 text-right">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody class="[&>tr:nth-child(even)]:bg-surface-container-lowest/50">${itemsHtml}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Pagos aplicados -->
+            <div>
+                ${sectionBar('payments', 'Pagos aplicados', allocs.length ? `${allocs.length} pago(s)` : '')}
+                <div class="overflow-x-auto rounded-b-xl border border-outline-variant/30">
+                    <table class="w-full min-w-[520px] border-collapse text-left text-sm">
+                        <thead>
+                            <tr class="select-none border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                                <th class="px-3 py-2.5">Fecha</th>
+                                <th class="px-3 py-2.5">Método</th>
+                                <th class="px-3 py-2.5">Referencia</th>
+                                <th class="w-36 px-3 py-2.5 text-right">Monto</th>
+                            </tr>
+                        </thead>
+                        <tbody>${paymentsHtml}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Trazabilidad contable -->
+            <div>
+                ${sectionBar('account_balance', 'Trazabilidad contable', 'Clic en una cuenta para ver su mayor')}
+                <div class="rounded-b-xl border border-outline-variant/30 bg-surface-container-lowest p-4">
+                    ${asientosHtml}
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('inv-detail-back')?.addEventListener('click', () => void renderFacturasModule());
+    document.getElementById('inv-detail-customer')?.addEventListener('click', () => void openModule('clientes'));
+    document.getElementById('inv-detail-accounting')?.addEventListener('click', () => void viewAccountingEntryForSource('invoice', invoiceId));
+    dashboardContent.querySelectorAll('[data-ledger-account]').forEach((row) => {
+        row.addEventListener('click', () => {
+            const accId = row.getAttribute('data-ledger-account');
+            void renderAccountLedgerScreen(accId, { backInvoiceId: invoiceId });
+        });
+    });
+};
+
+/**
+ * Mayor (libro mayor) de una cuenta: todos sus movimientos con saldo acumulado.
+ * Llega desde el asiento de un documento; "Volver" regresa a ese documento.
+ */
+const renderAccountLedgerScreen = async (accountId, opts = {}) => {
+    const tid = state.currentTenantId;
+    if (!accountId || !tid) return;
+    dashboardContent.innerHTML = renderModuleHeader('Libro mayor', 'Cargando movimientos…');
+
+    const accountById = await fetchAccountsMap(tid);
+    const account = accountById.get(accountId);
+    if (!account) {
+        window.ZyronDialog.alert('No se encontró la cuenta.');
+        if (opts.backInvoiceId) return renderInvoiceDetailScreen(opts.backInvoiceId);
+        return;
+    }
+    const parent = account.parent_account_id ? accountById.get(account.parent_account_id) : null;
+    const children = [...accountById.values()].filter((a) => a.parent_account_id === accountId);
+
+    const { data: lineRows } = await dbSelect({
+        table: 'accounting_journal_lines',
+        filters: [{ op: 'eq', column: 'account_id', value: accountId }],
+        limit: 1000
+    });
+    const lines = lineRows || [];
+    const entryIds = [...new Set(lines.map((l) => l.journal_entry_id).filter(Boolean))];
+    const { data: entryRows } = entryIds.length
+        ? await dbSelect({ table: 'accounting_journal_entries', filters: [{ op: 'in', column: 'id', value: entryIds }], limit: 1000 })
+        : { data: [] };
+    const entryById = new Map((entryRows || []).map((e) => [e.id, e]));
+
+    const moves = lines
+        .map((l) => ({ line: l, entry: entryById.get(l.journal_entry_id) || {} }))
+        .filter((m) => (m.entry.status || 'posted') !== 'draft')
+        .sort((a, b) => {
+            const da = a.entry.entry_date || a.entry.created_at || '';
+            const db = b.entry.entry_date || b.entry.created_at || '';
+            return String(da).localeCompare(String(db));
+        });
+
+    const isDebitNormal = account.normal_balance === 'debit';
+    let running = 0;
+    let totalDr = 0;
+    let totalCr = 0;
+    const rowsHtml = moves
+        .map((m) => {
+            const dr = Number(m.line.debit_amount || 0);
+            const cr = Number(m.line.credit_amount || 0);
+            totalDr += dr;
+            totalCr += cr;
+            running += isDebitNormal ? dr - cr : cr - dr;
+            const srcInvoice = m.entry.source_type === 'invoice' ? m.entry.source_id : '';
+            return `<tr class="border-b border-outline-variant/20 ${srcInvoice ? 'cursor-pointer hover:bg-primary/5' : ''}" ${srcInvoice ? `data-ledger-source-invoice="${escapeHtml(srcInvoice)}"` : ''}>
+                <td class="px-3 py-2.5 text-xs">${escapeHtml(toDateString(m.entry.entry_date || m.entry.created_at))}</td>
+                <td class="px-3 py-2.5 font-mono text-xs">${escapeHtml(m.entry.entry_number || '—')}</td>
+                <td class="px-3 py-2.5 text-xs text-on-surface-variant">${escapeHtml(m.line.description || m.entry.source_label || m.entry.memo || '—')}</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-success">${dr > 0 ? fmtMoneyPanel(dr, m.line.currency || 'DOP') : '—'}</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs text-primary">${cr > 0 ? fmtMoneyPanel(cr, m.line.currency || 'DOP') : '—'}</td>
+                <td class="px-3 py-2.5 text-right font-mono text-xs font-semibold ${running < -0.005 ? 'text-error' : 'text-on-surface'}">${fmtMoneyPanel(running, 'DOP')}</td>
+            </tr>`;
+        })
+        .join('') || '<tr><td colspan="6" class="px-3 py-4 text-center text-on-surface-variant">Esta cuenta no tiene movimientos contabilizados.</td></tr>';
+
+    const backLabel = opts.backInvoiceId ? 'Volver a la factura' : 'Volver a contabilidad';
+    const childrenChips = children.length
+        ? `<div class="mt-3 border-t border-outline-variant/20 pt-2">
+                <span class="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Subcuentas (${children.length})</span>
+                <div class="mt-1 flex flex-wrap gap-1.5">${children
+              .map((c) => `<button type="button" data-ledger-account="${escapeHtml(c.id)}" class="rounded-full border border-outline-variant/40 px-2 py-0.5 text-xs hover:bg-primary/5"><span class="font-mono">${escapeHtml(c.code)}</span> ${escapeHtml(c.name)}</button>`)
+              .join('')}</div>
+           </div>`
+        : '';
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader(`Mayor · ${escapeHtml(account.code)} ${escapeHtml(account.name)}`, 'Movimientos y saldo acumulado de la cuenta')}
+        <div class="flex flex-col gap-5">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <button type="button" id="ledger-back" class="inline-flex items-center gap-1 rounded-md border border-outline-variant px-3 py-1.5 text-sm text-on-surface hover:bg-surface-container-high">
+                    <span class="material-symbols-outlined text-base">arrow_back</span> ${backLabel}
+                </button>
+                <div class="font-mono text-sm font-bold ${running < -0.005 ? 'text-error' : 'text-on-surface'}">Saldo: ${fmtMoneyPanel(running, 'DOP')}</div>
+            </div>
+
+            <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
+                <div class="grid grid-cols-2 gap-4 md:grid-cols-4">
+                    <div class="flex flex-col gap-0.5"><span class="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Código</span><span class="font-mono text-sm font-medium">${escapeHtml(account.code)}</span></div>
+                    <div class="flex flex-col gap-0.5"><span class="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Tipo</span><span class="text-sm font-medium">${escapeHtml(accountTypeLabel(account.account_type))}</span></div>
+                    <div class="flex flex-col gap-0.5"><span class="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Naturaleza</span><span class="text-sm font-medium">${account.normal_balance === 'debit' ? 'Deudora' : 'Acreedora'}</span></div>
+                    <div class="flex flex-col gap-0.5"><span class="text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Cuenta de control</span><span class="text-sm font-medium">${parent ? `<span class="font-mono">${escapeHtml(parent.code)}</span> ${escapeHtml(parent.name)}` : (account.parent_account_id ? '—' : 'Es cuenta de control / raíz')}</span></div>
+                </div>
+                ${childrenChips}
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/30">
+                <table class="w-full min-w-[720px] border-collapse text-left text-sm">
+                    <thead>
+                        <tr class="select-none border-b border-outline-variant/40 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                            <th class="w-28 px-3 py-2.5">Fecha</th>
+                            <th class="w-32 px-3 py-2.5">Asiento</th>
+                            <th class="px-3 py-2.5">Descripción / origen</th>
+                            <th class="w-32 px-3 py-2.5 text-right">Débito</th>
+                            <th class="w-32 px-3 py-2.5 text-right">Crédito</th>
+                            <th class="w-36 px-3 py-2.5 text-right">Saldo</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                    <tfoot>
+                        <tr class="bg-surface-container-low font-bold">
+                            <td colspan="3" class="px-3 py-3 text-right">Totales:</td>
+                            <td class="px-3 py-3 text-right font-mono text-xs text-success">${fmtMoneyPanel(totalDr, 'DOP')}</td>
+                            <td class="px-3 py-3 text-right font-mono text-xs text-primary">${fmtMoneyPanel(totalCr, 'DOP')}</td>
+                            <td class="px-3 py-3 text-right font-mono text-xs">${fmtMoneyPanel(running, 'DOP')}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('ledger-back')?.addEventListener('click', () => {
+        if (opts.backInvoiceId) return void renderInvoiceDetailScreen(opts.backInvoiceId);
+        void openModule('contabilidad');
+    });
+    dashboardContent.querySelectorAll('[data-ledger-account]').forEach((el) => {
+        el.addEventListener('click', () => void renderAccountLedgerScreen(el.getAttribute('data-ledger-account'), opts));
+    });
+    dashboardContent.querySelectorAll('[data-ledger-source-invoice]').forEach((el) => {
+        el.addEventListener('click', () => void renderInvoiceDetailScreen(el.getAttribute('data-ledger-source-invoice')));
+    });
+};
+
+// ============================================================================
+// Date-picker interno (calendario propio, NO usa <input type="date"> nativo).
+// Reusable en todo el sistema: createZyronDateField(mountEl, opts) -> { getValue, setValue }.
+// El popover flota en <body>, se cierra por click-afuera o Escape.
+// ============================================================================
+const ZYRON_MONTHS_ES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+const ZYRON_DOW_ES = ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa', 'Do'];
+const zyronToISO = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const zyronFmtHumanDate = (iso) => {
+    if (!iso) return '';
+    const [y, m, d] = String(iso).split('-');
+    return d && m && y ? `${d}/${m}/${y}` : iso;
+};
+let zyronCalEl = null;
+let zyronCalCtx = null;
+const zyronCloseCalendar = () => {
+    if (zyronCalEl) zyronCalEl.remove();
+    zyronCalEl = null;
+    zyronCalCtx = null;
+    document.removeEventListener('mousedown', zyronCalOutside, true);
+    document.removeEventListener('keydown', zyronCalKey, true);
+};
+const zyronCalOutside = (e) => {
+    if (zyronCalEl && !zyronCalEl.contains(e.target) && !(zyronCalCtx?.anchor && zyronCalCtx.anchor.contains(e.target))) zyronCloseCalendar();
+};
+const zyronCalKey = (e) => {
+    if (e.key === 'Escape') zyronCloseCalendar();
+};
+const zyronPaintCalendar = () => {
+    if (!zyronCalEl || !zyronCalCtx) return;
+    const { viewYear: y, viewMonth: m, value } = zyronCalCtx;
+    const startDow = (new Date(y, m, 1).getDay() + 6) % 7; // lunes = 0
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    const todayISO = zyronToISO(new Date());
+    let cells = '';
+    for (let i = 0; i < startDow; i++) cells += '<div></div>';
+    for (let d = 1; d <= daysInMonth; d++) {
+        const iso = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        const sel = value === iso;
+        const today = todayISO === iso;
+        const cls = sel
+            ? 'bg-primary text-white font-bold shadow'
+            : today
+              ? 'text-primary font-semibold ring-1 ring-primary/40'
+              : 'text-on-surface hover:bg-primary/10';
+        cells += `<button type="button" data-cal-day="${iso}" class="mx-auto flex h-8 w-8 items-center justify-center rounded-full text-xs transition-colors ${cls}">${d}</button>`;
+    }
+    zyronCalEl.querySelector('[data-cal-grid]').innerHTML = cells;
+    zyronCalEl.querySelector('[data-cal-title]').textContent = `${ZYRON_MONTHS_ES[m]} ${y}`;
+};
+const zyronOpenCalendar = (anchor, currentISO, onPick) => {
+    zyronCloseCalendar();
+    const base = currentISO ? new Date(currentISO + 'T00:00:00') : new Date();
+    zyronCalCtx = { anchor, value: currentISO || null, viewYear: base.getFullYear(), viewMonth: base.getMonth(), onPick };
+    const el = document.createElement('div');
+    el.className = 'fixed z-[70] w-72 rounded-2xl border border-outline-variant/40 bg-surface-container-lowest p-3 shadow-2xl';
+    el.innerHTML = `
+        <div class="mb-2 flex items-center justify-between">
+            <button type="button" data-cal-prev class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high"><span class="material-symbols-outlined text-lg">chevron_left</span></button>
+            <span data-cal-title class="text-sm font-bold text-on-surface"></span>
+            <button type="button" data-cal-next class="flex h-8 w-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-high"><span class="material-symbols-outlined text-lg">chevron_right</span></button>
+        </div>
+        <div class="mb-1 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase text-on-surface-variant">${ZYRON_DOW_ES.map((d) => `<div>${d}</div>`).join('')}</div>
+        <div data-cal-grid class="grid grid-cols-7 gap-1"></div>
+        <div class="mt-2 flex items-center justify-between border-t border-outline-variant/20 pt-2">
+            <button type="button" data-cal-today class="text-xs font-semibold text-primary hover:underline">Hoy</button>
+            <button type="button" data-cal-clear class="text-xs font-semibold text-on-surface-variant hover:text-error">Limpiar</button>
+        </div>`;
+    document.body.appendChild(el);
+    zyronCalEl = el;
+    const r = anchor.getBoundingClientRect();
+    const top = r.bottom + 6;
+    const left = Math.min(r.left, window.innerWidth - 300);
+    el.style.top = `${Math.max(8, top)}px`;
+    el.style.left = `${Math.max(8, left)}px`;
+    el.querySelector('[data-cal-prev]').addEventListener('click', () => {
+        zyronCalCtx.viewMonth -= 1;
+        if (zyronCalCtx.viewMonth < 0) { zyronCalCtx.viewMonth = 11; zyronCalCtx.viewYear -= 1; }
+        zyronPaintCalendar();
+    });
+    el.querySelector('[data-cal-next]').addEventListener('click', () => {
+        zyronCalCtx.viewMonth += 1;
+        if (zyronCalCtx.viewMonth > 11) { zyronCalCtx.viewMonth = 0; zyronCalCtx.viewYear += 1; }
+        zyronPaintCalendar();
+    });
+    el.querySelector('[data-cal-today]').addEventListener('click', () => {
+        const iso = zyronToISO(new Date());
+        onPick(iso);
+        zyronCloseCalendar();
+    });
+    el.querySelector('[data-cal-clear]').addEventListener('click', () => {
+        onPick(null);
+        zyronCloseCalendar();
+    });
+    el.querySelector('[data-cal-grid]').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-cal-day]');
+        if (!btn) return;
+        onPick(btn.getAttribute('data-cal-day'));
+        zyronCloseCalendar();
+    });
+    zyronPaintCalendar();
+    setTimeout(() => {
+        document.addEventListener('mousedown', zyronCalOutside, true);
+        document.addEventListener('keydown', zyronCalKey, true);
+    }, 0);
+};
+/** Convierte un contenedor en un campo de fecha interno. Devuelve { getValue, setValue }. */
+const createZyronDateField = (mountEl, opts = {}) => {
+    if (!mountEl) return { getValue: () => null, setValue: () => {} };
+    let value = opts.value || null;
+    const placeholder = opts.placeholder || 'dd/mm/aaaa';
+    const paint = () => {
+        mountEl.innerHTML = `
+            <button type="button" data-date-trigger class="flex w-full items-center gap-2 rounded-lg border border-outline-variant/50 bg-surface-container-lowest px-3 py-2 text-left text-sm hover:border-primary/50">
+                <span class="material-symbols-outlined text-base text-on-surface-variant">calendar_month</span>
+                <span class="flex-1 ${value ? 'text-on-surface' : 'text-on-surface-variant'}">${value ? zyronFmtHumanDate(value) : escapeHtml(placeholder)}</span>
+                ${value ? '<span data-date-clear class="material-symbols-outlined text-base text-on-surface-variant hover:text-error">close</span>' : '<span class="material-symbols-outlined text-base text-outline">expand_more</span>'}
+            </button>`;
+        const trigger = mountEl.querySelector('[data-date-trigger]');
+        trigger.addEventListener('click', (e) => {
+            if (e.target.closest('[data-date-clear]')) {
+                value = null;
+                paint();
+                opts.onChange?.(null);
+                return;
+            }
+            zyronOpenCalendar(trigger, value, (iso) => {
+                value = iso;
+                paint();
+                opts.onChange?.(iso);
+            });
+        });
+    };
+    paint();
+    return {
+        getValue: () => value,
+        setValue: (v) => {
+            value = v || null;
+            paint();
+        }
+    };
+};
+
 const invokeFn = (slug, body = {}, method = 'POST') => {
     let b = body;
     if (body && typeof body === 'object' && !state.isGlobalAccess && state.currentTenantId) {
@@ -821,6 +1482,14 @@ const ZYRON_VIEW_KEYS = new Set([
     'fiscal',
     'inventario',
     'clientes',
+    'rrhh',
+    'crm',
+    'proyectos',
+    'produccion',
+    'cadena_suministro',
+    'ecommerce',
+    'calidad',
+    'documental',
     'pagos',
     'reportes',
     'contabilidad',
@@ -844,6 +1513,14 @@ const ZYRON_MODULE_FRAGMENTS = {
     fiscal: 'fragments/outlet-skeleton.html',
     inventario: 'fragments/outlet-skeleton.html',
     clientes: 'fragments/outlet-skeleton.html',
+    rrhh: 'fragments/outlet-skeleton.html',
+    crm: 'fragments/outlet-skeleton.html',
+    proyectos: 'fragments/outlet-skeleton.html',
+    produccion: 'fragments/outlet-skeleton.html',
+    cadena_suministro: 'fragments/outlet-skeleton.html',
+    ecommerce: 'fragments/outlet-skeleton.html',
+    calidad: 'fragments/outlet-skeleton.html',
+    documental: 'fragments/outlet-skeleton.html',
     pagos: 'fragments/outlet-skeleton.html',
     reportes: 'fragments/outlet-skeleton.html',
     contabilidad: 'fragments/outlet-skeleton.html',
@@ -864,8 +1541,17 @@ const zyronModuleLabel = (moduleKey) =>
             fiscal: 'Fiscal',
             inventario: 'Inventario',
             clientes: 'Clientes',
+            rrhh: 'RRHH',
+            crm: 'CRM Ventas',
+            proyectos: 'Proyectos',
+            produccion: 'Producción',
+            cadena_suministro: 'Cadena Suministro',
+            ecommerce: 'E-commerce',
+            calidad: 'Calidad',
+            documental: 'Gestión Documental',
             pagos: 'Pagos',
             reportes: 'Reportes',
+            contabilidad: 'Contabilidad',
             config: 'Configuracion'
         }[moduleKey] || 'Modulo'
     );
@@ -1616,7 +2302,15 @@ const ZYRON_I18N = Object.freeze({
         'nav.estimates': 'Presupuestos',
         'nav.payments': 'Pagos y cobros',
         'nav.inventory': 'Inventario',
-        'nav.customers': 'Clientes',
+        'nav.clientes': 'Clientes',
+        'nav.rrhh': 'RRHH',
+        'nav.crm': 'CRM Ventas',
+        'nav.proyectos': 'Proyectos',
+        'nav.produccion': 'Producción',
+        'nav.cadena_suministro': 'Cadena Suministro',
+        'nav.ecommerce': 'E-commerce',
+        'nav.calidad': 'Calidad',
+        'nav.documental': 'Gestión Documental',
         'nav.reports': 'Reportes',
         'nav.contabilidad': 'Contabilidad',
         'nav.fiscal': 'Fiscal',
@@ -1636,7 +2330,15 @@ const ZYRON_I18N = Object.freeze({
         'nav.estimates': 'Presupuestos',
         'nav.payments': 'Pagos y cobros',
         'nav.inventory': 'Inventario',
-        'nav.customers': 'Clientes',
+        'nav.clientes': 'Clientes',
+        'nav.rrhh': 'RRHH',
+        'nav.crm': 'CRM Ventas',
+        'nav.proyectos': 'Proyectos',
+        'nav.produccion': 'Producción',
+        'nav.cadena_suministro': 'Cadena Suministro',
+        'nav.ecommerce': 'E-commerce',
+        'nav.calidad': 'Calidad',
+        'nav.documental': 'Gestión Documental',
         'nav.reports': 'Reportes',
         'nav.contabilidad': 'Contabilidad',
         'nav.fiscal': 'Fiscal',
@@ -1658,7 +2360,15 @@ const NAV_LABEL_KEYS = Object.freeze({
     presupuestos: 'nav.estimates',
     pagos: 'nav.payments',
     inventario: 'nav.inventory',
-    clientes: 'nav.customers',
+    clientes: 'nav.clientes',
+    rrhh: 'nav.rrhh',
+    crm: 'nav.crm',
+    proyectos: 'nav.proyectos',
+    produccion: 'nav.produccion',
+    cadena_suministro: 'nav.cadena_suministro',
+    ecommerce: 'nav.ecommerce',
+    calidad: 'nav.calidad',
+    documental: 'nav.documental',
     reportes: 'nav.reports',
     contabilidad: 'nav.contabilidad',
     fiscal: 'nav.fiscal',
@@ -6909,52 +7619,57 @@ const renderFacturasModule = async () => {
         }">${label}</button>`;
     };
 
-    const invoiceListRows = (invoices || [])
-        .map((invoice) => {
-            const cust = invoice.customer_id ? customerById.get(invoice.customer_id) : null;
-            const custLabel = cust ? escapeHtml(cust.name || cust.email || '') : '—';
-            const doc = `${escapeHtml(invoice.series || '')}-${escapeHtml(invoice.number || '')}`;
-            const st = String(invoice.status || '').toLowerCase();
-            return `<tr class="border-b border-outline-variant/20" data-invoice-row="${invoice.id}">
-                <td class="py-3 font-medium">${doc}</td>
-                <td class="py-3 font-mono text-xs">${escapeHtml(invoice.ncf || '')}</td>
-                <td class="py-3">${escapeHtml(typeLabel(invoice.invoice_type))}</td>
-                <td class="py-3">${escapeHtml(invoice.status || '')}</td>
-                <td class="py-3">${escapeHtml(String(invoice.total ?? ''))}</td>
-                <td class="py-3 text-xs">${custLabel}</td>
-                <td class="py-3 text-xs">${escapeHtml(toDateString(invoice.created_at))}</td>
-                <td class="py-3 text-right space-x-1 whitespace-nowrap">
-                    <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="history" data-id="${
-                        invoice.id
-                    }">Historial</button>
-                    <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-inv-action="accounting" data-id="${invoice.id}" aria-label="Ver asiento contable de ${doc}">Ver asiento contable</button>
-                    ${
-                        st === 'draft'
-                            ? `<button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="edit" data-id="${invoice.id}">Editar</button>
-                    <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-inv-action="issue" data-id="${invoice.id}">Emitir</button>`
-                            : ''
-                    }
-                    <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="dup" data-id="${
-                        invoice.id
-                    }">Duplicar</button>
-                    <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary font-medium hover:bg-primary/5" data-inv-action="a4" data-id="${
-                        invoice.id
-                    }" title="Imprimir en hoja A4 (con opcion Guardar como PDF)">A4</button>
-                    <button type="button" class="rounded border border-amber-700/50 px-2 py-1 text-xs text-amber-800 font-medium hover:bg-amber-50" data-inv-action="thermal" data-id="${
-                        invoice.id
-                    }" title="Imprimir Ticket Termico POS (80mm)">Ticket</button>
-                    <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="doc-html" data-id="${
-                        invoice.id
-                    }" title="Descargar HTML del documento">HTML</button>
-                    ${
-                        st === 'draft' || st === 'pending'
-                            ? `<button type="button" class="rounded border border-error/40 px-2 py-1 text-xs text-error" data-inv-action="del" data-id="${invoice.id}">Eliminar</button>`
-                            : ''
-                    }
+    const invoiceRowTemplate = (invoice) => {
+        const cust = invoice.customer_id ? customerById.get(invoice.customer_id) : null;
+        const custLabel = cust ? escapeHtml(cust.name || cust.email || '') : '<span class="text-on-surface-variant">Consumidor final</span>';
+        const doc = `${escapeHtml(invoice.series || '')}-${escapeHtml(invoice.number || '')}`;
+        const st = String(invoice.status || '').toLowerCase();
+        const cur = invoice.currency || 'DOP';
+        const miniBtn = 'rounded-md border px-2 py-1 text-xs font-medium transition-colors';
+        return `<tr class="group border-b border-outline-variant/15 transition-colors hover:bg-primary/[0.04]" data-invoice-row="${invoice.id}">
+                <td class="py-2.5 pr-3"><button type="button" class="font-semibold text-primary hover:underline" data-inv-action="detail" data-id="${invoice.id}" title="Ver detalle y trazabilidad contable">${doc}</button></td>
+                <td class="py-2.5 pr-3 font-mono text-xs text-on-surface-variant">${escapeHtml(invoice.ncf || '—')}</td>
+                <td class="py-2.5 pr-3 text-xs text-on-surface">${escapeHtml(typeLabel(invoice.invoice_type))}</td>
+                <td class="py-2.5 pr-3">${drillStatusBadge(invoice.status)}</td>
+                <td class="py-2.5 pr-3 text-right font-mono text-xs font-semibold text-on-surface">${fmtMoneyPanel(invoice.total, cur)}</td>
+                <td class="py-2.5 pr-3 text-xs text-on-surface">${custLabel}</td>
+                <td class="py-2.5 pr-3 text-xs text-on-surface-variant">${escapeHtml(toDateString(invoice.created_at))}</td>
+                <td class="py-2.5 text-right whitespace-nowrap">
+                    <div class="inline-flex items-center gap-1">
+                        <button type="button" class="${miniBtn} border-primary/50 bg-primary/5 text-primary hover:bg-primary/10" data-inv-action="detail" data-id="${invoice.id}" aria-label="Ver detalle de ${doc}">Ver</button>
+                        ${st === 'draft' ? `<button type="button" class="${miniBtn} border-success/50 bg-success/5 text-success hover:bg-success/10" data-inv-action="issue" data-id="${invoice.id}">Emitir</button>` : ''}
+                        <button type="button" class="flex h-7 w-7 items-center justify-center rounded-md border border-outline-variant/40 text-on-surface-variant hover:bg-surface-container-high" data-inv-action="menu" data-id="${invoice.id}" title="Más acciones" aria-label="Más acciones"><span class="material-symbols-outlined text-base">more_vert</span></button>
+                    </div>
+                    <div data-inv-more="${invoice.id}" class="mt-2 hidden flex-wrap justify-end gap-1 rounded-lg border border-outline-variant/25 bg-surface-container-low p-2">
+                        <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="accounting" data-id="${invoice.id}">Asiento contable</button>
+                        <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="history" data-id="${invoice.id}">Historial</button>
+                        ${st === 'draft' ? `<button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="edit" data-id="${invoice.id}">Editar</button>` : ''}
+                        <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="dup" data-id="${invoice.id}">Duplicar</button>
+                        <button type="button" class="${miniBtn} border-primary/40 text-primary hover:bg-primary/5" data-inv-action="a4" data-id="${invoice.id}" title="Imprimir en hoja A4">A4</button>
+                        <button type="button" class="${miniBtn} border-amber-700/50 text-amber-800 hover:bg-amber-50" data-inv-action="thermal" data-id="${invoice.id}" title="Ticket térmico 80mm">Ticket</button>
+                        <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="doc-html" data-id="${invoice.id}" title="Descargar HTML">HTML</button>
+                        ${st === 'draft' || st === 'pending' ? `<button type="button" class="${miniBtn} border-error/40 text-error hover:bg-error/5" data-inv-action="del" data-id="${invoice.id}">Eliminar</button>` : ''}
+                    </div>
                 </td>
             </tr>`;
-        })
-        .join('');
+    };
+    const matchesInvoiceFilters = (invoice, f) => {
+        if (!f) return true;
+        if (f.q) {
+            const cust = invoice.customer_id ? customerById.get(invoice.customer_id) : null;
+            const hay = `${invoice.series || ''}-${invoice.number || ''} ${invoice.ncf || ''} ${cust?.name || ''} ${cust?.email || ''}`.toLowerCase();
+            if (!hay.includes(f.q.toLowerCase())) return false;
+        }
+        if (f.customerId && invoice.customer_id !== f.customerId) return false;
+        const isoDate = String(invoice.created_at || '').slice(0, 10);
+        if (f.from && isoDate < f.from) return false;
+        if (f.to && isoDate > f.to) return false;
+        return true;
+    };
+    const buildInvoiceRows = (list) => (list || []).map(invoiceRowTemplate).join('');
+    const activeFilters = state.facturasUi?.filters || {};
+    const filteredInvoices = (invoices || []).filter((inv) => matchesInvoiceFilters(inv, activeFilters));
+    const invoiceListRows = buildInvoiceRows(filteredInvoices);
 
     const seriesTableRows = (seriesRows || [])
         .map(
@@ -6995,22 +7710,49 @@ const renderFacturasModule = async () => {
                 <button type="button" id="factura-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
             </div>
         </div>
-        <p class="mb-3 text-xs text-on-surface-variant">Abre el editor desde el boton principal. Borradores BOR; al emitir queda lista para cobro.</p>
-        <div id="facturas-table-wrap" class="overflow-x-auto">
-            <table class="w-full min-w-[820px] text-left text-sm">
+        <div class="mb-3 rounded-xl border border-outline-variant/25 bg-surface-container-low p-3">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-end">
+                <div class="flex-1">
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Buscar</label>
+                    <div class="flex items-center gap-2 rounded-lg border border-outline-variant/50 bg-surface-container-lowest px-3 py-2">
+                        <span class="material-symbols-outlined text-base text-on-surface-variant">search</span>
+                        <input id="fact-filter-q" type="text" class="w-full bg-transparent text-sm outline-none" placeholder="Documento, NCF o cliente…" value="${escapeHtml(activeFilters.q || '')}" />
+                    </div>
+                </div>
+                <div class="w-full lg:w-56">
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Cliente</label>
+                    <select id="fact-filter-customer" class="w-full rounded-lg border border-outline-variant/50 bg-surface-container-lowest px-3 py-2 text-sm outline-none">
+                        <option value="">Todos los clientes</option>
+                        ${(customers || []).map((c) => `<option value="${c.id}" ${activeFilters.customerId === c.id ? 'selected' : ''}>${escapeHtml(c.name || c.email || c.id)}</option>`).join('')}
+                    </select>
+                </div>
+                <div class="w-full lg:w-40">
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Desde</label>
+                    <div id="fact-filter-from"></div>
+                </div>
+                <div class="w-full lg:w-40">
+                    <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Hasta</label>
+                    <div id="fact-filter-to"></div>
+                </div>
+                <button type="button" id="fact-filter-clear" class="rounded-lg border border-outline-variant/50 px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high">Limpiar</button>
+            </div>
+            <div class="mt-2 text-xs text-on-surface-variant"><span id="fact-filter-count">${filteredInvoices.length}</span> de ${(invoices || []).length} documentos${(invoices || []).length >= 80 ? ' (últimos 80)' : ''}</div>
+        </div>
+        <div id="facturas-table-wrap" class="overflow-x-auto rounded-xl border border-outline-variant/25">
+            <table class="w-full min-w-[860px] text-left text-sm">
                 <thead>
-                    <tr class="border-b border-outline-variant/30">
-                        <th class="py-2">Documento</th>
-                        <th class="py-2">NCF</th>
-                        <th class="py-2">Tipo</th>
-                        <th class="py-2">Estado</th>
-                        <th class="py-2">Total</th>
-                        <th class="py-2">Cliente</th>
-                        <th class="py-2">Fecha</th>
-                        <th class="py-2 text-right">Acciones</th>
+                    <tr class="border-b border-outline-variant/30 bg-surface-container-low text-[11px] font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <th class="px-3 py-2.5">Documento</th>
+                        <th class="px-3 py-2.5">NCF</th>
+                        <th class="px-3 py-2.5">Tipo</th>
+                        <th class="px-3 py-2.5">Estado</th>
+                        <th class="px-3 py-2.5 text-right">Total</th>
+                        <th class="px-3 py-2.5">Cliente</th>
+                        <th class="px-3 py-2.5">Fecha</th>
+                        <th class="px-3 py-2.5 text-right">Acciones</th>
                     </tr>
                 </thead>
-                <tbody>${invoiceListRows || `<tr><td colspan="8" class="py-6 text-center text-on-surface-variant">Sin facturas</td></tr>`}</tbody>
+                <tbody id="facturas-tbody" class="[&>tr:nth-child(even)]:bg-surface-container-lowest/40 [&_td:first-child]:pl-3">${invoiceListRows || `<tr><td colspan="8" class="py-6 text-center text-on-surface-variant">Sin facturas</td></tr>`}</tbody>
             </table>
         </div>`;
 
@@ -7378,10 +8120,54 @@ const renderFacturasModule = async () => {
 
     document.querySelectorAll('[data-fact-tab]').forEach((btn) => {
         btn.addEventListener('click', () => {
-            state.facturasUi = { tab: btn.getAttribute('data-fact-tab') };
+            state.facturasUi = { ...(state.facturasUi || {}), tab: btn.getAttribute('data-fact-tab') };
             renderFacturasModule();
         });
     });
+
+    // --- Filtros de la lista de facturas (en vivo, sin recargar el módulo) ---
+    if (tab === 'list') {
+        const persistFilters = (patch) => {
+            state.facturasUi = { ...(state.facturasUi || {}), tab: 'list', filters: { ...(state.facturasUi?.filters || {}), ...patch } };
+        };
+        const applyFacturaFilters = () => {
+            const f = state.facturasUi?.filters || {};
+            const rows = (invoices || []).filter((inv) => matchesInvoiceFilters(inv, f));
+            const tbodyEl = document.getElementById('facturas-tbody');
+            if (tbodyEl) tbodyEl.innerHTML = buildInvoiceRows(rows) || `<tr><td colspan="8" class="py-6 text-center text-on-surface-variant">Sin resultados para los filtros aplicados</td></tr>`;
+            const countEl = document.getElementById('fact-filter-count');
+            if (countEl) countEl.textContent = String(rows.length);
+        };
+        const qInput = document.getElementById('fact-filter-q');
+        qInput?.addEventListener('input', () => {
+            persistFilters({ q: qInput.value.trim() || null });
+            applyFacturaFilters();
+        });
+        document.getElementById('fact-filter-customer')?.addEventListener('change', (e) => {
+            persistFilters({ customerId: e.target.value || null });
+            applyFacturaFilters();
+        });
+        createZyronDateField(document.getElementById('fact-filter-from'), {
+            value: state.facturasUi?.filters?.from || null,
+            placeholder: 'Desde',
+            onChange: (iso) => {
+                persistFilters({ from: iso });
+                applyFacturaFilters();
+            }
+        });
+        createZyronDateField(document.getElementById('fact-filter-to'), {
+            value: state.facturasUi?.filters?.to || null,
+            placeholder: 'Hasta',
+            onChange: (iso) => {
+                persistFilters({ to: iso });
+                applyFacturaFilters();
+            }
+        });
+        document.getElementById('fact-filter-clear')?.addEventListener('click', () => {
+            state.facturasUi = { ...(state.facturasUi || {}), tab: 'list', filters: {} };
+            renderFacturasModule();
+        });
+    }
 
     document.getElementById('factura-new-btn-top')?.addEventListener('click', () => {
         openSheet({
@@ -7587,6 +8373,25 @@ const renderFacturasModule = async () => {
         if (!btn) return;
         const id = btn.getAttribute('data-id');
         const act = btn.getAttribute('data-inv-action');
+        if (act === 'menu') {
+            const panel = document.querySelector(`[data-inv-more="${id}"]`);
+            if (panel) {
+                const open = panel.classList.contains('hidden');
+                document.querySelectorAll('[data-inv-more]').forEach((p) => {
+                    p.classList.add('hidden');
+                    p.classList.remove('flex');
+                });
+                if (open) {
+                    panel.classList.remove('hidden');
+                    panel.classList.add('flex');
+                }
+            }
+            return;
+        }
+        if (act === 'detail') {
+            await renderInvoiceDetailScreen(id);
+            return;
+        }
         if (act === 'accounting') {
             await viewAccountingEntryForSource('invoice', id);
             return;
@@ -12581,6 +13386,2368 @@ const renderConfigModule = async () => {
     zyronLog('render:config:done', { rows: (rows || []).length });
 };
 
+// ============================================================================
+// MÓDULOS EMPRESARIALES LATAM (RRHH, CRM, PROYECTOS, PRODUCCIÓN, SCM, E-COMMERCE, CALIDAD, DMS)
+// ============================================================================
+
+const renderEnterpriseTabsNav = (tabs, activeTab, dataAttr = 'data-tab') => `
+    <div class="flex flex-wrap items-center gap-2 border-b border-outline-variant/20 pb-3">
+        ${tabs
+            .map(
+                (t) => `
+            <button type="button" ${dataAttr}="${t.key}" class="inline-flex items-center rounded-lg px-4 py-2 text-sm font-semibold transition-colors ${
+                    activeTab === t.key
+                        ? 'bg-primary text-white shadow-sm'
+                        : 'bg-surface-container text-on-surface hover:bg-surface-container-high'
+                }">
+                <span class="material-symbols-outlined mr-1.5 text-[18px]">${t.icon}</span>${escapeHtml(t.label)}
+            </button>
+        `
+            )
+            .join('')}
+    </div>
+`;
+
+// ----------------------------------------------------------------------------
+// 1. RECURSOS HUMANOS (RRHH / HCM)
+// ----------------------------------------------------------------------------
+const renderRrhhModule = async () => {
+    zyronLog('render:rrhh:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Recursos Humanos (RRHH)', 'Selecciona una empresa para gestionar empleados')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.rrhhUi) state.rrhhUi = { tab: 'empleados', q: '' };
+    const ui = state.rrhhUi;
+
+    const tabs = [
+        { key: 'empleados', label: 'Empleados / Legajo', icon: 'badge' },
+        { key: 'asistencia', label: 'Asistencia y Horas Extras', icon: 'schedule' },
+        { key: 'licencias', label: 'Vacaciones y Permisos', icon: 'beach_access' },
+        { key: 'nomina', label: 'Nómina y Liquidaciones', icon: 'payments' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'empleados') {
+        const { data: employees = [] } = await dbSelect({
+            table: 'hr_employees',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        const filtered = (employees || []).filter(
+            (e) =>
+                !ui.q ||
+                `${e.first_name} ${e.last_name} ${e.id_document_number} ${e.job_title}`
+                    .toLowerCase()
+                    .includes(ui.q.toLowerCase().trim())
+        );
+
+        contentHtml = `
+            <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                <input type="search" id="rrhh-search" value="${escapeHtml(ui.q)}" placeholder="Buscar por nombre, cédula o cargo..." class="w-full max-w-sm rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <button type="button" id="btn-nuevo-empleado" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">person_add</span>Nuevo Empleado
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Empleado</th>
+                            <th class="px-4 py-3">Cédula / Documento</th>
+                            <th class="px-4 py-3">Cargo</th>
+                            <th class="px-4 py-3">Contrato / Pago</th>
+                            <th class="px-4 py-3 text-right">Salario Base</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            filtered.length === 0
+                                ? `<tr><td colspan="6" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay empleados registrados. Haz clic en "Nuevo Empleado" para registrar el primero.</td></tr>`
+                                : filtered
+                                      .map(
+                                          (emp) => `
+                            <tr class="hover:bg-surface-container-low/50 transition-colors">
+                                <td class="px-4 py-3 font-medium text-on-surface">${escapeHtml(emp.first_name)} ${escapeHtml(emp.last_name)}</td>
+                                <td class="px-4 py-3 font-mono text-xs text-on-surface-variant">${escapeHtml(emp.id_document_number)}</td>
+                                <td class="px-4 py-3 text-on-surface-variant">${escapeHtml(emp.job_title)}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant capitalize">${escapeHtml(emp.contract_type)} (${escapeHtml(emp.payment_frequency)})</td>
+                                <td class="px-4 py-3 text-right font-medium text-on-surface">${fmtMoneyPanel(emp.base_salary)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${emp.status === 'activo' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'}">
+                                        ${escapeHtml(emp.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'asistencia') {
+        const { data: attendance = [] } = await dbSelect({
+            table: 'hr_attendance',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'work_date', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Control de asistencia laboral, horas ordinarias y extras según legislación laboral.</p>
+                <button type="button" id="btn-registrar-asistencia" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">more_time</span>Registrar Jornada
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Fecha</th>
+                            <th class="px-4 py-3">ID Empleado</th>
+                            <th class="px-4 py-3 text-center">Horas Normales</th>
+                            <th class="px-4 py-3 text-center">Horas Extras</th>
+                            <th class="px-4 py-3">Notas</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            attendance.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay registros de asistencia recientes.</td></tr>`
+                                : attendance
+                                      .map(
+                                          (att) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium">${escapeHtml(att.work_date)}</td>
+                                <td class="px-4 py-3 font-mono text-xs text-on-surface-variant">${escapeHtml(att.employee_id.slice(0, 8))}...</td>
+                                <td class="px-4 py-3 text-center">${att.regular_hours}h</td>
+                                <td class="px-4 py-3 text-center font-semibold text-primary">${att.overtime_hours > 0 ? `+${att.overtime_hours}h` : '0h'}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(att.notes || '—')}</td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'licencias') {
+        const { data: leaves = [] } = await dbSelect({
+            table: 'hr_leaves',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Gestión de permisos, licencias médicas y vacaciones obligatorias por ley.</p>
+                <button type="button" id="btn-solicitar-licencia" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_circle</span>Nueva Solicitud
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Tipo</th>
+                            <th class="px-4 py-3">Periodo</th>
+                            <th class="px-4 py-3 text-center">Días</th>
+                            <th class="px-4 py-3">Motivo</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            leaves.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay solicitudes de licencias registradas.</td></tr>`
+                                : leaves
+                                      .map(
+                                          (lv) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium capitalize">${escapeHtml(lv.leave_type)}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(lv.start_date)} al ${escapeHtml(lv.end_date)}</td>
+                                <td class="px-4 py-3 text-center font-semibold">${lv.days_count}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(lv.reason || '—')}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${lv.status === 'aprobada' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'}">
+                                        ${escapeHtml(lv.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'nomina') {
+        const { data: payrolls = [] } = await dbSelect({
+            table: 'hr_payrolls',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'period_start', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Cálculo de nómina con retenciones de ley (TSS/Seguridad Social e ISR).</p>
+                <button type="button" id="btn-procesar-nomina" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">calculate</span>Generar Nómina
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Periodo</th>
+                            <th class="px-4 py-3">Tipo</th>
+                            <th class="px-4 py-3 text-right">Total Devengado</th>
+                            <th class="px-4 py-3 text-right">Deducciones (TSS/ISR)</th>
+                            <th class="px-4 py-3 text-right font-bold text-primary">Total Neto</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            payrolls.length === 0
+                                ? `<tr><td colspan="6" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay periodos de nómina procesados. Haz clic en "Generar Nómina" para calcular el periodo actual.</td></tr>`
+                                : payrolls
+                                      .map(
+                                          (p) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium">${escapeHtml(p.period_start)} al ${escapeHtml(p.period_end)}</td>
+                                <td class="px-4 py-3 text-xs capitalize">${escapeHtml(p.payroll_type)}</td>
+                                <td class="px-4 py-3 text-right">${fmtMoneyPanel(p.total_gross)}</td>
+                                <td class="px-4 py-3 text-right text-rose-600">-${fmtMoneyPanel(p.total_deductions)}</td>
+                                <td class="px-4 py-3 text-right font-bold text-emerald-600">${fmtMoneyPanel(p.total_net)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-800 capitalize">
+                                        ${escapeHtml(p.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Recursos Humanos (RRHH)', 'Gestión integral del talento, contratos, asistencia y nóminas empresariales')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-rrhh-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-rrhh-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.rrhhTab;
+            void renderRrhhModule();
+        });
+    });
+
+    const searchInput = document.getElementById('rrhh-search');
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            ui.q = e.target.value;
+            void renderRrhhModule();
+        });
+    }
+
+    document.getElementById('btn-nuevo-empleado')?.addEventListener('click', async () => {
+        const nombre = await window.ZyronDialog.prompt('Nombre y Apellidos del empleado:');
+        if (!nombre) return;
+        const cedula = await window.ZyronDialog.prompt('Cédula o Documento de Identidad (DNI/RUT):');
+        if (!cedula) return;
+        const cargo = await window.ZyronDialog.prompt('Cargo o Puesto:');
+        if (!cargo) return;
+        const salarioStr = await window.ZyronDialog.prompt('Salario Base Mensual (en moneda local):', '25000');
+        const salario = Number(salarioStr) || 0;
+
+        const parts = nombre.trim().split(' ');
+        const firstName = parts[0] || 'Empleado';
+        const lastName = parts.slice(1).join(' ') || 'General';
+
+        const { error } = await dbInsert({
+            table: 'hr_employees',
+            values: {
+                tenant_id: tid,
+                first_name: firstName,
+                last_name: lastName,
+                id_document_number: cedula.trim(),
+                job_title: cargo.trim(),
+                base_salary: salario,
+                contract_type: 'indefinido',
+                payment_frequency: 'quincenal',
+                status: 'activo'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar empleado: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Empleado registrado correctamente.');
+        void renderRrhhModule();
+    });
+
+    document.getElementById('btn-registrar-asistencia')?.addEventListener('click', async () => {
+        const { data: emps = [] } = await dbSelect({
+            table: 'hr_employees',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }, { op: 'eq', column: 'status', value: 'activo' }]
+        });
+        if (!emps.length) {
+            window.ZyronDialog.alert('Registra primero un empleado antes de anotar asistencia.');
+            return;
+        }
+        const emp = emps[0];
+        const horasExtStr = await window.ZyronDialog.prompt(`Horas extras trabajadas hoy por ${emp.first_name} ${emp.last_name}:`, '0');
+        const extras = Number(horasExtStr) || 0;
+        const today = new Date().toISOString().split('T')[0];
+
+        const { error } = await dbInsert({
+            table: 'hr_attendance',
+            values: {
+                tenant_id: tid,
+                employee_id: emp.id,
+                work_date: today,
+                regular_hours: 8,
+                overtime_hours: extras,
+                notes: 'Jornada regular'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al guardar asistencia: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Jornada de asistencia registrada con éxito.');
+        void renderRrhhModule();
+    });
+
+    document.getElementById('btn-solicitar-licencia')?.addEventListener('click', async () => {
+        const { data: emps = [] } = await dbSelect({
+            table: 'hr_employees',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }, { op: 'eq', column: 'status', value: 'activo' }]
+        });
+        if (!emps.length) {
+            window.ZyronDialog.alert('No hay empleados activos registrados.');
+            return;
+        }
+        const emp = emps[0];
+        const diasStr = await window.ZyronDialog.prompt(`Días de vacaciones/permiso para ${emp.first_name}:`, '5');
+        const dias = Number(diasStr) || 1;
+        const hoy = new Date();
+        const inicio = hoy.toISOString().split('T')[0];
+        const finDate = new Date(hoy.getTime() + dias * 24 * 60 * 60 * 1000);
+        const fin = finDate.toISOString().split('T')[0];
+
+        const { error } = await dbInsert({
+            table: 'hr_leaves',
+            values: {
+                tenant_id: tid,
+                employee_id: emp.id,
+                leave_type: 'vacaciones',
+                start_date: inicio,
+                end_date: fin,
+                days_count: dias,
+                status: 'aprobada',
+                reason: 'Vacaciones de ley'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar solicitud: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Solicitud de vacaciones aprobada y registrada.');
+        void renderRrhhModule();
+    });
+
+    document.getElementById('btn-procesar-nomina')?.addEventListener('click', async () => {
+        const { data: emps = [] } = await dbSelect({
+            table: 'hr_employees',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }, { op: 'eq', column: 'status', value: 'activo' }]
+        });
+        if (!emps.length) {
+            window.ZyronDialog.alert('No hay empleados activos para procesar nómina.');
+            return;
+        }
+        const totalBruto = emps.reduce((acc, e) => acc + Number(e.base_salary || 0), 0);
+        // Ley Laboral Latam típica: ~5.91% deducción empleado TSS/Seguridad Social
+        const totalDeducciones = totalBruto * 0.0591;
+        const totalNeto = totalBruto - totalDeducciones;
+        const hoy = new Date();
+        const start = new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().split('T')[0];
+        const end = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().split('T')[0];
+
+        const { error } = await dbInsert({
+            table: 'hr_payrolls',
+            values: {
+                tenant_id: tid,
+                period_start: start,
+                period_end: end,
+                payroll_type: 'regular',
+                status: 'aprobada',
+                total_gross: totalBruto,
+                total_deductions: totalDeducciones,
+                total_net: totalNeto,
+                notes: `Nómina procesada para ${emps.length} empleados activos`
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al procesar nómina: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert(`Nómina generada exitosamente. Total neto liquidado: ${fmtMoneyPanel(totalNeto)}`);
+        void renderRrhhModule();
+    });
+};
+
+// ----------------------------------------------------------------------------
+// 2. CRM AVANZADO
+// ----------------------------------------------------------------------------
+const renderCrmModule = async () => {
+    zyronLog('render:crm:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('CRM Ventas', 'Selecciona una empresa para gestionar prospectos y oportunidades')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.crmUi) state.crmUi = { tab: 'pipeline', q: '' };
+    const ui = state.crmUi;
+
+    const tabs = [
+        { key: 'pipeline', label: 'Pipeline de Ventas (Kanban)', icon: 'view_kanban' },
+        { key: 'leads', label: 'Prospectos / Leads', icon: 'person_search' },
+        { key: 'actividades', label: 'Bitácora Omnicanal', icon: 'forum' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'pipeline') {
+        const { data: leads = [] } = await dbSelect({
+            table: 'crm_leads',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+
+        const stages = [
+            { key: 'prospecto', name: 'Prospecto', prob: '10%' },
+            { key: 'contactado', name: 'Contactado', prob: '25%' },
+            { key: 'propuesta', name: 'Propuesta Enviada', prob: '50%' },
+            { key: 'negociacion', name: 'En Negociación', prob: '75%' },
+            { key: 'ganado', name: 'Ganado / Cerrado', prob: '100%' }
+        ];
+
+        contentHtml = `
+            <div class="flex justify-between items-center mb-2">
+                <p class="text-sm text-on-surface-variant">Embudo comercial con probabilidad de cierre, scoring y seguimiento por WhatsApp.</p>
+                <button type="button" id="btn-nuevo-lead" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add</span>Nueva Oportunidad
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 overflow-x-auto pb-4">
+                ${stages
+                    .map((st) => {
+                        const stLeads = (leads || []).filter((l) => (l.status === 'ganado' ? st.key === 'ganado' : (l.source === st.key || (st.key === 'prospecto' && !['contactado','propuesta','negociacion','ganado'].includes(l.source)))));
+                        const colTotal = stLeads.reduce((acc, l) => acc + Number(l.expected_revenue || 0), 0);
+                        return `
+                        <div class="flex flex-col gap-3 rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 min-w-[220px]">
+                            <div class="flex items-center justify-between border-b border-outline-variant/15 pb-2">
+                                <div>
+                                    <h4 class="font-bold text-xs uppercase tracking-wider text-primary">${escapeHtml(st.name)}</h4>
+                                    <span class="text-[11px] font-semibold text-on-surface-variant">${fmtMoneyPanel(colTotal)}</span>
+                                </div>
+                                <span class="rounded-full bg-surface-container-highest px-2 py-0.5 text-[11px] font-bold text-on-surface">${stLeads.length}</span>
+                            </div>
+                            <div class="flex flex-col gap-2.5">
+                                ${
+                                    stLeads.length === 0
+                                        ? `<p class="py-6 text-center text-xs text-on-surface-variant">Sin oportunidades</p>`
+                                        : stLeads
+                                              .map(
+                                                  (lead) => `
+                                    <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-3 shadow-sm hover:shadow transition-shadow">
+                                        <div class="flex justify-between items-start">
+                                            <h5 class="font-semibold text-sm text-on-surface">${escapeHtml(lead.title)}</h5>
+                                            <span class="rounded px-1.5 py-0.5 text-[10px] font-bold bg-amber-100 text-amber-900">${lead.lead_score} pts</span>
+                                        </div>
+                                        <p class="mt-1 text-xs text-on-surface-variant">${escapeHtml(lead.contact_name)} ${lead.company_name ? `• ${escapeHtml(lead.company_name)}` : ''}</p>
+                                        <div class="mt-3 flex items-center justify-between border-t border-outline-variant/10 pt-2">
+                                            <span class="text-xs font-bold text-emerald-600">${fmtMoneyPanel(lead.expected_revenue)}</span>
+                                            ${
+                                                lead.whatsapp
+                                                    ? `<a href="https://wa.me/${encodeURIComponent(lead.whatsapp.replace(/\D/g, ''))}" target="_blank" class="inline-flex items-center text-emerald-600 hover:text-emerald-700 text-xs font-semibold" title="Abrir WhatsApp">
+                                                    <span class="material-symbols-outlined text-[16px]">chat</span>
+                                                </a>`
+                                                    : ''
+                                            }
+                                        </div>
+                                    </div>
+                                `
+                                              )
+                                              .join('')
+                                }
+                            </div>
+                        </div>
+                    `;
+                    })
+                    .join('')}
+            </div>
+        `;
+    } else if (ui.tab === 'leads') {
+        const { data: leads = [] } = await dbSelect({
+            table: 'crm_leads',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <input type="search" id="crm-search" value="${escapeHtml(ui.q)}" placeholder="Buscar prospectos por contacto, empresa o teléfono..." class="w-full max-w-sm rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface focus:outline-none focus:ring-2 focus:ring-primary/20" />
+                <button type="button" id="btn-nuevo-lead" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">person_add</span>Registrar Lead
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Oportunidad</th>
+                            <th class="px-4 py-3">Contacto / Empresa</th>
+                            <th class="px-4 py-3">WhatsApp / Tel</th>
+                            <th class="px-4 py-3 text-right">Valor Estimado</th>
+                            <th class="px-4 py-3 text-center">Score</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            leads.length === 0
+                                ? `<tr><td colspan="6" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay prospectos comerciales registrados.</td></tr>`
+                                : leads
+                                      .map(
+                                          (l) => `
+                            <tr>
+                                <td class="px-4 py-3 font-semibold text-on-surface">${escapeHtml(l.title)}</td>
+                                <td class="px-4 py-3 text-on-surface-variant">${escapeHtml(l.contact_name)} ${l.company_name ? `(${escapeHtml(l.company_name)})` : ''}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(l.whatsapp || l.phone || '—')}</td>
+                                <td class="px-4 py-3 text-right font-medium text-emerald-600">${fmtMoneyPanel(l.expected_revenue)}</td>
+                                <td class="px-4 py-3 text-center font-bold text-amber-700">${l.lead_score}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${l.status === 'ganado' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'} capitalize">
+                                        ${escapeHtml(l.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'actividades') {
+        const { data: activities = [] } = await dbSelect({
+            table: 'crm_activities',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Seguimiento de llamadas, reuniones y mensajes de WhatsApp comerciales.</p>
+                <button type="button" id="btn-nueva-actividad" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_task</span>Registrar Actividad
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Tipo</th>
+                            <th class="px-4 py-3">Resumen de Actividad</th>
+                            <th class="px-4 py-3">Fecha</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            activities.length === 0
+                                ? `<tr><td colspan="4" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay actividades comerciales registradas aún.</td></tr>`
+                                : activities
+                                      .map(
+                                          (act) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium capitalize flex items-center gap-1.5">
+                                    <span class="material-symbols-outlined text-[18px] text-primary">
+                                        ${act.activity_type === 'whatsapp' ? 'chat' : act.activity_type === 'llamada' ? 'call' : 'event'}
+                                    </span>
+                                    ${escapeHtml(act.activity_type)}
+                                </td>
+                                <td class="px-4 py-3 text-on-surface">${escapeHtml(act.summary)}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${new Date(act.created_at).toLocaleDateString('es-DO')}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${act.is_completed ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'}">
+                                        ${act.is_completed ? 'Completada' : 'Pendiente'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('CRM Ventas Avanzado', 'Embudo de conversión comercial, gestión de prospectos y trazabilidad omnicanal')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-crm-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-crm-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.crmTab;
+            void renderCrmModule();
+        });
+    });
+
+    document.getElementById('btn-nuevo-lead')?.addEventListener('click', async () => {
+        const titulo = await window.ZyronDialog.prompt('Título o Negocio (ej: Contrato Suministro 2026):');
+        if (!titulo) return;
+        const contacto = await window.ZyronDialog.prompt('Nombre del contacto:');
+        if (!contacto) return;
+        const whatsapp = await window.ZyronDialog.prompt('Número de WhatsApp comercial (con código de país ej: 18095551234):');
+        const valorStr = await window.ZyronDialog.prompt('Valor esperado del negocio en moneda local:', '50000');
+        const valor = Number(valorStr) || 0;
+
+        const { error } = await dbInsert({
+            table: 'crm_leads',
+            values: {
+                tenant_id: tid,
+                title: titulo.trim(),
+                contact_name: contacto.trim(),
+                whatsapp: whatsapp ? whatsapp.trim() : null,
+                expected_revenue: valor,
+                source: 'prospecto',
+                status: 'abierto',
+                lead_score: 65
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar oportunidad: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Oportunidad registrada con éxito en el pipeline.');
+        void renderCrmModule();
+    });
+
+    document.getElementById('btn-nueva-actividad')?.addEventListener('click', async () => {
+        const { data: leads = [] } = await dbSelect({
+            table: 'crm_leads',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!leads.length) {
+            window.ZyronDialog.alert('Primero registra un prospecto u oportunidad.');
+            return;
+        }
+        const lead = leads[0];
+        const detalle = await window.ZyronDialog.prompt(`Resumen de actividad para "${lead.title}":`, 'Llamada de seguimiento y envío de propuesta');
+        if (!detalle) return;
+
+        const { error } = await dbInsert({
+            table: 'crm_activities',
+            values: {
+                tenant_id: tid,
+                lead_id: lead.id,
+                activity_type: 'llamada',
+                summary: detalle.trim(),
+                is_completed: true,
+                completed_at: new Date().toISOString()
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar actividad: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Actividad registrada en la bitácora.');
+        void renderCrmModule();
+    });
+};
+
+// ----------------------------------------------------------------------------
+// 3. PROYECTOS (PSA & TAREAS)
+// ----------------------------------------------------------------------------
+const renderProyectosModule = async () => {
+    zyronLog('render:proyectos:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Proyectos', 'Selecciona una empresa para gestionar proyectos y tareas')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.proyectosUi) state.proyectosUi = { tab: 'proyectos', q: '' };
+    const ui = state.proyectosUi;
+
+    const tabs = [
+        { key: 'proyectos', label: 'Proyectos Activos', icon: 'folder' },
+        { key: 'tareas', label: 'Tablero de Tareas', icon: 'task_alt' },
+        { key: 'timesheets', label: 'Hojas de Tiempo (Timesheets)', icon: 'timer' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'proyectos') {
+        const { data: projects = [] } = await dbSelect({
+            table: 'pm_projects',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Control presupuestario, entregables y cronograma de proyectos para clientes.</p>
+                <button type="button" id="btn-nuevo-proyecto" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_box</span>Nuevo Proyecto
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                ${
+                    projects.length === 0
+                        ? `<div class="col-span-3 rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-8 text-center text-sm text-on-surface-variant">No hay proyectos activos. Haz clic en "Nuevo Proyecto" para comenzar.</div>`
+                        : projects
+                              .map(
+                                  (prj) => `
+                    <div class="flex flex-col justify-between rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm hover:shadow transition-shadow">
+                        <div>
+                            <div class="flex items-start justify-between">
+                                <h4 class="font-bold text-base text-primary">${escapeHtml(prj.name)}</h4>
+                                <span class="rounded-full px-2 py-0.5 text-xs font-semibold capitalize ${prj.status === 'en_progreso' ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}">
+                                    ${escapeHtml(prj.status)}
+                                </span>
+                            </div>
+                            <p class="mt-2 text-xs text-on-surface-variant line-clamp-2">${escapeHtml(prj.description || 'Sin descripción detallada.')}</p>
+                        </div>
+                        <div class="mt-5 border-t border-outline-variant/15 pt-3 flex items-center justify-between text-xs">
+                            <span class="text-on-surface-variant font-medium">Presupuesto:</span>
+                            <span class="font-bold text-on-surface">${fmtMoneyPanel(prj.budget_amount)}</span>
+                        </div>
+                    </div>
+                `
+                              )
+                              .join('')
+                }
+            </div>
+        `;
+    } else if (ui.tab === 'tareas') {
+        const { data: tasks = [] } = await dbSelect({
+            table: 'pm_tasks',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        const taskCols = [
+            { key: 'por_hacer', label: 'Por Hacer', color: 'border-slate-300' },
+            { key: 'en_progreso', label: 'En Progreso', color: 'border-blue-400' },
+            { key: 'revision', label: 'En Revisión', color: 'border-amber-400' },
+            { key: 'completada', label: 'Completada', color: 'border-emerald-400' }
+        ];
+
+        contentHtml = `
+            <div class="flex justify-between items-center mb-2">
+                <p class="text-sm text-on-surface-variant">Gestión ágil de tareas con asignaciones y horas estimadas.</p>
+                <button type="button" id="btn-nueva-tarea" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_task</span>Nueva Tarea
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 overflow-x-auto pb-4">
+                ${taskCols
+                    .map((col) => {
+                        const colTasks = tasks.filter((t) => t.status === col.key);
+                        return `
+                        <div class="flex flex-col gap-3 rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 min-w-[240px]">
+                            <div class="flex items-center justify-between border-b ${col.color} border-b-2 pb-2">
+                                <h4 class="font-bold text-xs uppercase tracking-wider text-on-surface">${col.label}</h4>
+                                <span class="rounded-full bg-surface-container px-2 py-0.5 text-xs font-semibold">${colTasks.length}</span>
+                            </div>
+                            <div class="flex flex-col gap-2">
+                                ${
+                                    colTasks.length === 0
+                                        ? `<p class="py-6 text-center text-xs text-on-surface-variant">No hay tareas</p>`
+                                        : colTasks
+                                              .map(
+                                                  (tk) => `
+                                    <div class="rounded-lg border border-outline-variant/20 bg-surface-container-lowest p-3 shadow-sm">
+                                        <div class="flex justify-between items-start">
+                                            <h5 class="font-semibold text-xs text-on-surface">${escapeHtml(tk.title)}</h5>
+                                            <span class="rounded px-1.5 py-0.2 text-[10px] font-bold ${tk.priority === 'alta' || tk.priority === 'urgente' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-800'} capitalize">${escapeHtml(tk.priority)}</span>
+                                        </div>
+                                        <div class="mt-3 flex items-center justify-between text-[11px] text-on-surface-variant">
+                                            <span>Asignado: ${escapeHtml(tk.assigned_to || 'Sin asignar')}</span>
+                                            <span class="font-mono font-medium">${tk.estimated_hours}h est.</span>
+                                        </div>
+                                    </div>
+                                `
+                                              )
+                                              .join('')
+                                }
+                            </div>
+                        </div>
+                    `;
+                    })
+                    .join('')}
+            </div>
+        `;
+    } else if (ui.tab === 'timesheets') {
+        const { data: timesheets = [] } = await dbSelect({
+            table: 'pm_timesheets',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'work_date', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Registro inmutable de horas invertidas para costeo y facturación al cliente.</p>
+                <button type="button" id="btn-cargar-horas" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_alarm</span>Registrar Horas
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Fecha</th>
+                            <th class="px-4 py-3">Descripción de Trabajo</th>
+                            <th class="px-4 py-3 text-center">Horas</th>
+                            <th class="px-4 py-3 text-center">Facturable</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            timesheets.length === 0
+                                ? `<tr><td colspan="4" class="px-4 py-8 text-center text-sm text-on-surface-variant">No se han registrado horas de trabajo aún.</td></tr>`
+                                : timesheets
+                                      .map(
+                                          (ts) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium">${escapeHtml(ts.work_date)}</td>
+                                <td class="px-4 py-3 text-on-surface">${escapeHtml(ts.description || 'Desarrollo de proyecto')}</td>
+                                <td class="px-4 py-3 text-center font-bold text-primary">${ts.hours}h</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${ts.is_billable ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'}">
+                                        ${ts.is_billable ? 'Sí' : 'No'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Gestión de Proyectos', 'Planificación WBS, tableros Kanban de tareas y control de tiempos (Timesheets)')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-proyectos-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-proyectos-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.proyectosTab;
+            void renderProyectosModule();
+        });
+    });
+
+    document.getElementById('btn-nuevo-proyecto')?.addEventListener('click', async () => {
+        const nombre = await window.ZyronDialog.prompt('Nombre del proyecto:');
+        if (!nombre) return;
+        const presupuestoStr = await window.ZyronDialog.prompt('Presupuesto aprobado en moneda local:', '150000');
+        const presupuesto = Number(presupuestoStr) || 0;
+
+        const { error } = await dbInsert({
+            table: 'pm_projects',
+            values: {
+                tenant_id: tid,
+                name: nombre.trim(),
+                budget_amount: presupuesto,
+                status: 'en_progreso'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al crear proyecto: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Proyecto creado exitosamente.');
+        void renderProyectosModule();
+    });
+
+    document.getElementById('btn-nueva-tarea')?.addEventListener('click', async () => {
+        const { data: prjs = [] } = await dbSelect({
+            table: 'pm_projects',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!prjs.length) {
+            window.ZyronDialog.alert('Crea un proyecto primero antes de añadir tareas.');
+            return;
+        }
+        const prj = prjs[0];
+        const titulo = await window.ZyronDialog.prompt(`Título de la tarea para "${prj.name}":`);
+        if (!titulo) return;
+        const asignado = await window.ZyronDialog.prompt('Asignado a (Nombre de persona):', 'Equipo Operativo');
+        const horasStr = await window.ZyronDialog.prompt('Horas estimadas de trabajo:', '8');
+        const horas = Number(horasStr) || 1;
+
+        const { error } = await dbInsert({
+            table: 'pm_tasks',
+            values: {
+                tenant_id: tid,
+                project_id: prj.id,
+                title: titulo.trim(),
+                assigned_to: asignado ? asignado.trim() : null,
+                priority: 'media',
+                status: 'por_hacer',
+                estimated_hours: horas
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar tarea: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Tarea añadida al tablero Kanban.');
+        void renderProyectosModule();
+    });
+
+    document.getElementById('btn-cargar-horas')?.addEventListener('click', async () => {
+        const { data: tasks = [] } = await dbSelect({
+            table: 'pm_tasks',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!tasks.length) {
+            window.ZyronDialog.alert('Crea primero una tarea para cargarle horas de trabajo.');
+            return;
+        }
+        const task = tasks[0];
+        const horasStr = await window.ZyronDialog.prompt(`Horas dedicadas a "${task.title}":`, '4');
+        const horas = Number(horasStr) || 1;
+        const desc = await window.ZyronDialog.prompt('Descripción de la labor efectuada:', 'Ajustes y pruebas de entrega');
+        const today = new Date().toISOString().split('T')[0];
+
+        const { error } = await dbInsert({
+            table: 'pm_timesheets',
+            values: {
+                tenant_id: tid,
+                task_id: task.id,
+                work_date: today,
+                hours: horas,
+                is_billable: true,
+                description: desc ? desc.trim() : null
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar horas: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Horas registradas en la hoja de tiempo.');
+        void renderProyectosModule();
+    });
+};
+
+// ----------------------------------------------------------------------------
+// 4. PRODUCCIÓN (MRP / MANUFACTURA)
+// ----------------------------------------------------------------------------
+const renderProduccionModule = async () => {
+    zyronLog('render:produccion:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Producción', 'Selecciona una empresa para gestionar manufactura y BOM')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.produccionUi) state.produccionUi = { tab: 'ordenes', q: '' };
+    const ui = state.produccionUi;
+
+    const tabs = [
+        { key: 'ordenes', label: 'Órdenes de Fabricación (OT)', icon: 'precision_manufacturing' },
+        { key: 'bom', label: 'Listas de Materiales (BOM)', icon: 'receipt' },
+        { key: 'centros', label: 'Centros de Trabajo', icon: 'factory' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'ordenes') {
+        const { data: orders = [] } = await dbSelect({
+            table: 'mrp_production_orders',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Órdenes de producción con consumo automático de insumos en stock y costeo unitario.</p>
+                <button type="button" id="btn-nueva-ot" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add</span>Nueva Orden de Fabricación
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Número OT</th>
+                            <th class="px-4 py-3 text-center">Planificada</th>
+                            <th class="px-4 py-3 text-center">Producida</th>
+                            <th class="px-4 py-3 text-right">Costo Estimado</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            orders.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay órdenes de fabricación registradas.</td></tr>`
+                                : orders
+                                      .map(
+                                          (ot) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(ot.order_number)}</td>
+                                <td class="px-4 py-3 text-center font-medium">${ot.quantity_planned} und</td>
+                                <td class="px-4 py-3 text-center font-bold text-emerald-600">${ot.quantity_produced} und</td>
+                                <td class="px-4 py-3 text-right font-medium">${fmtMoneyPanel(ot.estimated_cost)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${ot.status === 'finalizada' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'} capitalize">
+                                        ${escapeHtml(ot.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'bom') {
+        const { data: boms = [] } = await dbSelect({
+            table: 'mrp_bom',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Fórmulas y recetas estándar para el ensamble o elaboración de productos terminados.</p>
+                <button type="button" id="btn-nueva-bom" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">post_add</span>Nueva Lista BOM
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Código BOM</th>
+                            <th class="px-4 py-3">Nombre de Fórmula / Receta</th>
+                            <th class="px-4 py-3 text-center">Cant. Estándar</th>
+                            <th class="px-4 py-3 text-center">Unidad</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            boms.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay listas de materiales definidas aún.</td></tr>`
+                                : boms
+                                      .map(
+                                          (b) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(b.code)}</td>
+                                <td class="px-4 py-3 font-medium text-on-surface">${escapeHtml(b.name)}</td>
+                                <td class="px-4 py-3 text-center font-semibold">${b.standard_quantity}</td>
+                                <td class="px-4 py-3 text-center text-xs text-on-surface-variant">${escapeHtml(b.unit_of_measure)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${b.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'}">
+                                        ${b.is_active ? 'Activa' : 'Inactiva'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'centros') {
+        const { data: centers = [] } = await dbSelect({
+            table: 'mrp_work_centers',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'code', ascending: true }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Centros de costo, maquinaria o líneas de armado con capacidad y costo por hora.</p>
+                <button type="button" id="btn-nuevo-centro" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">domain_add</span>Nuevo Centro
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Código</th>
+                            <th class="px-4 py-3">Centro de Trabajo</th>
+                            <th class="px-4 py-3 text-center">Capacidad Diaria</th>
+                            <th class="px-4 py-3 text-right">Costo / Hora</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            centers.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay centros de trabajo configurados.</td></tr>`
+                                : centers
+                                      .map(
+                                          (c) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(c.code)}</td>
+                                <td class="px-4 py-3 font-medium text-on-surface">${escapeHtml(c.name)}</td>
+                                <td class="px-4 py-3 text-center">${c.capacity_per_day} horas/día</td>
+                                <td class="px-4 py-3 text-right font-medium">${fmtMoneyPanel(c.cost_per_hour)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${c.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'}">
+                                        ${c.is_active ? 'Operativo' : 'Pausado'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Producción y Manufactura (MRP)', 'Control de listas de materiales (BOM), centros de trabajo y órdenes de fabricación')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-mrp-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-mrp-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.mrpTab;
+            void renderProduccionModule();
+        });
+    });
+
+    document.getElementById('btn-nueva-bom')?.addEventListener('click', async () => {
+        const { data: prods = [] } = await dbSelect({
+            table: 'products',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!prods.length) {
+            window.ZyronDialog.alert('Registra primero productos en el catálogo de Inventario.');
+            return;
+        }
+        const prod = prods[0];
+        const codigo = await window.ZyronDialog.prompt('Código de la lista BOM (ej: BOM-001):', `BOM-${Math.floor(Math.random() * 900 + 100)}`);
+        if (!codigo) return;
+        const nombre = await window.ZyronDialog.prompt('Nombre de la fórmula:', `Receta para ${prod.name}`);
+        if (!nombre) return;
+
+        const { error } = await dbInsert({
+            table: 'mrp_bom',
+            values: {
+                tenant_id: tid,
+                product_id: prod.id,
+                code: codigo.trim(),
+                name: nombre.trim(),
+                standard_quantity: 1,
+                unit_of_measure: 'UND',
+                is_active: true
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al crear BOM: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Lista de materiales creada con éxito.');
+        void renderProduccionModule();
+    });
+
+    document.getElementById('btn-nuevo-centro')?.addEventListener('click', async () => {
+        const codigo = await window.ZyronDialog.prompt('Código del centro (ej: MAQ-01):', 'LINEA-1');
+        if (!codigo) return;
+        const nombre = await window.ZyronDialog.prompt('Nombre del Centro de Trabajo:', 'Línea de Ensamblado');
+        if (!nombre) return;
+        const costoStr = await window.ZyronDialog.prompt('Costo por hora de operación:', '850');
+        const costo = Number(costoStr) || 0;
+
+        const { error } = await dbInsert({
+            table: 'mrp_work_centers',
+            values: {
+                tenant_id: tid,
+                code: codigo.trim(),
+                name: nombre.trim(),
+                cost_per_hour: costo,
+                capacity_per_day: 8,
+                is_active: true
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al crear centro de trabajo: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Centro de trabajo registrado.');
+        void renderProduccionModule();
+    });
+
+    document.getElementById('btn-nueva-ot')?.addEventListener('click', async () => {
+        const { data: boms = [] } = await dbSelect({
+            table: 'mrp_bom',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!boms.length) {
+            window.ZyronDialog.alert('Crea una lista de materiales (BOM) primero antes de emitir una orden de producción.');
+            return;
+        }
+        const bom = boms[0];
+        const numOT = `OT-${Date.now().toString().slice(-6)}`;
+        const cantStr = await window.ZyronDialog.prompt(`Cantidad a fabricar para "${bom.name}":`, '50');
+        const cant = Number(cantStr) || 1;
+
+        const { error } = await dbInsert({
+            table: 'mrp_production_orders',
+            values: {
+                tenant_id: tid,
+                order_number: numOT,
+                bom_id: bom.id,
+                product_id: bom.product_id,
+                quantity_planned: cant,
+                quantity_produced: 0,
+                status: 'en_proceso',
+                start_date: new Date().toISOString().split('T')[0]
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al crear orden de fabricación: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert(`Orden de fabricación ${numOT} generada.`);
+        void renderProduccionModule();
+    });
+};
+
+// ----------------------------------------------------------------------------
+// 5. CADENA DE SUMINISTRO (SCM / COMPRAS)
+// ----------------------------------------------------------------------------
+const renderCadenaSuministroModule = async () => {
+    zyronLog('render:scm:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Cadena de Suministro', 'Selecciona una empresa para gestionar compras y proveedores')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.scmUi) state.scmUi = { tab: 'proveedores', q: '' };
+    const ui = state.scmUi;
+
+    const tabs = [
+        { key: 'proveedores', label: 'Proveedores / Suplidores', icon: 'local_shipping' },
+        { key: 'ordenes_compra', label: 'Órdenes de Compra (PO)', icon: 'shopping_bag' },
+        { key: 'recepciones', label: 'Recepciones / Conduces', icon: 'inventory' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'proveedores') {
+        const { data: suppliers = [] } = await dbSelect({
+            table: 'scm_suppliers',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'name', ascending: true }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Directorio de proveedores con RNC/RFC/RUT, condiciones de crédito y retenciones impositivas.</p>
+                <button type="button" id="btn-nuevo-proveedor" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_business</span>Nuevo Proveedor
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">RNC / Identificación</th>
+                            <th class="px-4 py-3">Razón Social / Proveedor</th>
+                            <th class="px-4 py-3">Contacto / WhatsApp</th>
+                            <th class="px-4 py-3 text-center">Crédito</th>
+                            <th class="px-4 py-3 text-center">Agente Retención</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            suppliers.length === 0
+                                ? `<tr><td colspan="6" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay proveedores registrados. Haz clic en "Nuevo Proveedor" para agregarlo.</td></tr>`
+                                : suppliers
+                                      .map(
+                                          (sup) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(sup.tax_id)}</td>
+                                <td class="px-4 py-3 font-medium text-on-surface">${escapeHtml(sup.name)}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(sup.whatsapp || sup.phone || sup.email || '—')}</td>
+                                <td class="px-4 py-3 text-center font-medium">${sup.credit_days > 0 ? `${sup.credit_days} días` : 'Contado'}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded px-2 py-0.5 text-xs font-semibold ${sup.withholding_agent ? 'bg-amber-100 text-amber-900' : 'bg-slate-100 text-slate-800'}">
+                                        ${sup.withholding_agent ? 'Sí (Aplica retención)' : 'No'}
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${sup.is_active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'}">
+                                        ${sup.is_active ? 'Activo' : 'Inactivo'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'ordenes_compra') {
+        const { data: pos = [] } = await dbSelect({
+            table: 'scm_purchase_orders',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'order_date', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Órdenes de compra para reabastecimiento con cálculo de impuestos y retenciones fiscales.</p>
+                <button type="button" id="btn-nueva-po" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_shopping_cart</span>Nueva Orden de Compra
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Número PO</th>
+                            <th class="px-4 py-3">Fecha</th>
+                            <th class="px-4 py-3 text-right">Subtotal</th>
+                            <th class="px-4 py-3 text-right">Impuestos / ITBIS</th>
+                            <th class="px-4 py-3 text-right font-bold text-primary">Total</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            pos.length === 0
+                                ? `<tr><td colspan="6" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay órdenes de compra registradas.</td></tr>`
+                                : pos
+                                      .map(
+                                          (p) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(p.order_number)}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(p.order_date)}</td>
+                                <td class="px-4 py-3 text-right font-medium">${fmtMoneyPanel(p.subtotal)}</td>
+                                <td class="px-4 py-3 text-right text-xs text-on-surface-variant">${fmtMoneyPanel(p.tax_amount)}</td>
+                                <td class="px-4 py-3 text-right font-bold text-on-surface">${fmtMoneyPanel(p.total)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium ${p.status === 'recibida' ? 'bg-emerald-100 text-emerald-800' : 'bg-blue-100 text-blue-800'} capitalize">
+                                        ${escapeHtml(p.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'recepciones') {
+        const { data: receipts = [] } = await dbSelect({
+            table: 'scm_goods_receipts',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'reception_date', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Entradas físicas al almacén respaldadas con número de remisión o conduce de proveedor.</p>
+                <button type="button" id="btn-registrar-recepcion" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">input</span>Registrar Conduce / Recepción
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Número Entrada</th>
+                            <th class="px-4 py-3">Conduce / Remisión</th>
+                            <th class="px-4 py-3">Fecha y Hora</th>
+                            <th class="px-4 py-3">Notas</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            receipts.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay recepciones de mercancía registradas.</td></tr>`
+                                : receipts
+                                      .map(
+                                          (rc) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(rc.receipt_number)}</td>
+                                <td class="px-4 py-3 font-mono text-xs font-semibold text-on-surface">${escapeHtml(rc.delivery_note_ref || 'Sin conduce')}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${new Date(rc.reception_date).toLocaleString('es-DO')}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(rc.notes || '—')}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-800 capitalize">
+                                        ${escapeHtml(rc.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Cadena de Suministro (SCM)', 'Gestión de proveedores, órdenes de compra, retenciones impositivas y recepciones')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-scm-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-scm-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.scmTab;
+            void renderCadenaSuministroModule();
+        });
+    });
+
+    document.getElementById('btn-nuevo-proveedor')?.addEventListener('click', async () => {
+        const rnc = await window.ZyronDialog.prompt('RNC, RFC, CUIT o Identificación Tributaria del Proveedor:');
+        if (!rnc) return;
+        const nombre = await window.ZyronDialog.prompt('Razón Social o Nombre del Proveedor:');
+        if (!nombre) return;
+        const diasStr = await window.ZyronDialog.prompt('Días de Crédito acordados (0 para contado):', '30');
+        const dias = Number(diasStr) || 0;
+        const tel = await window.ZyronDialog.prompt('Teléfono o WhatsApp del proveedor:');
+
+        const { error } = await dbInsert({
+            table: 'scm_suppliers',
+            values: {
+                tenant_id: tid,
+                tax_id: rnc.trim(),
+                name: nombre.trim(),
+                credit_days: dias,
+                whatsapp: tel ? tel.trim() : null,
+                withholding_agent: true,
+                is_active: true
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar proveedor: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Proveedor guardado correctamente.');
+        void renderCadenaSuministroModule();
+    });
+
+    document.getElementById('btn-nueva-po')?.addEventListener('click', async () => {
+        const { data: sups = [] } = await dbSelect({
+            table: 'scm_suppliers',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!sups.length) {
+            window.ZyronDialog.alert('Registra primero un proveedor antes de emitir una orden de compra.');
+            return;
+        }
+        const sup = sups[0];
+        const montoStr = await window.ZyronDialog.prompt(`Monto subtotal de la compra para "${sup.name}":`, '45000');
+        const subtotal = Number(montoStr) || 0;
+        const itbis = subtotal * 0.18;
+        const total = subtotal + itbis;
+        const numPO = `OC-${Date.now().toString().slice(-6)}`;
+
+        const { error } = await dbInsert({
+            table: 'scm_purchase_orders',
+            values: {
+                tenant_id: tid,
+                order_number: numPO,
+                supplier_id: sup.id,
+                subtotal: subtotal,
+                tax_amount: itbis,
+                total: total,
+                status: 'confirmada'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al crear orden de compra: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert(`Orden de compra ${numPO} emitida exitosamente.`);
+        void renderCadenaSuministroModule();
+    });
+
+    document.getElementById('btn-registrar-recepcion')?.addEventListener('click', async () => {
+        const { data: sups = [] } = await dbSelect({
+            table: 'scm_suppliers',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        const { data: whs = [] } = await dbSelect({
+            table: 'warehouses',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!sups.length || !whs.length) {
+            window.ZyronDialog.alert('Se requiere al menos un proveedor y un almacén activo.');
+            return;
+        }
+        const conduce = await window.ZyronDialog.prompt('Número de Conduce / Remisión del proveedor:', 'REM-8921');
+        if (!conduce) return;
+        const numRec = `REC-${Date.now().toString().slice(-6)}`;
+
+        const { error } = await dbInsert({
+            table: 'scm_goods_receipts',
+            values: {
+                tenant_id: tid,
+                receipt_number: numRec,
+                supplier_id: sups[0].id,
+                warehouse_id: whs[0].id,
+                delivery_note_ref: conduce.trim(),
+                status: 'completada',
+                notes: 'Recepción conforme en almacén principal'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar recepción: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert(`Recepción ${numRec} registrada. Stock actualizado.`);
+        void renderCadenaSuministroModule();
+    });
+};
+
+// ----------------------------------------------------------------------------
+// 6. E-COMMERCE (TIENDA DIGITAL B2B / B2C)
+// ----------------------------------------------------------------------------
+const renderEcommerceModule = async () => {
+    zyronLog('render:ecommerce:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('E-commerce', 'Selecciona una empresa para gestionar la tienda online')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.ecommerceUi) state.ecommerceUi = { tab: 'pedidos', q: '' };
+    const ui = state.ecommerceUi;
+
+    const tabs = [
+        { key: 'pedidos', label: 'Pedidos Web / Online', icon: 'shopping_cart' },
+        { key: 'catalogo', label: 'Catálogo Publicado', icon: 'storefront' },
+        { key: 'configuracion', label: 'Ajustes de Tienda', icon: 'tune' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'pedidos') {
+        const { data: orders = [] } = await dbSelect({
+            table: 'ecom_orders',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Pedidos recibidos desde el portal web o canal de WhatsApp con conversión a factura.</p>
+                <button type="button" id="btn-nuevo-pedido-web" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_shopping_cart</span>Simular Pedido Web
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Número Orden</th>
+                            <th class="px-4 py-3">Cliente / WhatsApp</th>
+                            <th class="px-4 py-3">Destino de Entrega</th>
+                            <th class="px-4 py-3 text-right">Total</th>
+                            <th class="px-4 py-3 text-center">Pago</th>
+                            <th class="px-4 py-3 text-center">Despacho</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            orders.length === 0
+                                ? `<tr><td colspan="6" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay pedidos web registrados en la tienda.</td></tr>`
+                                : orders
+                                      .map(
+                                          (ord) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(ord.order_number)}</td>
+                                <td class="px-4 py-3">
+                                    <div class="font-medium text-on-surface">${escapeHtml(ord.customer_name)}</div>
+                                    <div class="text-xs text-on-surface-variant">${escapeHtml(ord.customer_phone)}</div>
+                                </td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(ord.shipping_address)}</td>
+                                <td class="px-4 py-3 text-right font-bold text-emerald-600">${fmtMoneyPanel(ord.total)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2 py-0.5 text-xs font-semibold ${ord.payment_status === 'pagado' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'} capitalize">
+                                        ${escapeHtml(ord.payment_status)}
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 capitalize">
+                                        ${escapeHtml(ord.fulfillment_status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'catalogo') {
+        const { data: prods = [] } = await dbSelect({
+            table: 'ecom_products',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Productos habilitados para exhibición y venta en el escaparate digital.</p>
+                <button type="button" id="btn-publicar-producto" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">publish</span>Publicar Producto
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
+                ${
+                    prods.length === 0
+                        ? `<div class="col-span-3 rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-8 text-center text-sm text-on-surface-variant">No hay artículos publicados en el catálogo web aún.</div>`
+                        : prods
+                              .map(
+                                  (p) => `
+                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4 shadow-sm flex flex-col justify-between">
+                        <div>
+                            <div class="flex items-center justify-between">
+                                <h4 class="font-bold text-sm text-on-surface">${escapeHtml(p.web_title)}</h4>
+                                <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">Publicado</span>
+                            </div>
+                            <p class="mt-2 text-xs text-on-surface-variant line-clamp-2">${escapeHtml(p.web_description || 'Sin descripción web.')}</p>
+                        </div>
+                        <div class="mt-4 flex items-center justify-between border-t border-outline-variant/10 pt-3">
+                            <span class="text-xs text-on-surface-variant font-medium">Precio Online:</span>
+                            <span class="text-sm font-bold text-emerald-600">${fmtMoneyPanel(p.online_price)}</span>
+                        </div>
+                    </div>
+                `
+                              )
+                              .join('')
+                }
+            </div>
+        `;
+    } else if (ui.tab === 'configuracion') {
+        const { data: sets = [] } = await dbSelect({
+            table: 'ecom_settings',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        const currentSet = sets[0] || {};
+        contentHtml = `
+            <div class="max-w-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-6 shadow-sm">
+                <h3 class="text-base font-bold text-primary mb-4">Ajustes del Portal E-commerce</h3>
+                <div class="flex flex-col gap-4 text-sm">
+                    <div>
+                        <label class="block text-xs font-semibold text-on-surface-variant mb-1">Nombre Comercial de la Tienda:</label>
+                        <input type="text" id="ecom-store-name" value="${escapeHtml(currentSet.store_name || 'Mi Tienda Online')}" class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-on-surface-variant mb-1">WhatsApp Oficial para Recepción de Pedidos:</label>
+                        <input type="text" id="ecom-wa-phone" value="${escapeHtml(currentSet.whatsapp_sales_phone || '18095550199')}" class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface" />
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-on-surface-variant mb-1">Métodos de Pago Aceptados:</label>
+                        <p class="text-xs text-on-surface-variant">Transferencia Bancaria, Pago contra entrega en efectivo, Tarjetas locales.</p>
+                    </div>
+                    <button type="button" id="btn-guardar-ecom-config" class="mt-2 w-full rounded-lg bg-primary py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                        Guardar Configuración de Tienda
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('E-commerce & Tienda Digital', 'Catálogo online, checkout B2B/B2C, sincronización de stock y pedidos')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-ecom-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-ecom-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.ecomTab;
+            void renderEcommerceModule();
+        });
+    });
+
+    document.getElementById('btn-publicar-producto')?.addEventListener('click', async () => {
+        const { data: prods = [] } = await dbSelect({
+            table: 'products',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!prods.length) {
+            window.ZyronDialog.alert('Registra primero productos en Inventario.');
+            return;
+        }
+        const prod = prods[0];
+        const precioStr = await window.ZyronDialog.prompt(`Precio web de venta para "${prod.name}":`, String(prod.price || 1000));
+        const precio = Number(precioStr) || prod.price || 0;
+
+        const { error } = await dbInsert({
+            table: 'ecom_products',
+            values: {
+                tenant_id: tid,
+                product_id: prod.id,
+                web_title: prod.name,
+                web_description: prod.description || 'Disponible para compra inmediata en línea.',
+                online_price: precio,
+                is_published: true
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al publicar producto: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Producto publicado en el catálogo web.');
+        void renderEcommerceModule();
+    });
+
+    document.getElementById('btn-nuevo-pedido-web')?.addEventListener('click', async () => {
+        const cliente = await window.ZyronDialog.prompt('Nombre del cliente comprador:', 'Carlos Martínez');
+        if (!cliente) return;
+        const tel = await window.ZyronDialog.prompt('Teléfono / WhatsApp:', '8095551234');
+        const direccion = await window.ZyronDialog.prompt('Dirección de entrega:', 'Av. 27 de Febrero esq. Lincoln, Santo Domingo');
+        const montoStr = await window.ZyronDialog.prompt('Total de la orden:', '3500');
+        const total = Number(montoStr) || 3500;
+        const numOrd = `WEB-${Date.now().toString().slice(-6)}`;
+
+        const { error } = await dbInsert({
+            table: 'ecom_orders',
+            values: {
+                tenant_id: tid,
+                order_number: numOrd,
+                customer_name: cliente.trim(),
+                customer_phone: tel ? tel.trim() : '8095550000',
+                shipping_address: direccion ? direccion.trim() : 'Santo Domingo',
+                total: total,
+                payment_method: 'transferencia',
+                payment_status: 'pendiente',
+                fulfillment_status: 'por_preparar'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al generar pedido web: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert(`Pedido web ${numOrd} recibido en el panel.`);
+        void renderEcommerceModule();
+    });
+
+    document.getElementById('btn-guardar-ecom-config')?.addEventListener('click', async () => {
+        const nombre = document.getElementById('ecom-store-name')?.value || 'Mi Tienda';
+        const wa = document.getElementById('ecom-wa-phone')?.value || '8095550000';
+        const slug = nombre.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+
+        const { error } = await dbInsert({
+            table: 'ecom_settings',
+            values: {
+                tenant_id: tid,
+                store_name: nombre.trim(),
+                slug: slug,
+                whatsapp_sales_phone: wa.trim(),
+                is_active: true
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al guardar configuración: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Configuración de la tienda web guardada con éxito.');
+        void renderEcommerceModule();
+    });
+};
+
+// ----------------------------------------------------------------------------
+// 7. CALIDAD (QA / QC)
+// ----------------------------------------------------------------------------
+const renderCalidadModule = async () => {
+    zyronLog('render:calidad:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Gestión de Calidad', 'Selecciona una empresa para gestionar inspecciones y normas')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.calidadUi) state.calidadUi = { tab: 'inspecciones', q: '' };
+    const ui = state.calidadUi;
+
+    const tabs = [
+        { key: 'inspecciones', label: 'Inspecciones Realizadas', icon: 'fact_check' },
+        { key: 'puntos_control', label: 'Puntos de Control (QCP)', icon: 'rule' },
+        { key: 'no_conformidades', label: 'No Conformidades (NCR)', icon: 'warning' },
+        { key: 'capa', label: 'Acciones Correctivas (CAPA)', icon: 'published_with_changes' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'inspecciones') {
+        const { data: inspections = [] } = await dbSelect({
+            table: 'qm_inspections',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'inspection_date', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Control de calidad en recepción de compras, manufactura y despacho final.</p>
+                <button type="button" id="btn-nueva-inspeccion" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">playlist_add_check</span>Registrar Inspección
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Fecha</th>
+                            <th class="px-4 py-3">Inspector</th>
+                            <th class="px-4 py-3">Lote / Serie</th>
+                            <th class="px-4 py-3">Observaciones</th>
+                            <th class="px-4 py-3 text-center">Resultado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            inspections.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No se han registrado inspecciones de calidad aún.</td></tr>`
+                                : inspections
+                                      .map(
+                                          (ins) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium">${new Date(ins.inspection_date).toLocaleDateString('es-DO')}</td>
+                                <td class="px-4 py-3 text-on-surface">${escapeHtml(ins.inspector_name)}</td>
+                                <td class="px-4 py-3 font-mono text-xs text-on-surface-variant">${escapeHtml(ins.lot_number || 'Lote Estándar')}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(ins.notes || '—')}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-bold ${ins.result === 'aprobado' ? 'bg-emerald-100 text-emerald-800' : 'bg-rose-100 text-rose-800'} uppercase">
+                                        ${escapeHtml(ins.result)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'puntos_control') {
+        const { data: qcps = [] } = await dbSelect({
+            table: 'qm_control_points',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Reglas de verificación obligatorias disparadas automáticamente en los flujos del ERP.</p>
+                <button type="button" id="btn-nuevo-qcp" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add</span>Nuevo Punto de Control
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Nombre de Control</th>
+                            <th class="px-4 py-3">Etapa de Activación</th>
+                            <th class="px-4 py-3">Tipo de Prueba</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            qcps.length === 0
+                                ? `<tr><td colspan="4" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay puntos de control configurados.</td></tr>`
+                                : qcps
+                                      .map(
+                                          (q) => `
+                            <tr>
+                                <td class="px-4 py-3 font-semibold text-on-surface">${escapeHtml(q.name)}</td>
+                                <td class="px-4 py-3 text-xs capitalize text-primary font-medium">${escapeHtml(q.trigger_stage.replace('_', ' '))}</td>
+                                <td class="px-4 py-3 text-xs capitalize text-on-surface-variant">${escapeHtml(q.inspection_type.replace('_', ' '))}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-800">Activo</span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'no_conformidades') {
+        const { data: ncrs = [] } = await dbSelect({
+            table: 'qm_non_conformances',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Registro y aislamiento de anomalías en materias primas o lotes terminados (ISO 9001).</p>
+                <button type="button" id="btn-nueva-ncr" class="inline-flex items-center rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-rose-700 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">warning</span>Registrar NCR
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Código NCR</th>
+                            <th class="px-4 py-3">Defecto / Incidencia</th>
+                            <th class="px-4 py-3 text-center">Severidad</th>
+                            <th class="px-4 py-3">Acción Inmediata</th>
+                            <th class="px-4 py-3 text-center">Estado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            ncrs.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay no conformidades abiertas. Excelente desempeño de calidad.</td></tr>`
+                                : ncrs
+                                      .map(
+                                          (n) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono font-bold text-rose-700">${escapeHtml(n.ncr_number)}</td>
+                                <td class="px-4 py-3 font-medium text-on-surface">${escapeHtml(n.title)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded px-2 py-0.5 text-xs font-bold ${n.severity === 'alta' || n.severity === 'critica' ? 'bg-rose-100 text-rose-800' : 'bg-amber-100 text-amber-800'} capitalize">
+                                        ${escapeHtml(n.severity)}
+                                    </span>
+                                </td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(n.immediate_action || 'Aislamiento preventivo')}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-semibold bg-amber-100 text-amber-900 capitalize">
+                                        ${escapeHtml(n.status)}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'capa') {
+        const { data: capas = [] } = await dbSelect({
+            table: 'qm_capa_actions',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Acciones Correctivas y Preventivas (CAPA) con metodología de Causa Raíz (5 Por qués).</p>
+                <button type="button" id="btn-nueva-capa" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">shield</span>Nuevo Plan CAPA
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Causa Raíz Identificada</th>
+                            <th class="px-4 py-3">Plan de Acción Correctivo</th>
+                            <th class="px-4 py-3">Responsable</th>
+                            <th class="px-4 py-3">Fecha Límite</th>
+                            <th class="px-4 py-3 text-center">Verificación</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            capas.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay planes de acción CAPA en curso.</td></tr>`
+                                : capas
+                                      .map(
+                                          (cp) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium text-on-surface">${escapeHtml(cp.root_cause_analysis)}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(cp.action_plan)}</td>
+                                <td class="px-4 py-3 text-xs font-semibold text-primary">${escapeHtml(cp.responsible_person)}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(cp.deadline)}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="rounded-full px-2 py-0.5 text-xs font-medium ${cp.is_verified ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-800'}">
+                                        ${cp.is_verified ? 'Verificado' : 'En proceso'}
+                                    </span>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Gestión de Calidad (QA & QC)', 'Puntos de control (QCP), inspecciones, no conformidades (NCR) y planes de acción (CAPA)')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-calidad-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-calidad-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.calidadTab;
+            void renderCalidadModule();
+        });
+    });
+
+    document.getElementById('btn-nuevo-qcp')?.addEventListener('click', async () => {
+        const nombre = await window.ZyronDialog.prompt('Nombre del punto de control:', 'Inspección de Empaque y Sellado');
+        if (!nombre) return;
+        const { error } = await dbInsert({
+            table: 'qm_control_points',
+            values: {
+                tenant_id: tid,
+                name: nombre.trim(),
+                trigger_stage: 'recepcion_compra',
+                inspection_type: 'pasa_falla',
+                is_active: true
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al guardar punto de control: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Punto de control activado.');
+        void renderCalidadModule();
+    });
+
+    document.getElementById('btn-nueva-inspeccion')?.addEventListener('click', async () => {
+        const { data: qcps = [] } = await dbSelect({
+            table: 'qm_control_points',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!qcps.length) {
+            window.ZyronDialog.alert('Crea un punto de control (QCP) primero.');
+            return;
+        }
+        const inspector = await window.ZyronDialog.prompt('Nombre del auditor/inspector:', 'Inspector de Calidad');
+        if (!inspector) return;
+        const lote = await window.ZyronDialog.prompt('Número de lote inspeccionado:', 'LOT-2026-09');
+        const aprueba = window.ZyronDialog.confirm('¿El lote aprueba todos los requisitos de calidad?');
+
+        const { error } = await dbInsert({
+            table: 'qm_inspections',
+            values: {
+                tenant_id: tid,
+                control_point_id: qcps[0].id,
+                inspector_name: inspector.trim(),
+                lot_number: lote ? lote.trim() : null,
+                result: aprueba ? 'aprobado' : 'rechazado',
+                notes: aprueba ? 'Cumple tolerancias y apariencia conforme' : 'Presenta desviaciones en el estándar'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar inspección: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Inspección de calidad archivada.');
+        void renderCalidadModule();
+    });
+
+    document.getElementById('btn-nueva-ncr')?.addEventListener('click', async () => {
+        const titulo = await window.ZyronDialog.prompt('Motivo o título del defecto (NCR):', 'Deformación en empaque primario');
+        if (!titulo) return;
+        const desc = await window.ZyronDialog.prompt('Descripción detallada del hallazgo:');
+        const numNCR = `NCR-${Date.now().toString().slice(-6)}`;
+
+        const { error } = await dbInsert({
+            table: 'qm_non_conformances',
+            values: {
+                tenant_id: tid,
+                ncr_number: numNCR,
+                title: titulo.trim(),
+                description: desc ? desc.trim() : 'Defecto detectado en verificación',
+                severity: 'alta',
+                immediate_action: 'Aislamiento de lote en cuarentena',
+                status: 'abierta'
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al emitir NCR: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert(`No conformidad ${numNCR} generada y lote aislado.`);
+        void renderCalidadModule();
+    });
+
+    document.getElementById('btn-nueva-capa')?.addEventListener('click', async () => {
+        const { data: ncrs = [] } = await dbSelect({
+            table: 'qm_non_conformances',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!ncrs.length) {
+            window.ZyronDialog.alert('Registra primero una No Conformidad (NCR) para asociarle el plan CAPA.');
+            return;
+        }
+        const causa = await window.ZyronDialog.prompt('Análisis de Causa Raíz (5 Por qués):', 'Descalibración en mordaza de sellado térmico por falta de mantenimiento');
+        if (!causa) return;
+        const accion = await window.ZyronDialog.prompt('Acción Correctiva Planificada:', 'Calibración preventiva mensual y reemplazo de resistencia');
+        const resp = await window.ZyronDialog.prompt('Responsable de ejecución:', 'Jefe de Mantenimiento');
+
+        const { error } = await dbInsert({
+            table: 'qm_capa_actions',
+            values: {
+                tenant_id: tid,
+                ncr_id: ncrs[0].id,
+                root_cause_analysis: causa.trim(),
+                action_plan: accion ? accion.trim() : 'Mantenimiento preventivo',
+                responsible_person: resp ? resp.trim() : 'Responsable Operaciones',
+                deadline: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+                is_verified: false
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar CAPA: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Plan de acción CAPA documentado y programado.');
+        void renderCalidadModule();
+    });
+};
+
+// ----------------------------------------------------------------------------
+// 8. GESTIÓN DOCUMENTAL (DMS)
+// ----------------------------------------------------------------------------
+const renderDocumentalModule = async () => {
+    zyronLog('render:dms:start', { tenantId: state.currentTenantId });
+    if (!state.currentTenantId) {
+        dashboardContent.innerHTML = `${renderModuleHeader('Gestión Documental', 'Selecciona una empresa para gestionar archivos')}`;
+        return;
+    }
+    const tid = state.currentTenantId;
+    if (!state.dmsUi) state.dmsUi = { tab: 'documentos', q: '' };
+    const ui = state.dmsUi;
+
+    const tabs = [
+        { key: 'documentos', label: 'Repositorio de Archivos', icon: 'folder_shared' },
+        { key: 'vinculaciones', label: 'Adjuntos en Entidades', icon: 'attachment' }
+    ];
+
+    let contentHtml = '';
+
+    if (ui.tab === 'documentos') {
+        const { data: docs = [] } = await dbSelect({
+            table: 'dms_documents',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Archivos digitalizados, contratos, comprobantes fiscales y fichas técnicas con versionado.</p>
+                <button type="button" id="btn-subir-documento" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">upload_file</span>Subir Documento
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">Documento / Archivo</th>
+                            <th class="px-4 py-3">Categoría</th>
+                            <th class="px-4 py-3 text-center">Versión</th>
+                            <th class="px-4 py-3">Fecha de Subida</th>
+                            <th class="px-4 py-3 text-center">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            docs.length === 0
+                                ? `<tr><td colspan="5" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay documentos cargados en el repositorio. Haz clic en "Subir Documento" para agregar uno.</td></tr>`
+                                : docs
+                                      .map(
+                                          (d) => `
+                            <tr>
+                                <td class="px-4 py-3 font-medium text-on-surface flex items-center gap-2">
+                                    <span class="material-symbols-outlined text-[20px] text-primary">description</span>
+                                    <div>
+                                        <div>${escapeHtml(d.title)}</div>
+                                        <div class="text-xs text-on-surface-variant font-mono">${escapeHtml(d.file_name)}</div>
+                                    </div>
+                                </td>
+                                <td class="px-4 py-3 text-xs uppercase font-semibold text-on-surface-variant">${escapeHtml(d.category)}</td>
+                                <td class="px-4 py-3 text-center font-bold text-xs">v${d.version}</td>
+                                <td class="px-4 py-3 text-xs text-on-surface-variant">${new Date(d.created_at).toLocaleDateString('es-DO')}</td>
+                                <td class="px-4 py-3 text-center">
+                                    <a href="${escapeHtml(d.file_url)}" target="_blank" class="inline-flex items-center text-primary hover:underline text-xs font-semibold">
+                                        <span class="material-symbols-outlined text-[16px] mr-1">visibility</span>Ver
+                                    </a>
+                                </td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } else if (ui.tab === 'vinculaciones') {
+        const { data: atts = [] } = await dbSelect({
+            table: 'dms_entity_attachments',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+            order: { column: 'created_at', ascending: false }
+        });
+        contentHtml = `
+            <div class="flex justify-between items-center">
+                <p class="text-sm text-on-surface-variant">Trazabilidad de documentos adjuntos a empleados, facturas, compras o clientes.</p>
+                <button type="button" id="btn-vincular-documento" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
+                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_link</span>Vincular Archivo
+                </button>
+            </div>
+            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
+                        <tr>
+                            <th class="px-4 py-3">ID Documento</th>
+                            <th class="px-4 py-3">Tipo de Entidad Asociada</th>
+                            <th class="px-4 py-3">ID Registro</th>
+                            <th class="px-4 py-3 text-center">Fecha Vinculación</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-outline-variant/10">
+                        ${
+                            atts.length === 0
+                                ? `<tr><td colspan="4" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay documentos vinculados a entidades específicas.</td></tr>`
+                                : atts
+                                      .map(
+                                          (at) => `
+                            <tr>
+                                <td class="px-4 py-3 font-mono text-xs text-primary">${escapeHtml(at.document_id.slice(0, 8))}...</td>
+                                <td class="px-4 py-3 font-semibold text-xs capitalize">${escapeHtml(at.entity_type)}</td>
+                                <td class="px-4 py-3 font-mono text-xs text-on-surface-variant">${escapeHtml(at.entity_id.slice(0, 8))}...</td>
+                                <td class="px-4 py-3 text-center text-xs text-on-surface-variant">${new Date(at.created_at).toLocaleDateString('es-DO')}</td>
+                            </tr>
+                        `
+                                      )
+                                      .join('')
+                        }
+                    </tbody>
+                </table>
+            </div>
+        `;
+    }
+
+    dashboardContent.innerHTML = `
+        ${renderModuleHeader('Gestión Documental (DMS)', 'Repositorio centralizado de expedientes, versionado y vinculación a registros')}
+        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-dms-tab')}
+        <div class="flex flex-col gap-6 mt-4">
+            ${contentHtml}
+        </div>
+    `;
+
+    dashboardContent.querySelectorAll('[data-dms-tab]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = btn.dataset.dmsTab;
+            void renderDocumentalModule();
+        });
+    });
+
+    document.getElementById('btn-subir-documento')?.addEventListener('click', async () => {
+        const titulo = await window.ZyronDialog.prompt('Título o descripción del documento:');
+        if (!titulo) return;
+        const nombreArchivo = await window.ZyronDialog.prompt('Nombre del archivo (ej: Contrato_Laboral.pdf):', 'Documento.pdf');
+        const categoria = await window.ZyronDialog.prompt('Categoría (contrato, factura_fiscal, identificacion, certificado):', 'contrato');
+
+        const { error } = await dbInsert({
+            table: 'dms_documents',
+            values: {
+                tenant_id: tid,
+                title: titulo.trim(),
+                file_name: nombreArchivo ? nombreArchivo.trim() : 'Archivo.pdf',
+                file_url: '#',
+                category: categoria ? categoria.trim() : 'comprobante',
+                version: 1
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al registrar documento: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Documento digitalizado y registrado en el repositorio.');
+        void renderDocumentalModule();
+    });
+
+    document.getElementById('btn-vincular-documento')?.addEventListener('click', async () => {
+        const { data: docs = [] } = await dbSelect({
+            table: 'dms_documents',
+            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
+        });
+        if (!docs.length) {
+            window.ZyronDialog.alert('Primero sube un documento al repositorio.');
+            return;
+        }
+        const tipoEntidad = await window.ZyronDialog.prompt('Tipo de registro a vincular (employee, supplier, invoice, product):', 'employee');
+        if (!tipoEntidad) return;
+
+        const { error } = await dbInsert({
+            table: 'dms_entity_attachments',
+            values: {
+                tenant_id: tid,
+                document_id: docs[0].id,
+                entity_type: tipoEntidad.trim(),
+                entity_id: docs[0].id
+            }
+        });
+        if (error) {
+            window.ZyronDialog.alert('Error al vincular documento: ' + (error.message || String(error)));
+            return;
+        }
+        window.ZyronDialog.alert('Documento vinculado exitosamente.');
+        void renderDocumentalModule();
+    });
+};
+
 const pushZyronModuleUrl = (moduleKey, opts = {}) => {
     if (opts.skipHistory) return;
     if (!moduleKey || moduleKey === 'pending-gate') return;
@@ -12658,6 +15825,14 @@ const openModule = async (moduleKey, opts = {}) => {
     if (moduleKey === 'fiscal') return renderFiscalModule();
     if (moduleKey === 'inventario') return renderInventarioModule();
     if (moduleKey === 'clientes') return renderClientesModule();
+    if (moduleKey === 'rrhh') return renderRrhhModule();
+    if (moduleKey === 'crm') return renderCrmModule();
+    if (moduleKey === 'proyectos') return renderProyectosModule();
+    if (moduleKey === 'produccion') return renderProduccionModule();
+    if (moduleKey === 'cadena_suministro') return renderCadenaSuministroModule();
+    if (moduleKey === 'ecommerce') return renderEcommerceModule();
+    if (moduleKey === 'calidad') return renderCalidadModule();
+    if (moduleKey === 'documental') return renderDocumentalModule();
     if (moduleKey === 'pagos') return renderPagosModule();
     if (moduleKey === 'reportes') return renderReportesModule();
     if (moduleKey === 'contabilidad') return renderContabilidadModule();
