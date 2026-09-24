@@ -1,3 +1,62 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/**
+ * UI polish: make buttons read as solid and intentional.
+ *
+ * Tailwind utility classes always win by source order + specificity, so the
+ * base rules below only take effect on buttons that DON'T declare their own
+ * text color/weight -- exactly the washed-out "ghost" buttons. Buttons that
+ * already set text-white, text-error, font-semibold, etc. keep their styles.
+ */
+@layer base {
+  button {
+    color: #0f2744; /* solid navy text by default (only bites uncolored buttons) */
+    font-weight: 500;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  /* Outline / ghost buttons: real border, bolder text, perceptible hover.
+     Colored variants (primary/error border, any bg-*) are excluded so they
+     keep their intended styling. */
+  button.border:not([class*='bg-']):not([class*='border-error']):not([class*='border-primary']) {
+    border-color: #94a3b8;
+    background-color: #ffffff;
+    font-weight: 600;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  button.border:not([class*='bg-']):not([class*='border-error']):not([class*='border-primary']):hover {
+    background-color: #eef2f7;
+    border-color: #1e4976;
+  }
+
+  /* Solid primary buttons: add depth so the flat navy stops looking dead,
+     plus a lighter, livelier hover and a subtle press. */
+  button.bg-primary {
+    box-shadow:
+      0 1px 2px rgba(15, 39, 68, 0.25),
+      0 2px 8px rgba(15, 39, 68, 0.12);
+    transition:
+      background-color 0.15s ease,
+      box-shadow 0.15s ease,
+      transform 0.05s ease;
+  }
+
+  button.bg-primary:hover {
+    background-color: #1e4976; /* primary-container: one step brighter */
+  }
+
+  button.bg-primary:active {
+    transform: translateY(1px);
+  }
+}

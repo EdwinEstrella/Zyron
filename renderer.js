@@ -3371,7 +3371,7 @@ const mergeInvoiceDocumentSettings = (raw) => {
     return {
         ...defaultInvoiceDocumentSettings(),
         ...d,
-        templateId: ['classic', 'minimal', 'compact'].includes(tpl) ? tpl : 'classic',
+        templateId: ['classic', 'minimal', 'compact', 'thermal'].includes(tpl) ? tpl : 'classic',
         accentHex: String(d.accentHex || '#0f2744').slice(0, 9),
         footerLegal: String(d.footerLegal || '').slice(0, 4000),
         logoDataUrl: typeof d.logoDataUrl === 'string' ? d.logoDataUrl : '',
@@ -3383,18 +3383,23 @@ const mergeInvoiceDocumentSettings = (raw) => {
 const documentTemplateCatalog = () => [
     {
         id: 'classic',
-        label: 'Clasica',
-        description: 'Tabla con bordes, barra de color en cabecera. Apta para oficina y archivo.'
-    },
-    {
-        id: 'minimal',
-        label: 'Minimal',
-        description: 'Tipografia amplia, poco marco. Ideal para marcas limpias.'
+        label: 'Clasica (A4)',
+        description: 'Tabla con bordes y barra de color institucional en formato A4 completo.'
     },
     {
         id: 'compact',
-        label: 'Compacta',
-        description: 'Alta densidad; util para copia impresa o ticket largo en una pagina.'
+        label: 'Compacta (A4)',
+        description: 'Alta densidad en pagina A4, optimizada para facturas con multiples partidas.'
+    },
+    {
+        id: 'minimal',
+        label: 'Minimalista (A4)',
+        description: 'Tipografia limpia y moderna en hoja A4 sin marcos pesados.'
+    },
+    {
+        id: 'thermal',
+        label: 'Termica (Ticket 80mm)',
+        description: 'Formato de tira / ticket continuo de 80mm para impresoras termicas de punto de venta (POS).'
     }
 ];
 
@@ -5849,7 +5854,7 @@ const invoiceDocumentBrandingUpsertViaDb = async (tenantId, body) => {
     const next = mergeInvoiceDocumentSettings(parsed);
     if (body.templateId != null) {
         const t = String(body.templateId).trim();
-        if (['classic', 'minimal', 'compact'].includes(t)) next.templateId = t;
+        if (['classic', 'minimal', 'compact', 'thermal'].includes(t)) next.templateId = t;
     }
     if (body.accentHex != null) {
         const h = String(body.accentHex).trim();
@@ -6484,14 +6489,148 @@ const lineTotalFromRow = (ln) => {
     return afterDisc * (1 + trt / 100);
 };
 
-const buildInvoiceDocumentHtml = (ctx) => {
+const buildInvoiceThermalHtml = (ctx) => {
     const { invoice, lines, customer, tenant, branding, fiscalTaxLabel, isDraft } = ctx;
     const b = mergeInvoiceDocumentSettings(branding);
+    const company = (b.companyDisplayName && String(b.companyDisplayName).trim()) || tenant?.display_name || tenant?.legal_name || 'Zyron';
+    const taxId = tenant?.tax_id || '';
+    const phone = tenant?.phone || '';
+    const address = tenant?.address || '';
+    const docTitle = `${String(invoice.series || '').trim()}-${String(invoice.number || '').trim()}`.replace(/^-+|-+$/g, '') || 'Documento';
+    const typeLabel =
+        {
+            standard: 'Factura',
+            proforma: 'Proforma',
+            estimate: 'Presupuesto',
+            credit_note: 'Nota de Credito',
+            debit_note: 'Nota de Debito'
+        }[String(invoice.invoice_type || 'standard')] || 'Factura';
+    const cur = invoice.currency || 'DOP';
+    const taxHead = escapeHtml(String(fiscalTaxLabel || 'ITBIS'));
+    const custName = customer?.name || customer?.email || '';
+    const custTaxId = customer?.tax_id || '';
+
+    const draftBanner = isDraft ? `<div style="text-align:center;font-weight:bold;padding:4px 0;margin-bottom:6px;border:1px dashed #000;font-size:11px;">*** BORRADOR (SIN VALOR FISCAL) ***</div>` : '';
+
+    const itemRows = (lines || []).map((ln) => {
+        const desc = escapeHtml(String(ln.description ?? ''));
+        const qty = Number(ln.quantity) || 1;
+        const pu = Number(ln.unit_price) || 0;
+        const lt = lineTotalFromRow(ln);
+        return `
+        <tr>
+            <td colspan="3" style="padding-top:4px;font-weight:bold;word-break:break-word;">${desc}</td>
+        </tr>
+        <tr style="border-bottom:1px dotted #ccc;">
+            <td style="padding-bottom:4px;color:#333;">${qty} x ${fmtDocMoneyInvoice(pu, cur)}</td>
+            <td></td>
+            <td style="padding-bottom:4px;text-align:right;font-weight:bold;">${fmtDocMoneyInvoice(lt, cur)}</td>
+        </tr>`;
+    }).join('');
+
+    const footHtml = String(b.footerLegal || '').trim().split('\n').map((ln) => escapeHtml(ln)).join('<br/>');
+
+    return `<!DOCTYPE html><html lang="es"><head><meta charset="utf-8"/><title>${escapeHtml(docTitle)} - Ticket</title>
+<style>
+  @media print {
+    @page { size: 80mm auto; margin: 0; }
+    body { margin: 0; padding: 4mm; width: 72mm; }
+    .no-print { display: none !important; }
+  }
+  body {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 12px;
+    line-height: 1.35;
+    color: #000;
+    background: #fff;
+    margin: 0 auto;
+    padding: 12px 6px;
+    width: 78mm;
+    box-sizing: border-box;
+  }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .bold { font-weight: bold; }
+  .line { border-top: 1px dashed #000; margin: 6px 0; }
+  .double-line { border-top: 2px dashed #000; margin: 6px 0; }
+  table.items-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  table.totals-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.totals-table td { padding: 2px 0; }
+</style>
+</head>
+<body class="ticket-thermal">
+  ${draftBanner}
+  <div class="center">
+    <div style="font-size:15px;font-weight:bold;text-transform:uppercase;">${escapeHtml(company)}</div>
+    ${taxId ? `<div style="font-size:11px;">RNC / Ced: ${escapeHtml(taxId)}</div>` : ''}
+    ${address ? `<div style="font-size:11px;">${escapeHtml(address)}</div>` : ''}
+    ${phone ? `<div style="font-size:11px;">Tel: ${escapeHtml(phone)}</div>` : ''}
+    <div class="double-line"></div>
+    <div style="font-size:14px;font-weight:bold;text-transform:uppercase;">${escapeHtml(typeLabel)}</div>
+    <div style="font-size:13px;font-weight:bold;">${escapeHtml(docTitle)}</div>
+  </div>
+  <div class="line"></div>
+  <div style="font-size:11px;">
+    <div><strong>Fecha:</strong> ${escapeHtml(toDateString(invoice.created_at))}</div>
+    ${invoice.ncf ? `<div><strong>NCF:</strong> ${escapeHtml(String(invoice.ncf))}</div>` : ''}
+    ${custName ? `<div><strong>Cliente:</strong> ${escapeHtml(custName)}</div>` : ''}
+    ${custTaxId ? `<div><strong>RNC/Ced:</strong> ${escapeHtml(custTaxId)}</div>` : ''}
+  </div>
+  <div class="line"></div>
+  <table class="items-table">
+    <thead>
+      <tr style="border-bottom:1px dashed #000;">
+        <th style="text-align:left;padding-bottom:4px;">Cant x Precio</th>
+        <th></th>
+        <th style="text-align:right;padding-bottom:4px;">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${itemRows}
+    </tbody>
+  </table>
+  <div class="line"></div>
+  <table class="totals-table">
+    <tr>
+      <td>Subtotal:</td>
+      <td class="right">${fmtDocMoneyInvoice(invoice.subtotal, cur)}</td>
+    </tr>
+    <tr>
+      <td>${taxHead}:</td>
+      <td class="right">${fmtDocMoneyInvoice(invoice.tax_total, cur)}</td>
+    </tr>
+    ${invoice.withholding_total && Number(invoice.withholding_total) > 0 ? `
+    <tr>
+      <td>Retenciones:</td>
+      <td class="right">-${fmtDocMoneyInvoice(invoice.withholding_total, cur)}</td>
+    </tr>` : ''}
+    <tr style="font-size:14px;font-weight:bold;border-top:1px dashed #000;">
+      <td style="padding-top:4px;">TOTAL:</td>
+      <td class="right" style="padding-top:4px;">${fmtDocMoneyInvoice(invoice.total, cur)}</td>
+    </tr>
+  </table>
+  <div class="double-line"></div>
+  ${invoice.notes ? `<div style="font-size:10px;margin-bottom:6px;"><strong>Notas:</strong><br/>${escapeHtml(String(invoice.notes)).replace(/\n/g, '<br/>')}</div>` : ''}
+  <div class="center" style="font-size:11px;margin-top:8px;">
+    ${footHtml ? `<div>${footHtml}</div>` : '<div>¡Gracias por su compra!</div>'}
+  </div>
+  <div class="no-print center" style="margin-top:14px;font-size:10px;color:#666;">
+    <button type="button" onclick="window.print()" style="padding:6px 14px;background:#0f2744;color:#fff;border:none;border-radius:4px;cursor:pointer;font-weight:bold;">Imprimir Ticket</button>
+  </div>
+</body></html>`;
+};
+
+const buildInvoiceDocumentHtml = (ctx, forcedFormat = null) => {
+    const { invoice, lines, customer, tenant, branding, fiscalTaxLabel, isDraft } = ctx;
+    const b = mergeInvoiceDocumentSettings(branding);
+    const tpl = forcedFormat || b.templateId || 'classic';
+    if (tpl === 'thermal') {
+        return buildInvoiceThermalHtml(ctx);
+    }
     const draftBanner = isDraft
         ? `<div style="margin-bottom:12px;padding:10px 12px;background:#fef3c7;color:#92400e;font-weight:700;text-align:center;border-radius:8px;border:1px solid #fcd34d">BORRADOR — Documento no emitido / sin valor fiscal.</div>`
         : '';
     const accent = b.accentHex || '#0f2744';
-    const tpl = b.templateId || 'classic';
     const company =
         (b.companyDisplayName && String(b.companyDisplayName).trim()) ||
         tenant?.display_name ||
@@ -6622,14 +6761,20 @@ const buildInvoiceDocumentHtml = (ctx) => {
 </body></html>`;
 };
 
-const openInvoiceDocumentPreview = async (html, autoPrint) => {
+const openInvoiceDocumentPreview = async (html, autoPrint, options = {}) => {
     if (!window.electronAPI?.openHtmlPreview) {
         window.ZyronDialog.alert('No se pudo abrir la vista previa del documento.');
         return;
     }
 
     const res = await safeCall(
-        () => window.electronAPI.openHtmlPreview({ title: 'Vista previa de documento', html, autoPrint: Boolean(autoPrint) }),
+        () =>
+            window.electronAPI.openHtmlPreview({
+                title: options.title || 'Vista previa de documento',
+                html,
+                autoPrint: Boolean(autoPrint),
+                format: options.format || 'a4'
+            }),
         'desktop.openHtmlPreview'
     );
     const u = unwrapFnInvoke(res);
@@ -6648,10 +6793,15 @@ const downloadInvoiceDocumentHtml = (filename, html) => {
     URL.revokeObjectURL(url);
 };
 
-const exportInvoiceDocumentPdf = async (filename, html) => {
+const exportInvoiceDocumentPdf = async (filename, html, options = {}) => {
     if (window.electronAPI?.savePdfFromHtml) {
         const res = await safeCall(
-            () => window.electronAPI.savePdfFromHtml({ filename: filename.replace(/\.html?$/i, '.pdf'), html }),
+            () =>
+                window.electronAPI.savePdfFromHtml({
+                    filename: filename.replace(/\.html?$/i, '.pdf'),
+                    html,
+                    format: options.format || 'a4'
+                }),
             'desktop.savePdfFromHtml'
         );
         const u = unwrapFnInvoke(res);
@@ -6662,7 +6812,7 @@ const exportInvoiceDocumentPdf = async (filename, html) => {
         if (u.data?.ok && u.data?.path) window.ZyronDialog.alert(`PDF guardado en:\n${u.data.path}`);
         return;
     }
-    openInvoiceDocumentPreview(html, true);
+    openInvoiceDocumentPreview(html, true, options);
 };
 
 const renderFacturasModule = async () => {
@@ -6762,13 +6912,11 @@ const renderFacturasModule = async () => {
                         <div class="flex gap-3">
                             <span class="material-symbols-outlined mt-2 cursor-move text-lg text-outline" aria-hidden="true">drag_indicator</span>
                             <div class="min-w-0 flex-1 space-y-2">
-                                <div class="grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr]">
-                                    <select data-fld="kind" class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs">
-                                        <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
-                                        <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
-                                    </select>
-                                    <select data-fld="product" data-product-cell class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs ${kind === 'product' ? '' : 'hidden'}"><option value="">Seleccionar item</option>${opts}</select>
-                                </div>
+                                <input type="hidden" data-fld="kind" value="${escapeHtml(kind)}" />
+                                <select data-fld="product" data-product-cell class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs">
+                                    <option value="">Seleccionar articulo del catalogo (o escribir abajo)</option>
+                                    ${opts}
+                                </select>
                                 <textarea data-fld="desc" rows="2" class="w-full resize-none rounded-md border border-outline-variant/45 px-3 py-2 text-sm" placeholder="Nombre o descripcion del item">${escapeHtml(
                                     line.description || ''
                                 )}</textarea>
@@ -6828,9 +6976,12 @@ const renderFacturasModule = async () => {
                     <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="dup" data-id="${
                         invoice.id
                     }">Duplicar</button>
-                    <button type="button" class="rounded border border-primary/40 px-2 py-1 text-xs text-primary" data-inv-action="pdf" data-id="${
+                    <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary font-medium hover:bg-primary/5" data-inv-action="a4" data-id="${
                         invoice.id
-                    }" title="Imprimir o guardar como PDF">PDF</button>
+                    }" title="Imprimir en hoja A4 (con opcion Guardar como PDF)">A4</button>
+                    <button type="button" class="rounded border border-amber-700/50 px-2 py-1 text-xs text-amber-800 font-medium hover:bg-amber-50" data-inv-action="thermal" data-id="${
+                        invoice.id
+                    }" title="Imprimir Ticket Termico POS (80mm)">Ticket</button>
                     <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-action="doc-html" data-id="${
                         invoice.id
                     }" title="Descargar HTML del documento">HTML</button>
@@ -7081,18 +7232,10 @@ const renderFacturasModule = async () => {
                                     <option value="debit_note">Nota de debito</option>
                                 </select>
                             </label>
-                            <label class="text-xs font-semibold text-on-surface-variant">Plantilla
-                                <div class="mt-1 flex gap-2">
-                                    <select id="factura-template" class="min-w-0 flex-1 rounded-md border border-outline-variant/40 px-2 py-2 text-sm">
-                                        ${docTemplates.map((t) => `<option value="${escapeHtml(t.id)}" ${docSettings.templateId === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
-                                    </select>
-                                    <button type="button" id="factura-template-save" class="rounded-md border border-outline-variant/50 px-3 py-2 text-xs font-semibold text-primary">Cambiar</button>
-                                </div>
-                            </label>
                             <label class="text-xs font-semibold text-on-surface-variant">Fecha de factura
                                 <input id="factura-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" />
                             </label>
-                            <label class="text-xs font-semibold text-on-surface-variant">Fecha de vencimiento
+                            <label class="text-xs font-semibold text-on-surface-variant sm:col-span-2">Fecha de vencimiento
                                 <input id="factura-due-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm" />
                             </label>
                             <label class="hidden text-xs font-semibold text-on-surface-variant sm:col-span-2" id="factura-parent-wrap">Documento padre (NC/ND)
@@ -7167,19 +7310,14 @@ const renderFacturasModule = async () => {
             </div>
         </div>`;
 
-    const syncLineRowUi = (tr) => {
-        if (!tr) return;
-        const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
-        const cell = tr.querySelector('[data-product-cell]');
-        if (cell) cell.classList.toggle('hidden', kind !== 'product');
-    };
+    const syncLineRowUi = (_tr) => {};
 
     const collectLines = () => {
         const rows = [...document.querySelectorAll('[data-inv-line]')];
         const out = [];
         for (const tr of rows) {
-            const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
             const productId = tr.querySelector('[data-fld="product"]')?.value || null;
+            const kind = tr.querySelector('[data-fld="kind"]')?.value || (productId ? 'product' : 'service');
             const description = tr.querySelector('[data-fld="desc"]')?.value?.trim() || '';
             const quantity = Number(tr.querySelector('[data-fld="qty"]')?.value || 0);
             const unitPrice = Number(tr.querySelector('[data-fld="price"]')?.value || 0);
@@ -7188,7 +7326,7 @@ const renderFacturasModule = async () => {
             if (!description && !productId) continue;
             if (quantity <= 0) continue;
             const item = { description, quantity, unitPrice, taxRate, discount, lineKind: kind };
-            if (kind === 'product' && productId) {
+            if (productId) {
                 item.productId = productId;
                 const selEl = tr.querySelector('[data-fld="product"]');
                 const opt = selEl?.selectedOptions?.[0];
@@ -7306,11 +7444,6 @@ const renderFacturasModule = async () => {
     document.getElementById('factura-issue-btn-top')?.addEventListener('click', () => {
         document.getElementById('factura-issue-btn')?.click();
     });
-    document.getElementById('factura-template-save')?.addEventListener('click', async () => {
-        const templateId = document.getElementById('factura-template')?.value || docSettings.templateId;
-        await persistFacturaTemplateChoice(templateId);
-        window.ZyronDialog.alert('Plantilla actualizada.');
-    });
     document.getElementById('factura-add-line')?.addEventListener('click', () => {
         const tbody = document.getElementById('facturas-lines-tbody');
         tbody.insertAdjacentHTML('beforeend', invoiceShelfLineRowTemplate({}));
@@ -7322,26 +7455,24 @@ const renderFacturasModule = async () => {
     document.getElementById('facturas-lines-tbody')?.addEventListener('change', (e) => {
         const t = e.target;
         const tr = t.closest('[data-inv-line]');
-        if (t.matches('[data-fld="kind"]')) syncLineRowUi(tr);
         if (t.matches('[data-fld="product"]')) {
             const opt = t.selectedOptions[0];
-            const price = Number(opt?.getAttribute('data-price') || 0);
-            const tax = Number(opt?.getAttribute('data-tax') ?? fallbackTax);
-            const disc = Number(opt?.getAttribute('data-disc') ?? 0);
-            const itemKind = String(opt?.getAttribute('data-item-kind') || 'product').toLowerCase();
-            const label = opt?.getAttribute('data-label') || '';
-            const desc = tr.querySelector('[data-fld="desc"]');
-            if (desc && !desc.value.trim()) desc.value = label;
-            const pr = tr.querySelector('[data-fld="price"]');
-            if (pr && !Number(pr.value)) pr.value = String(price);
-            const txEl = tr.querySelector('[data-fld="tax"]');
-            if (txEl) txEl.value = String(Number.isFinite(tax) ? tax : fallbackTax);
-            const dEl = tr.querySelector('[data-fld="disc"]');
-            if (dEl) dEl.value = String(Number.isFinite(disc) ? disc : 0);
-            const kindSel = tr.querySelector('[data-fld="kind"]');
-            if (kindSel && itemKind === 'service') {
-                kindSel.value = 'service';
-                syncLineRowUi(tr);
+            if (opt && opt.value) {
+                const price = Number(opt.getAttribute('data-price') || 0);
+                const tax = Number(opt.getAttribute('data-tax') ?? fallbackTax);
+                const disc = Number(opt.getAttribute('data-disc') ?? 0);
+                const itemKind = String(opt.getAttribute('data-item-kind') || 'product').toLowerCase();
+                const label = opt.getAttribute('data-label') || '';
+                const desc = tr.querySelector('[data-fld="desc"]');
+                if (desc) desc.value = label;
+                const pr = tr.querySelector('[data-fld="price"]');
+                if (pr) pr.value = String(price);
+                const txEl = tr.querySelector('[data-fld="tax"]');
+                if (txEl) txEl.value = String(Number.isFinite(tax) ? tax : fallbackTax);
+                const dEl = tr.querySelector('[data-fld="disc"]');
+                if (dEl) dEl.value = String(Number.isFinite(disc) ? disc : 0);
+                const kindEl = tr.querySelector('[data-fld="kind"]');
+                if (kindEl) kindEl.value = itemKind;
             }
         }
         refreshFacturaTotals();
@@ -7373,7 +7504,7 @@ const renderFacturasModule = async () => {
                   : document.getElementById('factura-inv-type').value === 'proforma'
                     ? 'PRO'
                     : 'FAC',
-        templateId: document.getElementById('factura-template')?.value || docSettings.templateId,
+        templateId: docSettings.templateId,
         dueDate: document.getElementById('factura-due-date')?.value || null
     });
     const persistFacturaTemplateChoice = async (templateId) => {
@@ -7586,7 +7717,7 @@ const renderFacturasModule = async () => {
             if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Eliminar fallo.');
             await renderFacturasModule();
         }
-        if (act === 'pdf' || act === 'doc-html') {
+        if (act === 'a4' || act === 'thermal' || act === 'pdf' || act === 'doc-html') {
             const inv = (invoices || []).find((x) => x.id === id);
             if (!inv) return;
             const { data: lineRows } = await dbSelect({
@@ -7594,7 +7725,7 @@ const renderFacturasModule = async () => {
                 filters: [{ op: 'eq', column: 'invoice_id', value: id }]
             });
             const cust = inv.customer_id ? customerById.get(inv.customer_id) : null;
-            const html = buildInvoiceDocumentHtml({
+            const docCtx = {
                 invoice: inv,
                 lines: lineRows || [],
                 customer: cust,
@@ -7602,10 +7733,20 @@ const renderFacturasModule = async () => {
                 branding: docSettings,
                 fiscalTaxLabel: fh.taxLabel,
                 isDraft: String(inv.status || '').toLowerCase() === 'draft'
-            });
-            const fn = `factura-${String(inv.series || 'DOC')}-${String(inv.number || id)}.html`;
-            if (act === 'pdf') await exportInvoiceDocumentPdf(fn.replace(/\.html?$/i, '.pdf'), html);
-            else downloadInvoiceDocumentHtml(fn, html);
+            };
+            const isThermal = act === 'thermal' || (act !== 'a4' && docSettings.templateId === 'thermal');
+            const html = isThermal ? buildInvoiceThermalHtml(docCtx) : buildInvoiceDocumentHtml(docCtx, 'classic');
+            const fn = `factura-${String(inv.series || 'DOC')}-${String(inv.number || id)}${isThermal ? '-ticket' : ''}.html`;
+            if (act === 'doc-html') {
+                downloadInvoiceDocumentHtml(fn, html);
+            } else if (act === 'pdf') {
+                await exportInvoiceDocumentPdf(fn.replace(/\.html?$/i, '.pdf'), html, { format: isThermal ? 'thermal' : 'a4' });
+            } else {
+                await openInvoiceDocumentPreview(html, true, {
+                    format: isThermal ? 'thermal' : 'a4',
+                    title: `Factura ${docCtx.invoice.series || ''}-${docCtx.invoice.number || ''}`
+                });
+            }
         }
     });
 
@@ -7864,13 +8005,11 @@ const renderPresupuestosModule = async () => {
                         <div class="flex gap-3">
                             <span class="material-symbols-outlined mt-2 cursor-move text-lg text-outline" aria-hidden="true">drag_indicator</span>
                             <div class="min-w-0 flex-1 space-y-2">
-                                <div class="grid grid-cols-1 gap-2 sm:grid-cols-[110px_1fr]">
-                                    <select data-fld="kind" class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs">
-                                        <option value="service" ${kind === 'service' ? 'selected' : ''}>Servicio</option>
-                                        <option value="product" ${kind === 'product' ? 'selected' : ''}>Producto</option>
-                                    </select>
-                                    <select data-fld="product" data-product-cell class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs ${kind === 'product' ? '' : 'hidden'}"><option value="">Seleccionar item</option>${opts}</select>
-                                </div>
+                                <input type="hidden" data-fld="kind" value="${escapeHtml(kind)}" />
+                                <select data-fld="product" data-product-cell class="w-full rounded-md border border-outline-variant/45 bg-white px-2 py-2 text-xs">
+                                    <option value="">Seleccionar articulo del catalogo (o escribir abajo)</option>
+                                    ${opts}
+                                </select>
                                 <textarea data-fld="desc" rows="2" class="w-full resize-none rounded-md border border-outline-variant/45 px-3 py-2 text-sm" placeholder="Nombre o descripcion del item">${escapeHtml(
                                     line.description || ''
                                 )}</textarea>
@@ -7939,7 +8078,8 @@ const renderPresupuestosModule = async () => {
                             : ''
                     }
                     <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="dup" data-id="${est.id}">Duplicar</button>
-                    <button type="button" class="rounded border border-primary/40 px-2 py-1 text-xs text-primary" data-est-action="pdf" data-id="${est.id}">PDF</button>
+                    <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary font-medium hover:bg-primary/5" data-est-action="a4" data-id="${est.id}" title="Imprimir en hoja A4">A4</button>
+                    <button type="button" class="rounded border border-amber-700/50 px-2 py-1 text-xs text-amber-800 font-medium hover:bg-amber-50" data-est-action="thermal" data-id="${est.id}" title="Imprimir Ticket Termico POS">Ticket</button>
                     <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="html" data-id="${est.id}">HTML</button>
                     ${
                         st === 'draft' || st === 'pending' || st === 'rejected'
@@ -8017,14 +8157,6 @@ const renderPresupuestosModule = async () => {
                         <label class="text-xs font-semibold text-on-surface-variant">Fecha de expiracion
                             <input id="estimate-expiry-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" />
                         </label>
-                        <label class="text-xs font-semibold text-on-surface-variant sm:col-span-2">Plantilla
-                            <div class="mt-1 flex gap-2">
-                                <select id="estimate-template" class="min-w-0 flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
-                                    ${docTemplates.map((t) => `<option value="${escapeHtml(t.id)}" ${docSettings.templateId === t.id ? 'selected' : ''}>${escapeHtml(t.label)}</option>`).join('')}
-                                </select>
-                                <button type="button" id="estimate-template-save" class="rounded-md border border-outline-variant/50 px-3 py-2 text-xs font-semibold text-primary">Cambiar</button>
-                            </div>
-                        </label>
                     </div>
                 </div>
                 <div class="overflow-x-auto rounded-md border border-outline-variant/30 bg-white shadow-sm">
@@ -8083,16 +8215,12 @@ const renderPresupuestosModule = async () => {
             </div>
         </div>`;
 
-    const syncLineRowUi = (tr) => {
-        if (!tr) return;
-        const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
-        tr.querySelector('[data-product-cell]')?.classList.toggle('hidden', kind !== 'product');
-    };
+    const syncLineRowUi = (_tr) => {};
     const collectLines = () => {
         const out = [];
         for (const tr of document.querySelectorAll('[data-est-line]')) {
-            const kind = tr.querySelector('[data-fld="kind"]')?.value || 'service';
             const productId = tr.querySelector('[data-fld="product"]')?.value || null;
+            const kind = tr.querySelector('[data-fld="kind"]')?.value || (productId ? 'product' : 'service');
             const description = tr.querySelector('[data-fld="desc"]')?.value?.trim() || '';
             const quantity = Number(tr.querySelector('[data-fld="qty"]')?.value || 0);
             const unitPrice = Number(tr.querySelector('[data-fld="price"]')?.value || 0);
@@ -8100,7 +8228,12 @@ const renderPresupuestosModule = async () => {
             const discount = Number(tr.querySelector('[data-fld="disc"]')?.value || 0);
             if ((!description && !productId) || quantity <= 0) continue;
             const item = { description, quantity, unitPrice, taxRate, discount, lineKind: kind };
-            if (kind === 'product' && productId) item.productId = productId;
+            if (productId) {
+                item.productId = productId;
+                const selEl = tr.querySelector('[data-fld="product"]');
+                const opt = selEl?.selectedOptions?.[0];
+                if (opt && !description) item.description = opt.getAttribute('data-label') || 'Producto';
+            }
             out.push(item);
         }
         return out;
@@ -8193,12 +8326,9 @@ const renderPresupuestosModule = async () => {
             items,
             notes: document.getElementById('estimate-notes').value || '',
             dueDate: document.getElementById('estimate-expiry-date')?.value || null,
-            templateId: document.getElementById('estimate-template')?.value || docSettings.templateId,
+            templateId: docSettings.templateId,
             invoiceType: 'estimate'
         };
-        if (payload.templateId && payload.templateId !== docSettings.templateId) {
-            await invoiceDocumentBrandingUpsertViaDb(tid, { ...docSettings, templateId: payload.templateId });
-        }
         const res = !id
             ? await invokeFn('create-invoice-with-stock', {
                   ...payload,
@@ -8233,13 +8363,6 @@ const renderPresupuestosModule = async () => {
     document.getElementById('estimate-issue-btn-top')?.addEventListener('click', () => {
         document.getElementById('estimate-issue-btn')?.click();
     });
-    document.getElementById('estimate-template-save')?.addEventListener('click', async () => {
-        const templateId = document.getElementById('estimate-template')?.value || docSettings.templateId;
-        if (templateId && templateId !== docSettings.templateId) {
-            await invoiceDocumentBrandingUpsertViaDb(tid, { ...docSettings, templateId });
-        }
-        window.ZyronDialog.alert('Plantilla actualizada.');
-    });
     document.getElementById('estimate-add-line')?.addEventListener('click', () => {
         const tbody = document.getElementById('estimates-lines-tbody');
         tbody.insertAdjacentHTML('beforeend', estimateShelfLineRowTemplate({}));
@@ -8249,22 +8372,20 @@ const renderPresupuestosModule = async () => {
     document.getElementById('estimates-lines-tbody')?.addEventListener('change', (e) => {
         const t = e.target;
         const tr = t.closest('[data-est-line]');
-        if (t.matches('[data-fld="kind"]')) syncLineRowUi(tr);
         if (t.matches('[data-fld="product"]')) {
             const opt = t.selectedOptions[0];
-            const desc = tr.querySelector('[data-fld="desc"]');
-            if (desc && !desc.value.trim()) desc.value = opt?.getAttribute('data-label') || '';
-            const price = tr.querySelector('[data-fld="price"]');
-            if (price && !Number(price.value)) price.value = String(Number(opt?.getAttribute('data-price') || 0));
-            const tax = tr.querySelector('[data-fld="tax"]');
-            if (tax) tax.value = String(Number(opt?.getAttribute('data-tax') || fallbackTax));
-            const disc = tr.querySelector('[data-fld="disc"]');
-            if (disc) disc.value = String(Number(opt?.getAttribute('data-disc') || 0));
-            const itemKind = String(opt?.getAttribute('data-item-kind') || 'product').toLowerCase();
-            if (itemKind === 'service') {
-                const kindSel = tr.querySelector('[data-fld="kind"]');
-                if (kindSel) kindSel.value = 'service';
-                syncLineRowUi(tr);
+            if (opt && opt.value) {
+                const desc = tr.querySelector('[data-fld="desc"]');
+                if (desc) desc.value = opt.getAttribute('data-label') || '';
+                const price = tr.querySelector('[data-fld="price"]');
+                if (price) price.value = String(Number(opt.getAttribute('data-price') || 0));
+                const tax = tr.querySelector('[data-fld="tax"]');
+                if (tax) tax.value = String(Number(opt.getAttribute('data-tax') || fallbackTax));
+                const disc = tr.querySelector('[data-fld="disc"]');
+                if (disc) disc.value = String(Number(opt.getAttribute('data-disc') || 0));
+                const itemKind = String(opt.getAttribute('data-item-kind') || 'product').toLowerCase();
+                const kindEl = tr.querySelector('[data-fld="kind"]');
+                if (kindEl) kindEl.value = itemKind;
             }
         }
         refreshEstimateTotals();
@@ -8375,23 +8496,34 @@ const renderPresupuestosModule = async () => {
             if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Eliminar fallo.');
             await renderPresupuestosModule();
         }
-        if (act === 'pdf' || act === 'html') {
+        if (act === 'a4' || act === 'thermal' || act === 'pdf' || act === 'html') {
             const { data: lineRows } = await dbSelect({
                 table: 'invoice_items',
                 filters: [{ op: 'eq', column: 'invoice_id', value: id }]
             });
-            const html = buildInvoiceDocumentHtml({
+            const cust = est.customer_id ? customerById.get(est.customer_id) : null;
+            const docCtx = {
                 invoice: est,
                 lines: lineRows || [],
-                customer: est.customer_id ? customerById.get(est.customer_id) : null,
+                customer: cust,
                 tenant: tenantRow,
                 branding: docSettings,
                 fiscalTaxLabel: fh.taxLabel,
                 isDraft: String(est.status || '').toLowerCase() === 'draft'
-            });
-            const fn = `presupuesto-${String(est.series || 'COT')}-${String(est.number || id)}.html`;
-            if (act === 'pdf') await exportInvoiceDocumentPdf(fn.replace(/\.html?$/i, '.pdf'), html);
-            else downloadInvoiceDocumentHtml(fn, html);
+            };
+            const isThermal = act === 'thermal' || (act !== 'a4' && docSettings.templateId === 'thermal');
+            const html = isThermal ? buildInvoiceThermalHtml(docCtx) : buildInvoiceDocumentHtml(docCtx, 'classic');
+            const fn = `presupuesto-${String(est.series || 'COT')}-${String(est.number || id)}${isThermal ? '-ticket' : ''}.html`;
+            if (act === 'html') {
+                downloadInvoiceDocumentHtml(fn, html);
+            } else if (act === 'pdf') {
+                await exportInvoiceDocumentPdf(fn.replace(/\.html?$/i, '.pdf'), html, { format: isThermal ? 'thermal' : 'a4' });
+            } else {
+                await openInvoiceDocumentPreview(html, true, {
+                    format: isThermal ? 'thermal' : 'a4',
+                    title: `Presupuesto ${docCtx.invoice.series || ''}-${docCtx.invoice.number || ''}`
+                });
+            }
         }
     });
     document.getElementById('estimate-history-close')?.addEventListener('click', () => {
@@ -9689,7 +9821,7 @@ const renderInventarioModule = async () => {
                     <tr class="border-b border-outline-variant/30">
                         <th class="py-2">SKU</th><th class="py-2">Nombre</th><th class="py-2">Tipo</th>
                         <th class="py-2 text-right">Precio</th><th class="py-2 text-right">Costo</th><th class="py-2 text-right">Stock</th>
-                        <th class="py-2">Stock auto</th><th class="py-2 text-right">IVA %</th><th class="py-2 text-right">Desc.</th>
+                        <th class="py-2">Stock auto</th><th class="py-2 text-right">ITBIS %</th><th class="py-2 text-right">Desc.</th>
                         <th class="py-2">Categoria</th><th class="py-2">Unidad</th><th class="py-2 text-right"></th>
                     </tr>
                 </thead>
@@ -9773,7 +9905,7 @@ const renderInventarioModule = async () => {
             <label class="block text-sm">Stock minimo alerta<input name="min_stock" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
                 fc.min_stock != null ? String(fc.min_stock) : '0'
             )}" /></label>
-            <label class="block text-sm">IVA % sugerido en factura<input name="tax_rate_default" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
+            <label class="block text-sm">ITBIS % sugerido en factura<input name="tax_rate_default" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
                 fc.tax_rate_default != null && fc.tax_rate_default !== '' ? String(fc.tax_rate_default) : '18'
             )}" /></label>
             <label class="block text-sm">Descuento fijo sugerido<input name="discount_default" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
@@ -10107,7 +10239,7 @@ const renderFiscalModule = async (opts = {}) => {
             ? ''
             : renderModuleHeader(
                   'Impuestos y cumplimiento',
-                  'ITBIS/IVA, precios con/sin impuesto incluido, retenciones, NCF (RD) y estado de facturacion electronica.'
+                  'ITBIS, precios con/sin impuesto incluido, retenciones, NCF (RD) y estado de facturacion electronica.'
               )
     }<div class="mb-3 flex flex-wrap gap-2">${tabBtn('general', 'General')}${tabBtn('tasas', 'Tasas')}${tabBtn('ncf', 'NCF')}${tabBtn(
         'cumplimiento',
@@ -13022,7 +13154,7 @@ const activateSuperAdminPanel = async () => {
 document.getElementById('titlebar-logo-btn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     e.stopPropagation();
-    if (state.isSuperAdmin && state.isGlobalAccess && !state.isImpersonating) {
+    if (state.appUser || state.sessionUser) {
         return;
     }
     const authorized = await promptAdminAccess();

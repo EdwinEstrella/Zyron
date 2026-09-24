@@ -1093,11 +1093,12 @@ ipcMain.handle('desktop:open-html-preview', async (_event, payload = {}) => {
     if (!html.trim()) throw new Error('HTML requerido para vista previa')
     const title = sanitizePreviewTitle(payload.title)
     const autoPrint = typeof payload.autoPrint === 'boolean' ? payload.autoPrint : false
+    const isThermal = payload.format === 'thermal' || payload.isThermal || html.includes('ticket-thermal')
 
     const previewWindow = new BrowserWindow({
-      width: 900,
-      height: 720,
-      minWidth: 640,
+      width: isThermal ? 440 : 900,
+      height: isThermal ? 760 : 720,
+      minWidth: isThermal ? 360 : 640,
       minHeight: 480,
       title,
       parent: mainWindow || undefined,
@@ -1135,8 +1136,11 @@ ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
       filters: [{ name: 'PDF', extensions: ['pdf'] }]
     })
     if (target.canceled || !target.filePath) return { data: { ok: false, canceled: true }, error: null }
+    const isThermal = payload.format === 'thermal' || payload.isThermal || html.includes('ticket-thermal')
     pdfWindow = new BrowserWindow({
       show: false,
+      width: isThermal ? 440 : 900,
+      height: isThermal ? 800 : 720,
       webPreferences: {
         sandbox: true,
         contextIsolation: true,
@@ -1147,8 +1151,8 @@ ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
     await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
     const pdf = await pdfWindow.webContents.printToPDF({
       printBackground: true,
-      pageSize: 'A4',
-      margins: { marginType: 'default' }
+      pageSize: isThermal ? { width: 80000, height: 260000 } : 'A4',
+      margins: isThermal ? { marginType: 'none' } : { marginType: 'default' }
     })
     await fs.promises.writeFile(target.filePath, pdf)
     return { data: { ok: true, path: target.filePath }, error: null }
