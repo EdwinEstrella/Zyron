@@ -47,10 +47,29 @@ test('auth IPC and realtime foundation are present', () => {
 test('invoice and customer forms do not expose duplicate create controls', () => {
   const rendererJs = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8')
 
-  expect(rendererJs.match(/id="factura-new-btn/g) || []).toHaveLength(1)
-  expect(rendererJs.match(/id="estimate-new-btn/g) || []).toHaveLength(1)
-  expect(rendererJs.match(/id="cli-new-btn/g) || []).toHaveLength(1)
+  // Create-button ids now live inside ZyronActionBar config objects
+  // (`id: 'factura-new-btn-top'`) instead of raw HTML attributes
+  // (`id="factura-new-btn-top"`). Either shape still proves there is only
+  // one create control declared per module.
+  expect(rendererJs.match(/(id="|id: ')factura-new-btn/g) || []).toHaveLength(1)
+  expect(rendererJs.match(/(id="|id: ')estimate-new-btn/g) || []).toHaveLength(1)
+  expect(rendererJs.match(/(id="|id: ')cli-new-btn/g) || []).toHaveLength(1)
   expect(rendererJs).not.toContain('const lineRowTemplate =')
+})
+
+test('pilot modules wire the shared standard action bar', () => {
+  const rendererJs = fs.readFileSync(path.join(root, 'renderer.js'), 'utf8')
+  const indexHtml = fs.readFileSync(path.join(root, 'index.html'), 'utf8')
+
+  expect(fs.existsSync(path.join(root, 'components/action-bar.js'))).toBe(true)
+  expect(indexHtml).toMatch(/<script src="\.\/components\/action-bar\.js">\s*<\/script>\s*<script src="\.\/renderer\.js">/)
+
+  expect(rendererJs).toContain('FACTURA_BAR')
+  expect(rendererJs).toContain('ESTIMATE_BAR')
+  expect(rendererJs).toContain('CLIENTE_BAR')
+  expect((rendererJs.match(/ZyronActionBar\.render\(/g) || []).length).toBeGreaterThanOrEqual(3)
+  expect(rendererJs).toContain('loadTenantPermissions')
+  expect(rendererJs).toContain('ZyronActionBar.permissions.reset()')
 })
 
 test('tenant settings are loaded from database preferences and applied at runtime', () => {

@@ -165,7 +165,6 @@ const DEFAULT_PERMISSION_UI = Object.freeze([
     { key: 'projects.manage', label: 'Gestion de Proyectos' },
     { key: 'mrp.manage', label: 'Produccion y Manufactura' },
     { key: 'scm.manage', label: 'Cadena de Suministro / Compras' },
-    { key: 'ecommerce.manage', label: 'Comercio Electronico (E-commerce)' },
     { key: 'quality.manage', label: 'Gestion de Calidad' },
     { key: 'dms.manage', label: 'Gestion Documental' }
 ]);
@@ -189,7 +188,6 @@ const DEFAULT_NAV_TENANT = Object.freeze([
     { key: 'proyectos', label: 'Proyectos', icon: 'assignment' },
     { key: 'produccion', label: 'Producción', icon: 'precision_manufacturing' },
     { key: 'cadena_suministro', label: 'Cadena Suministro', icon: 'local_shipping' },
-    { key: 'ecommerce', label: 'E-commerce', icon: 'storefront' },
     { key: 'calidad', label: 'Calidad', icon: 'verified' },
     { key: 'documental', label: 'Gestión Documental', icon: 'folder_shared' },
     { key: 'reportes', label: 'Reportes', icon: 'monitoring' },
@@ -899,7 +897,7 @@ const renderInvoiceDetailScreen = async (invoiceId) => {
         window.ZyronDialog.alert('No se pudo abrir el detalle de la factura.');
         return;
     }
-    dashboardContent.innerHTML = renderModuleHeader('Factura', 'Cargando detalle…');
+    dashboardContent.innerHTML = '<p class="p-5 text-sm text-on-surface-variant">Cargando detalle…</p>';
 
     const [{ data: invRows }, { data: itemRows }, { data: allocRows }, { data: entryRows }] = await Promise.all([
         dbSelect({ table: 'invoices', filters: [{ op: 'eq', column: 'id', value: invoiceId }], limit: 1 }),
@@ -1147,7 +1145,7 @@ const renderInvoiceDetailScreen = async (invoiceId) => {
 const renderAccountLedgerScreen = async (accountId, opts = {}) => {
     const tid = state.currentTenantId;
     if (!accountId || !tid) return;
-    dashboardContent.innerHTML = renderModuleHeader('Libro mayor', 'Cargando movimientos…');
+    dashboardContent.innerHTML = '<p class="p-5 text-sm text-on-surface-variant">Cargando movimientos…</p>';
 
     const accountById = await fetchAccountsMap(tid);
     const account = accountById.get(accountId);
@@ -1487,7 +1485,6 @@ const ZYRON_VIEW_KEYS = new Set([
     'proyectos',
     'produccion',
     'cadena_suministro',
-    'ecommerce',
     'calidad',
     'documental',
     'pagos',
@@ -1518,7 +1515,6 @@ const ZYRON_MODULE_FRAGMENTS = {
     proyectos: 'fragments/outlet-skeleton.html',
     produccion: 'fragments/outlet-skeleton.html',
     cadena_suministro: 'fragments/outlet-skeleton.html',
-    ecommerce: 'fragments/outlet-skeleton.html',
     calidad: 'fragments/outlet-skeleton.html',
     documental: 'fragments/outlet-skeleton.html',
     pagos: 'fragments/outlet-skeleton.html',
@@ -1546,7 +1542,6 @@ const zyronModuleLabel = (moduleKey) =>
             proyectos: 'Proyectos',
             produccion: 'Producción',
             cadena_suministro: 'Cadena Suministro',
-            ecommerce: 'E-commerce',
             calidad: 'Calidad',
             documental: 'Gestión Documental',
             pagos: 'Pagos',
@@ -1720,6 +1715,23 @@ const loadTenantPreferences = async (tenantId) => {
     return state.tenantPreferences;
 };
 
+// Fetches the current user's effective fine-grained permission set once per
+// session/tenant switch (never per module or per button render) and caches it
+// in window.ZyronActionBar.permissions. This is a UI-only, advisory check —
+// check_user_permission()/permission_satisfies() in the database remain the
+// real security boundary.
+const loadTenantPermissions = async (tenantId) => {
+    if (!tenantId) {
+        window.ZyronActionBar.permissions.reset();
+        return;
+    }
+    const keys = window.ZyronActionBar.keysFor([FACTURA_BAR, ESTIMATE_BAR, CLIENTE_BAR]);
+    await window.ZyronActionBar.permissions.load(tenantId, keys, async (key) => {
+        const { data } = await dbRpc('check_user_permission', { p_tenant_id: tenantId, p_permission_key: key });
+        return data === true;
+    });
+};
+
 const switchWorkspaceTenant = async (tenantId) => {
     const row = state.membershipsList.find((m) => String(m.tenant_id) === String(tenantId));
     if (!row) return;
@@ -1739,6 +1751,7 @@ const switchWorkspaceTenant = async (tenantId) => {
     state._rtTenantChannel = ch;
     await loadTenantContext(row.tenant_id);
     await loadTenantPreferences(row.tenant_id);
+    await loadTenantPermissions(row.tenant_id);
     await loadUiCatalogsFromDb();
     await renderSidebar();
     renderTenantContextBar();
@@ -1824,9 +1837,10 @@ const stopImpersonation = async () => {
         
         await loadTenantContext(null);
         await loadTenantPreferences(null);
+        await loadTenantPermissions(null);
         await renderSidebar();
         updateSessionNoticeBanner();
-        
+
         await openModule('empresas');
     } catch (err) {
         console.error('[Zyron:stopImpersonation]', err);
@@ -2308,7 +2322,6 @@ const ZYRON_I18N = Object.freeze({
         'nav.proyectos': 'Proyectos',
         'nav.produccion': 'Producción',
         'nav.cadena_suministro': 'Cadena Suministro',
-        'nav.ecommerce': 'E-commerce',
         'nav.calidad': 'Calidad',
         'nav.documental': 'Gestión Documental',
         'nav.reports': 'Reportes',
@@ -2336,7 +2349,6 @@ const ZYRON_I18N = Object.freeze({
         'nav.proyectos': 'Proyectos',
         'nav.produccion': 'Producción',
         'nav.cadena_suministro': 'Cadena Suministro',
-        'nav.ecommerce': 'E-commerce',
         'nav.calidad': 'Calidad',
         'nav.documental': 'Gestión Documental',
         'nav.reports': 'Reportes',
@@ -2366,7 +2378,6 @@ const NAV_LABEL_KEYS = Object.freeze({
     proyectos: 'nav.proyectos',
     produccion: 'nav.produccion',
     cadena_suministro: 'nav.cadena_suministro',
-    ecommerce: 'nav.ecommerce',
     calidad: 'nav.calidad',
     documental: 'nav.documental',
     reportes: 'nav.reports',
@@ -2587,12 +2598,14 @@ const bootstrapSession = async () => {
             }
             await loadTenantContext(state.currentTenantId);
             await loadTenantPreferences(state.currentTenantId);
+            await loadTenantPermissions(state.currentTenantId);
         }
     } else {
         state.membership = null;
         state.currentTenantId = null;
         state.membershipsList = [];
         await loadTenantPreferences(null);
+        await loadTenantPermissions(null);
     }
 
     if (!pendingGate) {
@@ -2720,17 +2733,9 @@ const refreshSidebarSelection = () => {
     });
 };
 
-const renderModuleHeader = (title, subtitle) => {
-    const rp = getSessionRolePresentation();
-    return `
-    <div class="flex flex-col justify-between gap-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-5 sm:flex-row sm:items-center">
-        <div>
-            <h2 class="text-2xl font-bold tracking-tight text-primary">${title}</h2>
-            <p class="mt-1 text-sm text-on-surface-variant">${subtitle}</p>
-        </div>
-    </div>
-`;
-};
+// Module title cards were removed from every screen; the sidebar already shows the active module.
+// Kept as a no-op so existing call sites stay valid.
+const renderModuleHeader = (_title, _subtitle) => '';
 
 const fmtMoneyPanel = (n, currencyCode = null) => {
     const x = Number(n);
@@ -7485,6 +7490,38 @@ const exportInvoiceDocumentPdf = async (filename, html, options = {}) => {
     openInvoiceDocumentPreview(html, true, options);
 };
 
+// Standard action bar config for Facturas — see components/action-bar.js.
+// isLocked mirrors the pre-existing status checks 1:1: Edit stays enabled only
+// on draft; Void (Eliminar) stays enabled on draft/pending.
+const FACTURA_BAR = {
+    module: 'invoices',
+    actionAttr: 'data-inv-action',
+    lockedTitle: 'No disponible: la factura ya no esta en borrador o pendiente',
+    isLocked: (doc, action) => {
+        const st = String(doc?.status || '').toLowerCase();
+        if (action === 'edit') return st !== 'draft';
+        if (action === 'void') return !(st === 'draft' || st === 'pending');
+        return false;
+    },
+    buttons: [
+        { action: 'create', slot: 'toolbar', id: 'factura-new-btn-top', label: 'Crear factura', className: 'rounded-md bg-primary px-3 py-2 text-sm text-white' },
+        {
+            action: 'authorize',
+            slot: 'primary',
+            verb: 'issue',
+            label: 'Emitir',
+            className: 'rounded-md border px-2 py-1 text-xs font-medium transition-colors border-success/50 bg-success/5 text-success hover:bg-success/10',
+            when: (doc) => String(doc?.status || '').toLowerCase() === 'draft'
+        },
+        { action: 'edit', slot: 'more', verb: 'edit', label: 'Editar', className: 'rounded-md border px-2 py-1 text-xs font-medium transition-colors border-outline-variant/40 text-on-surface hover:bg-surface-container-high' },
+        { action: 'create', slot: 'more', verb: 'dup', label: 'Duplicar', className: 'rounded-md border px-2 py-1 text-xs font-medium transition-colors border-outline-variant/40 text-on-surface hover:bg-surface-container-high' },
+        { action: 'print', slot: 'more', verb: 'a4', label: 'A4', title: 'Imprimir en hoja A4', className: 'rounded-md border px-2 py-1 text-xs font-medium transition-colors border-primary/40 text-primary hover:bg-primary/5' },
+        { action: 'print', slot: 'more', verb: 'thermal', label: 'Ticket', title: 'Ticket termico 80mm', className: 'rounded-md border px-2 py-1 text-xs font-medium transition-colors border-amber-700/50 text-amber-800 hover:bg-amber-50' },
+        { action: 'print', slot: 'more', verb: 'doc-html', label: 'HTML', title: 'Descargar HTML', className: 'rounded-md border px-2 py-1 text-xs font-medium transition-colors border-outline-variant/40 text-on-surface hover:bg-surface-container-high' },
+        { action: 'void', slot: 'more', verb: 'del', label: 'Eliminar', className: 'rounded-md border px-2 py-1 text-xs font-medium transition-colors border-error/40 text-error hover:bg-error/5' }
+    ]
+};
+
 const renderFacturasModule = async () => {
     zyronLog('render:facturas:start', { tenantId: state.currentTenantId });
     if (!state.currentTenantId) {
@@ -7623,7 +7660,6 @@ const renderFacturasModule = async () => {
         const cust = invoice.customer_id ? customerById.get(invoice.customer_id) : null;
         const custLabel = cust ? escapeHtml(cust.name || cust.email || '') : '<span class="text-on-surface-variant">Consumidor final</span>';
         const doc = `${escapeHtml(invoice.series || '')}-${escapeHtml(invoice.number || '')}`;
-        const st = String(invoice.status || '').toLowerCase();
         const cur = invoice.currency || 'DOP';
         const miniBtn = 'rounded-md border px-2 py-1 text-xs font-medium transition-colors';
         return `<tr class="group border-b border-outline-variant/15 transition-colors hover:bg-primary/[0.04]" data-invoice-row="${invoice.id}">
@@ -7637,18 +7673,13 @@ const renderFacturasModule = async () => {
                 <td class="py-2.5 text-right whitespace-nowrap">
                     <div class="inline-flex items-center gap-1">
                         <button type="button" class="${miniBtn} border-primary/50 bg-primary/5 text-primary hover:bg-primary/10" data-inv-action="detail" data-id="${invoice.id}" aria-label="Ver detalle de ${doc}">Ver</button>
-                        ${st === 'draft' ? `<button type="button" class="${miniBtn} border-success/50 bg-success/5 text-success hover:bg-success/10" data-inv-action="issue" data-id="${invoice.id}">Emitir</button>` : ''}
+                        ${window.ZyronActionBar.render(FACTURA_BAR, { slot: 'primary', doc: invoice })}
                         <button type="button" class="flex h-7 w-7 items-center justify-center rounded-md border border-outline-variant/40 text-on-surface-variant hover:bg-surface-container-high" data-inv-action="menu" data-id="${invoice.id}" title="Más acciones" aria-label="Más acciones"><span class="material-symbols-outlined text-base">more_vert</span></button>
                     </div>
                     <div data-inv-more="${invoice.id}" class="mt-2 hidden flex-wrap justify-end gap-1 rounded-lg border border-outline-variant/25 bg-surface-container-low p-2">
                         <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="accounting" data-id="${invoice.id}">Asiento contable</button>
                         <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="history" data-id="${invoice.id}">Historial</button>
-                        ${st === 'draft' ? `<button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="edit" data-id="${invoice.id}">Editar</button>` : ''}
-                        <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="dup" data-id="${invoice.id}">Duplicar</button>
-                        <button type="button" class="${miniBtn} border-primary/40 text-primary hover:bg-primary/5" data-inv-action="a4" data-id="${invoice.id}" title="Imprimir en hoja A4">A4</button>
-                        <button type="button" class="${miniBtn} border-amber-700/50 text-amber-800 hover:bg-amber-50" data-inv-action="thermal" data-id="${invoice.id}" title="Ticket térmico 80mm">Ticket</button>
-                        <button type="button" class="${miniBtn} border-outline-variant/40 text-on-surface hover:bg-surface-container-high" data-inv-action="doc-html" data-id="${invoice.id}" title="Descargar HTML">HTML</button>
-                        ${st === 'draft' || st === 'pending' ? `<button type="button" class="${miniBtn} border-error/40 text-error hover:bg-error/5" data-inv-action="del" data-id="${invoice.id}">Eliminar</button>` : ''}
+                        ${window.ZyronActionBar.render(FACTURA_BAR, { slot: 'more', doc: invoice })}
                     </div>
                 </td>
             </tr>`;
@@ -7707,9 +7738,10 @@ const renderFacturasModule = async () => {
                     <h3 class="text-sm font-bold text-primary">Facturacion</h3>
                     <p class="mt-1 text-xs text-on-surface-variant">Crea una factura nueva desde aqui y luego completa las lineas, cliente y emision.</p>
                 </div>
-                <button type="button" id="factura-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear factura</button>
+                ${window.ZyronActionBar.render(FACTURA_BAR, { slot: 'toolbar' })}
             </div>
         </div>
+        ${window.ZyronActionBar.can(FACTURA_BAR, 'search') ? `
         <div class="mb-3 rounded-xl border border-outline-variant/25 bg-surface-container-low p-3">
             <div class="flex flex-col gap-3 lg:flex-row lg:items-end">
                 <div class="flex-1">
@@ -7737,7 +7769,7 @@ const renderFacturasModule = async () => {
                 <button type="button" id="fact-filter-clear" class="rounded-lg border border-outline-variant/50 px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high">Limpiar</button>
             </div>
             <div class="mt-2 text-xs text-on-surface-variant"><span id="fact-filter-count">${filteredInvoices.length}</span> de ${(invoices || []).length} documentos${(invoices || []).length >= 80 ? ' (últimos 80)' : ''}</div>
-        </div>
+        </div>` : ''}
         <div id="facturas-table-wrap" class="overflow-x-auto rounded-xl border border-outline-variant/25">
             <table class="w-full min-w-[860px] text-left text-sm">
                 <thead>
@@ -8708,6 +8740,62 @@ const renderFacturasModule = async () => {
     zyronLog('render:facturas:done', { invoiceCount: (invoices || []).length, tab });
 };
 
+// Standard action bar config for Presupuestos — see components/action-bar.js.
+// isLocked mirrors the pre-existing status checks 1:1: Edit stays enabled only
+// on draft; Void (Eliminar) stays enabled on draft/pending/rejected.
+const ESTIMATE_BAR = {
+    module: 'estimates',
+    actionAttr: 'data-est-action',
+    lockedTitle: 'No disponible: el presupuesto ya no esta en un estado editable',
+    isLocked: (doc, action) => {
+        const st = String(doc?.status || '').toLowerCase();
+        if (action === 'edit') return st !== 'draft';
+        if (action === 'void') return !(st === 'draft' || st === 'pending' || st === 'rejected');
+        return false;
+    },
+    buttons: [
+        { action: 'create', slot: 'toolbar', id: 'estimate-new-btn-top', label: 'Crear presupuesto', className: 'rounded-md bg-primary px-3 py-2 text-sm text-white' },
+        { action: 'edit', slot: 'row', verb: 'edit', label: 'Editar', className: 'rounded border border-outline-variant/40 px-2 py-1 text-xs' },
+        {
+            action: 'authorize',
+            slot: 'row',
+            verb: 'issue',
+            label: 'Emitir',
+            className: 'rounded border border-primary/50 px-2 py-1 text-xs text-primary',
+            when: (doc) => String(doc?.status || '').toLowerCase() === 'draft'
+        },
+        {
+            action: 'authorize',
+            slot: 'row',
+            verb: 'accept',
+            label: 'Aceptar',
+            className: 'rounded border border-primary/40 px-2 py-1 text-xs text-primary',
+            when: (doc) => String(doc?.status || '').toLowerCase() === 'pending'
+        },
+        {
+            action: 'authorize',
+            slot: 'row',
+            verb: 'reject',
+            label: 'Rechazar',
+            className: 'rounded border border-outline-variant/40 px-2 py-1 text-xs',
+            when: (doc) => String(doc?.status || '').toLowerCase() === 'pending'
+        },
+        {
+            action: 'process',
+            slot: 'row',
+            verb: 'convert',
+            label: 'Convertir',
+            className: 'rounded border border-primary/50 px-2 py-1 text-xs text-primary',
+            when: (doc) => ['accepted', 'pending'].includes(String(doc?.status || '').toLowerCase())
+        },
+        { action: 'create', slot: 'row', verb: 'dup', label: 'Duplicar', className: 'rounded border border-outline-variant/40 px-2 py-1 text-xs' },
+        { action: 'print', slot: 'row', verb: 'a4', label: 'A4', title: 'Imprimir en hoja A4', className: 'rounded border border-primary/50 px-2 py-1 text-xs text-primary font-medium hover:bg-primary/5' },
+        { action: 'print', slot: 'row', verb: 'thermal', label: 'Ticket', title: 'Imprimir Ticket Termico POS', className: 'rounded border border-amber-700/50 px-2 py-1 text-xs text-amber-800 font-medium hover:bg-amber-50' },
+        { action: 'print', slot: 'row', verb: 'html', label: 'HTML', className: 'rounded border border-outline-variant/40 px-2 py-1 text-xs' },
+        { action: 'void', slot: 'row', verb: 'del', label: 'Eliminar', className: 'rounded border border-error/40 px-2 py-1 text-xs text-error' }
+    ]
+};
+
 const renderPresupuestosModule = async () => {
     zyronLog('render:presupuestos:start', { tenantId: state.currentTenantId });
     if (!state.currentTenantId) {
@@ -8819,9 +8907,6 @@ const renderPresupuestosModule = async () => {
             const cust = est.customer_id ? customerById.get(est.customer_id) : null;
             const st = String(est.status || '').toLowerCase();
             const doc = `${escapeHtml(est.series || '')}-${escapeHtml(est.number || '')}`.replace(/^-|-$/g, '');
-            const canEdit = st === 'draft';
-            const canDecision = st === 'pending';
-            const canConvert = st === 'accepted' || st === 'pending';
             return `<tr class="border-b border-outline-variant/20" data-est-row="${est.id}">
                 <td class="py-3 font-mono text-xs">${doc || escapeHtml(est.id)}</td>
                 <td class="py-3">${escapeHtml(statusLabel(st))}</td>
@@ -8830,32 +8915,7 @@ const renderPresupuestosModule = async () => {
                 <td class="py-3 text-xs">${escapeHtml(toDateString(est.created_at))}</td>
                 <td class="py-3 text-right space-x-1 whitespace-nowrap">
                     <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="history" data-id="${est.id}">Historial</button>
-                    ${
-                        canEdit
-                            ? `<button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="edit" data-id="${est.id}">Editar</button>
-                               <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-est-action="issue" data-id="${est.id}">Emitir</button>`
-                            : ''
-                    }
-                    ${
-                        canDecision
-                            ? `<button type="button" class="rounded border border-primary/40 px-2 py-1 text-xs text-primary" data-est-action="accept" data-id="${est.id}">Aceptar</button>
-                               <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="reject" data-id="${est.id}">Rechazar</button>`
-                            : ''
-                    }
-                    ${
-                        canConvert
-                            ? `<button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-est-action="convert" data-id="${est.id}">Convertir</button>`
-                            : ''
-                    }
-                    <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="dup" data-id="${est.id}">Duplicar</button>
-                    <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary font-medium hover:bg-primary/5" data-est-action="a4" data-id="${est.id}" title="Imprimir en hoja A4">A4</button>
-                    <button type="button" class="rounded border border-amber-700/50 px-2 py-1 text-xs text-amber-800 font-medium hover:bg-amber-50" data-est-action="thermal" data-id="${est.id}" title="Imprimir Ticket Termico POS">Ticket</button>
-                    <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-est-action="html" data-id="${est.id}">HTML</button>
-                    ${
-                        st === 'draft' || st === 'pending' || st === 'rejected'
-                            ? `<button type="button" class="rounded border border-error/40 px-2 py-1 text-xs text-error" data-est-action="del" data-id="${est.id}">Eliminar</button>`
-                            : ''
-                    }
+                    ${window.ZyronActionBar.render(ESTIMATE_BAR, { slot: 'row', doc: est })}
                 </td>
             </tr>`;
         })
@@ -8871,7 +8931,7 @@ const renderPresupuestosModule = async () => {
                             <h3 class="text-sm font-bold text-primary">Presupuestos comerciales</h3>
                             <p class="mt-1 text-xs text-on-surface-variant">Trabaja propuestas con lineas, impuestos, cliente, PDF/HTML y conversion a factura borrador.</p>
                         </div>
-                        <button type="button" id="estimate-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Crear presupuesto</button>
+                        ${window.ZyronActionBar.render(ESTIMATE_BAR, { slot: 'toolbar' })}
                     </div>
                 </div>
                 <p class="mb-3 text-xs text-on-surface-variant">Emitir marca el presupuesto como pendiente. Aceptar/Rechazar actualiza estado; Convertir crea una factura borrador.</p>
@@ -9734,6 +9794,34 @@ const renderPagosModule = async () => {
     zyronLog('render:pagos:done', { tab, payCount: payRows.length, arCount: arRows.length });
 };
 
+// Standard action bar config for Clientes — see components/action-bar.js.
+// Edit/Void never lock here (customers have no posted/closed status concept);
+// Clientes keeps its non-delegated per-row listener attribute names
+// (data-cli-edit / data-cli-toggle) via `attrs`, so existing bindings keep working.
+const CLIENTE_BAR = {
+    module: 'customers',
+    actionAttr: 'data-cli-action',
+    lockedTitle: '',
+    isLocked: () => false,
+    buttons: [
+        { action: 'create', slot: 'toolbar', id: 'cli-new-btn-top', label: 'Agregar cliente', className: 'rounded-md bg-primary px-3 py-2 text-sm text-white' },
+        {
+            action: 'edit',
+            slot: 'row',
+            label: 'Editar',
+            className: 'rounded border border-primary/40 px-2 py-1 text-xs text-primary',
+            attrs: (doc) => ({ 'data-cli-edit': doc.id })
+        },
+        {
+            action: 'void',
+            slot: 'row',
+            label: (doc) => (doc?.is_active === false ? 'Activar' : 'Desactivar'),
+            className: 'rounded border border-outline-variant/40 px-2 py-1 text-xs',
+            attrs: (doc) => ({ 'data-cli-toggle': doc.id, 'data-active': doc?.is_active === false ? '0' : '1' })
+        }
+    ]
+};
+
 const renderClientesModule = async () => {
     zyronLog('render:clientes:start', { tenantId: state.currentTenantId });
     if (!state.currentTenantId) {
@@ -9833,12 +9921,7 @@ const renderClientesModule = async () => {
                 <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-cli-history="${escapeHtml(
                     c.id
                 )}">Historial</button>
-                <button type="button" class="rounded border border-primary/40 px-2 py-1 text-xs text-primary" data-cli-edit="${escapeHtml(
-                    c.id
-                )}">Editar</button>
-                <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-cli-toggle="${escapeHtml(
-                    c.id
-                )}" data-active="${c.is_active === false ? '0' : '1'}">${c.is_active === false ? 'Activar' : 'Desactivar'}</button>
+                ${window.ZyronActionBar.render(CLIENTE_BAR, { slot: 'row', doc: c })}
             </td>
         </tr>`
         )
@@ -9869,16 +9952,17 @@ const renderClientesModule = async () => {
                     <h3 class="text-sm font-bold text-primary">Gestion de clientes</h3>
                     <p class="mt-1 text-xs text-on-surface-variant">Registra un cliente nuevo aqui y luego podras facturarle, editarlo o revisar su historial.</p>
                 </div>
-                <button type="button" id="cli-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Agregar cliente</button>
+                ${window.ZyronActionBar.render(CLIENTE_BAR, { slot: 'toolbar' })}
             </div>
         </div>
         <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
+            ${window.ZyronActionBar.can(CLIENTE_BAR, 'search') ? `
             <input id="cli-filter-q" type="search" class="max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Buscar nombre, correo, telefono, RNC…" value="${escapeHtml(
                 q
             )}" />
             <select id="cli-filter-seg" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${segmentFilterOpts}</select>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="cli-filter-inactive" ${includeInactive ? 'checked' : ''} /> Incluir inactivos</label>
-            <button type="button" id="cli-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
+            <button type="button" id="cli-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>` : ''}
             <button type="button" id="cli-export-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Exportar CSV</button>
         </div>
         <div class="overflow-x-auto">
@@ -13387,7 +13471,7 @@ const renderConfigModule = async () => {
 };
 
 // ============================================================================
-// MÓDULOS EMPRESARIALES LATAM (RRHH, CRM, PROYECTOS, PRODUCCIÓN, SCM, E-COMMERCE, CALIDAD, DMS)
+// MÓDULOS EMPRESARIALES LATAM (RRHH, CRM, PROYECTOS, PRODUCCIÓN, SCM, CALIDAD, DMS)
 // ============================================================================
 
 const renderEnterpriseTabsNav = (tabs, activeTab, dataAttr = 'data-tab') => `
@@ -14952,258 +15036,7 @@ const renderCadenaSuministroModule = async () => {
 };
 
 // ----------------------------------------------------------------------------
-// 6. E-COMMERCE (TIENDA DIGITAL B2B / B2C)
-// ----------------------------------------------------------------------------
-const renderEcommerceModule = async () => {
-    zyronLog('render:ecommerce:start', { tenantId: state.currentTenantId });
-    if (!state.currentTenantId) {
-        dashboardContent.innerHTML = `${renderModuleHeader('E-commerce', 'Selecciona una empresa para gestionar la tienda online')}`;
-        return;
-    }
-    const tid = state.currentTenantId;
-    if (!state.ecommerceUi) state.ecommerceUi = { tab: 'pedidos', q: '' };
-    const ui = state.ecommerceUi;
-
-    const tabs = [
-        { key: 'pedidos', label: 'Pedidos Web / Online', icon: 'shopping_cart' },
-        { key: 'catalogo', label: 'Catálogo Publicado', icon: 'storefront' },
-        { key: 'configuracion', label: 'Ajustes de Tienda', icon: 'tune' }
-    ];
-
-    let contentHtml = '';
-
-    if (ui.tab === 'pedidos') {
-        const { data: orders = [] } = await dbSelect({
-            table: 'ecom_orders',
-            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
-            order: { column: 'created_at', ascending: false }
-        });
-        contentHtml = `
-            <div class="flex justify-between items-center">
-                <p class="text-sm text-on-surface-variant">Pedidos recibidos desde el portal web o canal de WhatsApp con conversión a factura.</p>
-                <button type="button" id="btn-nuevo-pedido-web" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
-                    <span class="material-symbols-outlined mr-1.5 text-[18px]">add_shopping_cart</span>Simular Pedido Web
-                </button>
-            </div>
-            <div class="overflow-x-auto rounded-xl border border-outline-variant/20 bg-surface-container-lowest shadow-sm">
-                <table class="w-full text-left text-sm">
-                    <thead class="border-b border-outline-variant/20 bg-surface-container-low text-xs font-semibold uppercase tracking-wider text-on-surface-variant">
-                        <tr>
-                            <th class="px-4 py-3">Número Orden</th>
-                            <th class="px-4 py-3">Cliente / WhatsApp</th>
-                            <th class="px-4 py-3">Destino de Entrega</th>
-                            <th class="px-4 py-3 text-right">Total</th>
-                            <th class="px-4 py-3 text-center">Pago</th>
-                            <th class="px-4 py-3 text-center">Despacho</th>
-                        </tr>
-                    </thead>
-                    <tbody class="divide-y divide-outline-variant/10">
-                        ${
-                            orders.length === 0
-                                ? `<tr><td colspan="6" class="px-4 py-8 text-center text-sm text-on-surface-variant">No hay pedidos web registrados en la tienda.</td></tr>`
-                                : orders
-                                      .map(
-                                          (ord) => `
-                            <tr>
-                                <td class="px-4 py-3 font-mono font-bold text-primary">${escapeHtml(ord.order_number)}</td>
-                                <td class="px-4 py-3">
-                                    <div class="font-medium text-on-surface">${escapeHtml(ord.customer_name)}</div>
-                                    <div class="text-xs text-on-surface-variant">${escapeHtml(ord.customer_phone)}</div>
-                                </td>
-                                <td class="px-4 py-3 text-xs text-on-surface-variant">${escapeHtml(ord.shipping_address)}</td>
-                                <td class="px-4 py-3 text-right font-bold text-emerald-600">${fmtMoneyPanel(ord.total)}</td>
-                                <td class="px-4 py-3 text-center">
-                                    <span class="rounded-full px-2 py-0.5 text-xs font-semibold ${ord.payment_status === 'pagado' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'} capitalize">
-                                        ${escapeHtml(ord.payment_status)}
-                                    </span>
-                                </td>
-                                <td class="px-4 py-3 text-center">
-                                    <span class="rounded-full px-2.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 capitalize">
-                                        ${escapeHtml(ord.fulfillment_status)}
-                                    </span>
-                                </td>
-                            </tr>
-                        `
-                                      )
-                                      .join('')
-                        }
-                    </tbody>
-                </table>
-            </div>
-        `;
-    } else if (ui.tab === 'catalogo') {
-        const { data: prods = [] } = await dbSelect({
-            table: 'ecom_products',
-            filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
-            order: { column: 'created_at', ascending: false }
-        });
-        contentHtml = `
-            <div class="flex justify-between items-center">
-                <p class="text-sm text-on-surface-variant">Productos habilitados para exhibición y venta en el escaparate digital.</p>
-                <button type="button" id="btn-publicar-producto" class="inline-flex items-center rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
-                    <span class="material-symbols-outlined mr-1.5 text-[18px]">publish</span>Publicar Producto
-                </button>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-5">
-                ${
-                    prods.length === 0
-                        ? `<div class="col-span-3 rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-8 text-center text-sm text-on-surface-variant">No hay artículos publicados en el catálogo web aún.</div>`
-                        : prods
-                              .map(
-                                  (p) => `
-                    <div class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4 shadow-sm flex flex-col justify-between">
-                        <div>
-                            <div class="flex items-center justify-between">
-                                <h4 class="font-bold text-sm text-on-surface">${escapeHtml(p.web_title)}</h4>
-                                <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-bold text-emerald-800">Publicado</span>
-                            </div>
-                            <p class="mt-2 text-xs text-on-surface-variant line-clamp-2">${escapeHtml(p.web_description || 'Sin descripción web.')}</p>
-                        </div>
-                        <div class="mt-4 flex items-center justify-between border-t border-outline-variant/10 pt-3">
-                            <span class="text-xs text-on-surface-variant font-medium">Precio Online:</span>
-                            <span class="text-sm font-bold text-emerald-600">${fmtMoneyPanel(p.online_price)}</span>
-                        </div>
-                    </div>
-                `
-                              )
-                              .join('')
-                }
-            </div>
-        `;
-    } else if (ui.tab === 'configuracion') {
-        const { data: sets = [] } = await dbSelect({
-            table: 'ecom_settings',
-            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
-        });
-        const currentSet = sets[0] || {};
-        contentHtml = `
-            <div class="max-w-xl rounded-xl border border-outline-variant/20 bg-surface-container-lowest p-6 shadow-sm">
-                <h3 class="text-base font-bold text-primary mb-4">Ajustes del Portal E-commerce</h3>
-                <div class="flex flex-col gap-4 text-sm">
-                    <div>
-                        <label class="block text-xs font-semibold text-on-surface-variant mb-1">Nombre Comercial de la Tienda:</label>
-                        <input type="text" id="ecom-store-name" value="${escapeHtml(currentSet.store_name || 'Mi Tienda Online')}" class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface" />
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-on-surface-variant mb-1">WhatsApp Oficial para Recepción de Pedidos:</label>
-                        <input type="text" id="ecom-wa-phone" value="${escapeHtml(currentSet.whatsapp_sales_phone || '18095550199')}" class="w-full rounded-lg border border-outline-variant/30 bg-surface-container-lowest px-3 py-2 text-sm text-on-surface" />
-                    </div>
-                    <div>
-                        <label class="block text-xs font-semibold text-on-surface-variant mb-1">Métodos de Pago Aceptados:</label>
-                        <p class="text-xs text-on-surface-variant">Transferencia Bancaria, Pago contra entrega en efectivo, Tarjetas locales.</p>
-                    </div>
-                    <button type="button" id="btn-guardar-ecom-config" class="mt-2 w-full rounded-lg bg-primary py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary/90 transition-colors">
-                        Guardar Configuración de Tienda
-                    </button>
-                </div>
-            </div>
-        `;
-    }
-
-    dashboardContent.innerHTML = `
-        ${renderModuleHeader('E-commerce & Tienda Digital', 'Catálogo online, checkout B2B/B2C, sincronización de stock y pedidos')}
-        ${renderEnterpriseTabsNav(tabs, ui.tab, 'data-ecom-tab')}
-        <div class="flex flex-col gap-6 mt-4">
-            ${contentHtml}
-        </div>
-    `;
-
-    dashboardContent.querySelectorAll('[data-ecom-tab]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            ui.tab = btn.dataset.ecomTab;
-            void renderEcommerceModule();
-        });
-    });
-
-    document.getElementById('btn-publicar-producto')?.addEventListener('click', async () => {
-        const { data: prods = [] } = await dbSelect({
-            table: 'products',
-            filters: [{ op: 'eq', column: 'tenant_id', value: tid }]
-        });
-        if (!prods.length) {
-            window.ZyronDialog.alert('Registra primero productos en Inventario.');
-            return;
-        }
-        const prod = prods[0];
-        const precioStr = await window.ZyronDialog.prompt(`Precio web de venta para "${prod.name}":`, String(prod.price || 1000));
-        const precio = Number(precioStr) || prod.price || 0;
-
-        const { error } = await dbInsert({
-            table: 'ecom_products',
-            values: {
-                tenant_id: tid,
-                product_id: prod.id,
-                web_title: prod.name,
-                web_description: prod.description || 'Disponible para compra inmediata en línea.',
-                online_price: precio,
-                is_published: true
-            }
-        });
-        if (error) {
-            window.ZyronDialog.alert('Error al publicar producto: ' + (error.message || String(error)));
-            return;
-        }
-        window.ZyronDialog.alert('Producto publicado en el catálogo web.');
-        void renderEcommerceModule();
-    });
-
-    document.getElementById('btn-nuevo-pedido-web')?.addEventListener('click', async () => {
-        const cliente = await window.ZyronDialog.prompt('Nombre del cliente comprador:', 'Carlos Martínez');
-        if (!cliente) return;
-        const tel = await window.ZyronDialog.prompt('Teléfono / WhatsApp:', '8095551234');
-        const direccion = await window.ZyronDialog.prompt('Dirección de entrega:', 'Av. 27 de Febrero esq. Lincoln, Santo Domingo');
-        const montoStr = await window.ZyronDialog.prompt('Total de la orden:', '3500');
-        const total = Number(montoStr) || 3500;
-        const numOrd = `WEB-${Date.now().toString().slice(-6)}`;
-
-        const { error } = await dbInsert({
-            table: 'ecom_orders',
-            values: {
-                tenant_id: tid,
-                order_number: numOrd,
-                customer_name: cliente.trim(),
-                customer_phone: tel ? tel.trim() : '8095550000',
-                shipping_address: direccion ? direccion.trim() : 'Santo Domingo',
-                total: total,
-                payment_method: 'transferencia',
-                payment_status: 'pendiente',
-                fulfillment_status: 'por_preparar'
-            }
-        });
-        if (error) {
-            window.ZyronDialog.alert('Error al generar pedido web: ' + (error.message || String(error)));
-            return;
-        }
-        window.ZyronDialog.alert(`Pedido web ${numOrd} recibido en el panel.`);
-        void renderEcommerceModule();
-    });
-
-    document.getElementById('btn-guardar-ecom-config')?.addEventListener('click', async () => {
-        const nombre = document.getElementById('ecom-store-name')?.value || 'Mi Tienda';
-        const wa = document.getElementById('ecom-wa-phone')?.value || '8095550000';
-        const slug = nombre.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-
-        const { error } = await dbInsert({
-            table: 'ecom_settings',
-            values: {
-                tenant_id: tid,
-                store_name: nombre.trim(),
-                slug: slug,
-                whatsapp_sales_phone: wa.trim(),
-                is_active: true
-            }
-        });
-        if (error) {
-            window.ZyronDialog.alert('Error al guardar configuración: ' + (error.message || String(error)));
-            return;
-        }
-        window.ZyronDialog.alert('Configuración de la tienda web guardada con éxito.');
-        void renderEcommerceModule();
-    });
-};
-
-// ----------------------------------------------------------------------------
-// 7. CALIDAD (QA / QC)
+// 6. CALIDAD (QA / QC)
 // ----------------------------------------------------------------------------
 const renderCalidadModule = async () => {
     zyronLog('render:calidad:start', { tenantId: state.currentTenantId });
@@ -15557,7 +15390,7 @@ const renderCalidadModule = async () => {
 };
 
 // ----------------------------------------------------------------------------
-// 8. GESTIÓN DOCUMENTAL (DMS)
+// 7. GESTIÓN DOCUMENTAL (DMS)
 // ----------------------------------------------------------------------------
 const renderDocumentalModule = async () => {
     zyronLog('render:dms:start', { tenantId: state.currentTenantId });
@@ -15830,7 +15663,6 @@ const openModule = async (moduleKey, opts = {}) => {
     if (moduleKey === 'proyectos') return renderProyectosModule();
     if (moduleKey === 'produccion') return renderProduccionModule();
     if (moduleKey === 'cadena_suministro') return renderCadenaSuministroModule();
-    if (moduleKey === 'ecommerce') return renderEcommerceModule();
     if (moduleKey === 'calidad') return renderCalidadModule();
     if (moduleKey === 'documental') return renderDocumentalModule();
     if (moduleKey === 'pagos') return renderPagosModule();
@@ -16044,6 +15876,7 @@ const performLogout = async () => {
     state.membership = null;
     state.membershipsList = [];
     state.tenantContext = { defaultCurrency: 'DOP', defaultLocale: 'es', priceDisplayCurrency: null };
+    window.ZyronActionBar.permissions.reset();
     try {
         localStorage.removeItem(LAST_TENANT_KEY);
     } catch (_) {
@@ -16174,6 +16007,7 @@ const activateSuperAdminPanel = async () => {
     state.membership = null;
     state.currentTenantId = null;
     state.membershipsList = [];
+    window.ZyronActionBar.permissions.reset();
 
     state.appUser = {
         id: 'fe2a042e-dac7-4243-8a4a-abdf139b3375',

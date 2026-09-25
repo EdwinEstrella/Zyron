@@ -82,5 +82,20 @@ export default [
         ...globals.browser
       }
     }
+  },
+  {
+    files: ['components/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'script',
+      globals: {
+        ...globals.browser,
+        module: 'readonly'
+      }
+    },
+    plugins: {
+      security
+    },
+    rules: commonRules
   }
 ]
