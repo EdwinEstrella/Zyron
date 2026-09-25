@@ -67,13 +67,13 @@ test('fixture temp directories are unique and removable', async () => {
   await fs.promises.rm(secondDir, { recursive: true, force: true })
 })
 
-test('main wires playwright userData override before localdb initialization', () => {
+test('main wires playwright userData override before the app window is created', () => {
   const mainJs = fs.readFileSync(path.join(root, 'main.js'), 'utf8')
   const overrideIndex = mainJs.indexOf('PW_ELECTRON_USER_DATA_ROOT')
-  const initIndex = mainJs.indexOf("localdb.inicializar(app.getPath('userData'))")
+  const createWindowIndex = mainJs.indexOf("createWindow()")
 
   assert.notEqual(overrideIndex, -1)
-  assert.notEqual(initIndex, -1)
-  assert.ok(overrideIndex < initIndex)
+  assert.notEqual(createWindowIndex, -1)
+  assert.ok(overrideIndex < createWindowIndex)
   assert.match(mainJs, /app\.setPath\('userData', resolvedUserDataRoot\)/)
 })

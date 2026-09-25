@@ -435,35 +435,31 @@ test('accounting list IPC validates tenant id before touching InsForge', async (
 })
 
 test('accounting list IPC exposes tenant-scoped ledger reads', async () => {
-  const localdb = require('../../localdb')
-  const rutaTemporal = path.join(__dirname, '../temp_local_db_pr2')
-  
-  localdb.reiniciarCache()
-  if (fs.existsSync(rutaTemporal)) {
-    fs.rmSync(rutaTemporal, { recursive: true, force: true })
-  }
-  fs.mkdirSync(rutaTemporal, { recursive: true })
-  localdb.inicializar(rutaTemporal)
+  const { handlers } = loadMainForBehaviorTest()
 
   const tenantIdPrueba = '11111111-1111-4111-8111-111111111111'
   const rows = [{ code: '1100', name: 'Accounts receivable', tenant_id: tenantIdPrueba }]
-  
-  await localdb.insertLocal(tenantIdPrueba, 'accounting_accounts', rows)
+  let calledTable = null
 
-  const { handlers } = loadMainForBehaviorTest()
+  global.__ZYRON_TEST_INSFORGE_CLIENT = {
+    auth: {},
+    database: {
+      from: (table) => {
+        calledTable = table
+        return { select: () => makeSelectQuery([{ data: rows, error: null }]) }
+      }
+    },
+    realtime: { on: () => {} }
+  }
 
   const result = await handlers.get('accounting:accounts:list')(null, {
     tenantId: tenantIdPrueba,
     limit: 25
   })
 
+  assert.equal(calledTable, 'accounting_accounts')
   assert.equal(result.error, null)
   assert.equal(result.data.length, 1)
   assert.equal(result.data[0].code, '1100')
   assert.equal(result.data[0].name, 'Accounts receivable')
-
-  localdb.reiniciarCache()
-  if (fs.existsSync(rutaTemporal)) {
-    fs.rmSync(rutaTemporal, { recursive: true, force: true })
-  }
 })

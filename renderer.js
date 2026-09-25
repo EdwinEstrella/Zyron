@@ -717,13 +717,6 @@ backendAPI?.realtime?.onDomainEvent?.((event) => {
     void openModule(state.currentModule, { skipHistory: true, replaceHistory: true });
 });
 
-backendAPI?.cache?.onUpdated?.(({ tenantId, tables } = {}) => {
-    if (String(tenantId) !== String(state.currentTenantId)) return;
-    const currentTable = state.currentModule === 'inventario' ? 'products' : state.currentModule === 'facturas' ? 'invoices' : null;
-    if (!currentTable || !Array.isArray(tables) || !tables.includes(currentTable)) return;
-    void openModule(state.currentModule, { skipHistory: true, replaceHistory: true });
-});
-
 const dbSelect = (payload) =>
     safeCall(
         () => (window.supabaseAPI || window.insforgeAPI).database.select(enforceTenantScopeOnSelect(payload)),

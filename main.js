@@ -12,8 +12,6 @@ autoUpdater.autoInstallOnAppQuit = true
 const mainVerboseIpc = () => process.env.ZYRON_MAIN_VERBOSE === '1'
 const fs = require('node:fs')
 const path = require('node:path')
-const localdb = require('./localdb')
-const sync = require('./sync')
 
 /** Carga `.env` desde dev root y desde ubicaciones runtime del ejecutable empaquetado. */
 const loadEnvFromDotEnvFiles = () => {
@@ -476,82 +474,8 @@ const validateAccountingListPayload = (payload, options = {}) => {
   return null
 }
 
-const inquilinosSincronizando = new Set()
-
-const asegurarSincronizacionActiva = (tenantId) => {
-  if (tenantId && !inquilinosSincronizando.has(tenantId)) {
-    inquilinosSincronizando.add(tenantId)
-    // Sincroniza dinámicamente cada 25 segundos
-    sync.iniciarSincronizacionPeriodica(tenantId, 25)
-    zyronLog('sync:bucle:iniciado', { tenantId })
-  }
-}
-
-const TABLAS_EXCLUSIVAMENTE_SERVIDOR = new Set([
-  'tenant_memberships',
-  'tenants',
-  'app_users',
-  'user_access_requests',
-  'planes_servicio',
-  'permission_catalog',
-  'role_system_presets',
-  'app_navigation_modules'
-])
-
-const obtenerTenantIdDeFiltrosOValores = (payload) => {
-  if (!payload || typeof payload !== 'object') return null
-  if (payload.table && TABLAS_EXCLUSIVAMENTE_SERVIDOR.has(String(payload.table))) return null
-
-  // 1. Buscar en filters
-  if (Array.isArray(payload.filters)) {
-    const f = payload.filters.find((filtro) => filtro && filtro.column === 'tenant_id' && filtro.op === 'eq')
-    if (f && typeof f.value === 'string' && f.value.trim().length > 0) {
-      return f.value.trim()
-    }
-  }
-
-  // 2. Buscar en values (para inserciones o actualizaciones)
-  if (payload.values) {
-    if (Array.isArray(payload.values)) {
-      const primerReg = payload.values[0]
-      if (primerReg && typeof primerReg === 'object' && primerReg.tenant_id) {
-        return String(primerReg.tenant_id).trim()
-      }
-    } else if (typeof payload.values === 'object' && payload.values.tenant_id) {
-      return String(payload.values.tenant_id).trim()
-    }
-  }
-
-  return null
-}
-
 const selectAccountingRows = async (scope, table, payload, configureQuery) => {
   const { tenantId, limit = 100 } = payload || {}
-
-  if (tenantId) {
-    asegurarSincronizacionActiva(tenantId)
-    if (mainVerboseIpc()) zyronLog('localdb:accounting:select', { table, tenantId })
-
-
-    const opcionesLocal = {
-      limit,
-      filters: []
-    }
-
-    if (table === 'accounting_journal_lines' && payload.journalEntryId) {
-      opcionesLocal.filters.push({ column: 'journal_entry_id', op: 'eq', value: payload.journalEntryId })
-    }
-
-    if (table === 'accounting_accounts') {
-      opcionesLocal.order = { column: 'code', ascending: true }
-    } else if (table === 'accounting_journal_entries') {
-      opcionesLocal.order = { column: 'entry_date', ascending: false }
-    } else if (table === 'accounting_journal_lines') {
-      opcionesLocal.order = { column: 'line_no', ascending: true }
-    }
-
-    return localdb.selectLocal(tenantId, table, opcionesLocal)
-  }
 
   return runInsforgeOperation(scope, async (client) => {
     let query = client.database
@@ -588,10 +512,6 @@ const isAuthError = (error) => {
 const notifyRenderer = (channel, payload) => {
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send(channel, payload)
 }
-
-sync.establecerNotificadorActualizacionCache((payload) => {
-  notifyRenderer('local-cache-updated', payload)
-})
 
 const requestAuthRecovery = async (client, reason) => {
   if (authRecoveryPromise) return authRecoveryPromise
@@ -681,7 +601,6 @@ const getInsforgeClient = async () => {
   if (process.env.ZYRON_MAIN_TEST_HOOKS === '1' && global.__ZYRON_TEST_INSFORGE_CLIENT) {
     const client = global.__ZYRON_TEST_INSFORGE_CLIENT
     installRealtimeForwarders(client)
-    sync.establecerClienteInsforge(client, true)
     return client
   }
   if (insforgeClientPromise) return insforgeClientPromise
@@ -721,8 +640,7 @@ const getInsforgeClient = async () => {
     }
 
     installRealtimeForwarders(client)
-    sync.establecerClienteInsforge(client, true)
-    
+
     if (sessionRefreshInterval) clearInterval(sessionRefreshInterval)
     sessionRefreshInterval = setInterval(async () => {
       if (!currentRefreshToken) return
@@ -1289,18 +1207,6 @@ handleBackendIpc('insforge:db:select', async (_event, payload) => {
   const invalid = validateDbReadPayload(payload)
   if (invalid) return invalid
 
-  const tenantId = obtenerTenantIdDeFiltrosOValores(payload)
-  if (tenantId) {
-    asegurarSincronizacionActiva(tenantId)
-    if (mainVerboseIpc()) zyronLog('localdb:select:req', { table: payload.table, tenantId })
-    const localResult = await localdb.selectLocal(tenantId, payload.table, payload)
-    if (mainVerboseIpc() && !localResult.error) {
-      const n = Array.isArray(localResult.data) ? localResult.data.length : localResult.data ? 1 : 0
-      zyronLog('localdb:select:ok', { table: payload.table, rows: n })
-    }
-    return localResult
-  }
-
   return runInsforgeOperation('db:select', async (client) => {
     const {
       table,
@@ -1342,14 +1248,6 @@ handleBackendIpc('insforge:db:insert', async (_event, payload) => {
   const invalid = validateDbInsertPayload(payload)
   if (invalid) return invalid
 
-  const tenantId = obtenerTenantIdDeFiltrosOValores(payload)
-  if (tenantId) {
-    asegurarSincronizacionActiva(tenantId)
-    if (mainVerboseIpc()) zyronLog('localdb:insert:req', { table: payload.table, tenantId })
-    const localResult = await localdb.insertLocal(tenantId, payload.table, payload.values)
-    return localResult
-  }
-
   return runInsforgeOperation('db:insert', async (client) => {
     const { table, values, selectColumns = '*' } = payload || {}
     const nIns = Array.isArray(values) ? values.length : 1
@@ -1379,14 +1277,6 @@ handleBackendIpc('insforge:db:update', async (_event, payload) => {
   payload = includeRecordIdFilter(payload)
   if (payload.__recordIdConflict) return validationError('id no coincide con el filtro id.')
 
-  const tenantId = obtenerTenantIdDeFiltrosOValores(payload)
-  if (tenantId) {
-    asegurarSincronizacionActiva(tenantId)
-    if (mainVerboseIpc()) zyronLog('localdb:update:req', { table: payload.table, tenantId })
-    const localResult = await localdb.updateLocal(tenantId, payload.table, payload.values, payload.filters)
-    return localResult
-  }
-
   return runInsforgeOperation('db:update', async (client) => {
     const { table, values, filters = [], selectColumns = '*' } = payload || {}
     if (mainVerboseIpc()) zyronLog('db:update:req', { table, filters: filters.length, valueKeys: values ? Object.keys(values) : [] })
@@ -1404,14 +1294,6 @@ handleBackendIpc('insforge:db:delete', async (_event, payload) => {
   if (invalid) return invalid
   payload = includeRecordIdFilter(payload)
   if (payload.__recordIdConflict) return validationError('id no coincide con el filtro id.')
-
-  const tenantId = obtenerTenantIdDeFiltrosOValores(payload)
-  if (tenantId) {
-    asegurarSincronizacionActiva(tenantId)
-    if (mainVerboseIpc()) zyronLog('localdb:delete:req', { table: payload.table, tenantId })
-    const localResult = await localdb.deleteLocal(tenantId, payload.table, payload.filters)
-    return localResult
-  }
 
   return runInsforgeOperation('db:delete', async (client) => {
     const { table, filters = [] } = payload || {}
@@ -1546,15 +1428,10 @@ if (process.env.ZYRON_MAIN_TEST_HOOKS === '1') {
   }
 } else {
   app.whenReady().then(() => {
-    try {
-      localdb.inicializar(app.getPath('userData'))
-      zyronLog('localdb:inicializado', {
-        ruta: app.getPath('userData'),
-        testUserDataOverride: playwrightUserDataRoot || null
-      })
-    } catch (e) {
-      zyronLog('localdb:inicializacion:error', e.message)
-    }
+    zyronLog('app:userData', {
+      ruta: app.getPath('userData'),
+      testUserDataOverride: playwrightUserDataRoot || null
+    })
 
     createWindow()
 
