@@ -2824,7 +2824,7 @@ const renderPanelModule = async () => {
         dbSelect({
             table: 'payments',
             filters: [{ op: 'eq', column: 'tenant_id', value: state.currentTenantId }],
-            order: { column: 'paid_at', ascending: false },
+            order: { column: 'payment_date', ascending: false },
             limit: 250
         }),
         dbSelect({
@@ -2879,7 +2879,7 @@ const renderPanelModule = async () => {
         if (d && d.getFullYear() === currentYear) monthSales[d.getMonth()] += Number(inv.total || 0);
     });
     payments.forEach((pay) => {
-        const d = pay.paid_at ? new Date(pay.paid_at) : pay.created_at ? new Date(pay.created_at) : null;
+        const d = pay.payment_date ? new Date(pay.payment_date) : pay.created_at ? new Date(pay.created_at) : null;
         if (d && d.getFullYear() === currentYear) monthReceipts[d.getMonth()] += Number(pay.amount || 0);
     });
     const maxMonthly = Math.max(1, ...monthSales, ...monthReceipts);
@@ -5506,8 +5506,8 @@ const reportsRunDataset = async (tenantId, key, range) => {
         { op: 'lte', column: 'created_at', value: toISO }
     ];
     const payDateFilters = [
-        { op: 'gte', column: 'paid_at', value: fromISO },
-        { op: 'lte', column: 'paid_at', value: toISO }
+        { op: 'gte', column: 'payment_date', value: fromISO },
+        { op: 'lte', column: 'payment_date', value: toISO }
     ];
     if (key === 'sales') {
         const { data: invs, error } = await dbSelect({
@@ -5557,9 +5557,9 @@ const reportsRunDataset = async (tenantId, key, range) => {
     if (key === 'income') {
         const { data: pays, error } = await dbSelect({
             table: 'payments',
-            columns: 'id,amount,currency,payment_method,payment_method_code,paid_at,customer_id,status,reference,notes',
+            columns: 'id,amount,currency,method,payment_method_code,payment_date,customer_id,status,reference,notes',
             filters: payDateFilters,
-            order: { column: 'paid_at', ascending: false },
+            order: { column: 'payment_date', ascending: false },
             limit: 2500
         });
         if (error) return { ok: false, error: error.message, rows: [], summary: {} };
@@ -5568,10 +5568,10 @@ const reportsRunDataset = async (tenantId, key, range) => {
             const c = p.customer_id ? custMap.get(p.customer_id) : null;
             return {
                 id: p.id,
-                fecha: p.paid_at,
+                fecha: p.payment_date,
                 monto: reportsNumOr(p.amount, 0),
                 moneda: p.currency || 'USD',
-                metodo: p.payment_method_code || p.payment_method || '',
+                metodo: p.payment_method_code || p.method || '',
                 estado: p.status,
                 cliente_id: p.customer_id || '',
                 cliente_nombre: c?.name || '',
@@ -6086,7 +6086,7 @@ const fetchPaymentReminderLogViaDb = async (tenantId) => {
     const { data, error } = await dbSelect({
         table: 'payment_reminder_log',
         filters: [{ op: 'eq', column: 'tenant_id', value: tenantId }],
-        order: { column: 'created_at', ascending: false },
+        order: { column: 'sent_at', ascending: false },
         limit: 80
     });
     if (error) return { data: { ok: false, error: error.message || String(error), rows: [] }, error: null };
@@ -6204,85 +6204,53 @@ const paymentsCreatePaymentViaDb = async (tenantId, body) => {
     if (allocSum - amount > 0.0001) {
         return { data: { error: 'La suma aplicada a facturas no puede superar el monto del pago' }, error: null };
     }
-    const insertPayment = {
-        tenant_id: tenantId,
-        amount,
-        status: String(body.status || 'completed').toLowerCase() === 'pending' ? 'pending' : 'completed',
-        paid_at: body.paidAt || new Date().toISOString(),
-        payment_method: code,
-        payment_method_code: code,
-        currency: String(body.currency || 'USD'),
-        customer_id: body.customerId || null,
-        reference: body.reference || null,
-        notes: body.notes || null,
-        gateway_provider: body.gatewayProvider || null,
-        gateway_transaction_id: body.gatewayTransactionId || null,
-        reconciliation_status: 'unmatched',
-        unallocated_amount: Math.max(0, amount - allocSum)
-    };
-    let r = await dbInsert({ table: 'payments', values: insertPayment });
-    let payRows = r.data;
-    let payErr = r.error;
-    if (payErr && /column .* does not exist/i.test(payErr.message || '')) {
-        r = await dbInsert({
+    // The journal entry (Dr cash_bank / Cr accounts_receivable), the invoice
+    // amount_paid/status recalculation and the payment_allocations rows are
+    // all owned by public.zyron_post_payment (see
+    // supabase/migrations/20260924000000_accounting_overhaul.sql, relaxed for
+    // partial allocations in
+    // supabase/migrations/20261002000000_payment_posting_allocation_fix.sql).
+    // The client must not insert into payments/payment_allocations directly:
+    // that path never produced an accounting event.
+    const rpcAllocations = allocations
+        .filter((a) => a.invoiceId && Number(a.amount) > 0)
+        .map((a) => ({ invoice_id: a.invoiceId, amount: Number(a.amount) }));
+    const result = await dbRpc('zyron_post_payment', {
+        p_tenant_id: tenantId,
+        p_amount: amount,
+        p_currency: String(body.currency || 'USD'),
+        p_customer_id: body.customerId || null,
+        p_method: code,
+        p_reference: body.reference || null,
+        p_notes: body.notes || null,
+        p_allocations: rpcAllocations,
+        p_payment_date: body.paymentDate || new Date().toISOString().slice(0, 10)
+    });
+    if (result.error) return { data: { error: result.error.message || 'No se pudo registrar el pago' }, error: null };
+    const paymentId = result.data;
+    if (!paymentId) return { data: { error: 'El pago no devolvio un identificador valido' }, error: null };
+
+    // Gateway fields are reconciliation metadata, not ledger data (the RPC
+    // always books the payment as received — a receipt only exists once
+    // money is confirmed, there is no "Pendiente" payment status anymore);
+    // patch them the same way paymentsSetReconciliationViaDb() already
+    // patches payments directly, under the existing zyron_payments_manage
+    // RLS policy.
+    const metaPatch = {};
+    if (body.gatewayProvider) metaPatch.gateway_provider = body.gatewayProvider;
+    if (body.gatewayTransactionId) metaPatch.gateway_transaction_id = body.gatewayTransactionId;
+    let payment = { id: paymentId };
+    if (Object.keys(metaPatch).length) {
+        const upd = await dbUpdate({
             table: 'payments',
-            values: {
-                tenant_id: tenantId,
-                amount,
-                status: insertPayment.status,
-                paid_at: insertPayment.paid_at,
-                payment_method: code
-            }
+            values: metaPatch,
+            filters: [
+                { op: 'eq', column: 'id', value: paymentId },
+                { op: 'eq', column: 'tenant_id', value: tenantId }
+            ]
         });
-        payRows = r.data;
-        payErr = r.error;
+        if (!upd.error && upd.data?.length) payment = upd.data[0];
     }
-    if (payErr || !payRows?.length) {
-        return { data: { error: payErr?.message || 'payment insert failed' }, error: null };
-    }
-    const payment = Array.isArray(payRows) ? payRows[0] : payRows;
-    const touched = new Set();
-    for (const a of allocations) {
-        const invId = a.invoiceId;
-        const amt = Number(a.amount || 0);
-        if (!invId || !(amt > 0)) continue;
-        const invRes = await dbSelect({
-            table: 'invoices',
-            filters: [{ op: 'eq', column: 'id', value: invId }],
-            limit: 1
-        });
-        const inv = invRes.data?.[0];
-        if (!inv || String(inv.tenant_id) !== String(tenantId)) {
-            await dbDelete({ table: 'payments', filters: [{ op: 'eq', column: 'id', value: payment.id }] });
-            return { data: { error: 'Factura invalida para el tenant' }, error: null };
-        }
-        const st = String(inv.status || '').toLowerCase();
-        if (st === 'draft') {
-            await dbDelete({ table: 'payments', filters: [{ op: 'eq', column: 'id', value: payment.id }] });
-            return { data: { error: 'No se puede aplicar pago a borrador' }, error: null };
-        }
-        const open = Number(inv.total || 0) - Number(inv.amount_paid || 0);
-        if (amt - open > 0.0001) {
-            await dbDelete({ table: 'payments', filters: [{ op: 'eq', column: 'id', value: payment.id }] });
-            return { data: { error: `Monto excede saldo abierto en factura ${invId}` }, error: null };
-        }
-        const alIns = await dbInsert({
-            table: 'payment_allocations',
-            values: {
-                tenant_id: tenantId,
-                payment_id: payment.id,
-                invoice_id: invId,
-                amount: amt
-            }
-        });
-        if (alIns.error) {
-            await dbDelete({ table: 'payment_allocations', filters: [{ op: 'eq', column: 'payment_id', value: payment.id }] });
-            await dbDelete({ table: 'payments', filters: [{ op: 'eq', column: 'id', value: payment.id }] });
-            return { data: { error: alIns.error.message || 'allocation failed' }, error: null };
-        }
-        touched.add(invId);
-    }
-    for (const invId of touched) await recalcInvoiceFinancialsLocal(tenantId, invId);
     return { data: { ok: true, payment }, error: null };
 };
 
@@ -6302,6 +6270,28 @@ const paymentsSetReconciliationViaDb = async (tenantId, paymentId, reconciliatio
     });
     if (r.error || !r.data?.length) return { data: { error: r.error?.message || 'update failed' }, error: null };
     return { data: { ok: true, payment: r.data[0] }, error: null };
+};
+
+/**
+ * Applies part of a payment's unallocated amount ("anticipo") to one or more
+ * open invoices. Delegates entirely to public.zyron_apply_customer_advance
+ * (see supabase/migrations/20261002000000_payment_posting_allocation_fix.sql),
+ * which owns the payment_allocations rows, the invoice amount_paid/status
+ * update, the payments.unallocated_amount decrement and the Dr
+ * customer_advances / Cr accounts_receivable journal entry. The client must
+ * not insert into payment_allocations directly for this flow either.
+ */
+const paymentsApplyCustomerAdvanceViaDb = async (tenantId, paymentId, allocations, applyDate) => {
+    if (!paymentId) return { data: { error: 'paymentId required' }, error: null };
+    const rpcAllocations = window.ZyronCustomerAdvances.buildAdvanceAllocations(allocations || []);
+    const result = await dbRpc('zyron_apply_customer_advance', {
+        p_tenant_id: tenantId,
+        p_payment_id: paymentId,
+        p_allocations: rpcAllocations,
+        p_apply_date: applyDate || new Date().toISOString().slice(0, 10)
+    });
+    if (result.error) return { data: { error: result.error.message || 'No se pudo aplicar el anticipo' }, error: null };
+    return { data: { ok: true, journalEntryId: result.data }, error: null };
 };
 
 const paymentsRunRemindersViaDb = async (tenantId, horizonDaysRaw) => {
@@ -6354,6 +6344,7 @@ const paymentsIngestGatewayEventViaDb = async (tenantId, provider, externalId, p
         values: {
             tenant_id: tenantId,
             provider: providerStr,
+            event_type: String(payload.type || payload.event_type || 'webhook'),
             external_id: external,
             payload,
             matched_payment_id: null
@@ -9405,16 +9396,25 @@ const renderPagosModule = async () => {
         .map(
             (r) => `<tr class="border-b border-outline-variant/20" data-payment-row="${escapeHtml(r.id)}">
             <td class="py-2 font-mono text-xs">${escapeHtml(String(r.id).slice(0, 8))}…</td>
-            <td class="py-2">${escapeHtml(r.payment_method_code || r.payment_method || '')}</td>
+            <td class="py-2">${escapeHtml(r.payment_method_code || r.method || '')}</td>
             <td class="py-2">${money(r.amount)} ${escapeHtml(r.currency || '')}</td>
             <td class="py-2">${escapeHtml(r.status || '')}</td>
             <td class="py-2 text-xs">${escapeHtml(r.reconciliation_status || '')}</td>
-            <td class="py-2 text-xs">${escapeHtml(toDateString(r.paid_at))}</td>
+            <td class="py-2 text-xs">${escapeHtml(toDateString(r.payment_date))}</td>
             <td class="py-2 text-right">
                 <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-pay-alloc="${escapeHtml(
                     r.id
                 )}">Aplicaciones</button>
                 <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-pay-accounting="${escapeHtml(r.id)}" aria-label="Ver asiento contable del pago">Ver asiento contable</button>
+                ${
+                    Number(r.unallocated_amount || 0) > 0.0001
+                        ? `<button type="button" class="rounded border border-tertiary/50 px-2 py-1 text-xs text-tertiary" data-pay-apply-advance="${escapeHtml(
+                              r.id
+                          )}" data-customer-id="${escapeHtml(r.customer_id || '')}" aria-label="Aplicar anticipo de este pago a una factura">Aplicar anticipo (${money(
+                              r.unallocated_amount
+                          )})</button>`
+                        : ''
+                }
             </td>
         </tr>`
         )
@@ -9494,7 +9494,7 @@ const renderPagosModule = async () => {
     const logTable = (reminderRows || [])
         .map(
             (row) => `<tr class="border-b border-outline-variant/20">
-            <td class="py-2 text-xs">${escapeHtml(toDateString(row.created_at))}</td>
+            <td class="py-2 text-xs">${escapeHtml(toDateString(row.sent_at))}</td>
             <td class="py-2 text-xs font-mono">${escapeHtml(String(row.invoice_id || '').slice(0, 8))}…</td>
             <td class="py-2">${escapeHtml(row.kind || '')}</td>
             <td class="py-2">${escapeHtml(row.channel || '')}</td>
@@ -9522,10 +9522,14 @@ const renderPagosModule = async () => {
                 }</tbody>
             </table>
         </div>
-        <pre id="pagos-alloc-pre" class="mt-3 hidden max-h-48 overflow-auto rounded-md bg-surface-container-high p-3 font-mono text-xs"></pre>`;
+        <pre id="pagos-alloc-pre" class="mt-3 hidden max-h-48 overflow-auto rounded-md bg-surface-container-high p-3 font-mono text-xs"></pre>
+        <div id="pagos-advance-panel" class="mt-3 hidden rounded-md border border-tertiary/40 bg-surface-container-high p-4"></div>`;
+
+    const today = new Date().toISOString().slice(0, 10);
 
     const registerPanel = `
         <p class="mb-3 text-xs text-on-surface-variant">Como InvoiceShelf: elegis la factura abierta, el sistema toma su saldo y registra la aplicacion del pago contra esa factura. Nada de JSON a mano: eso era deuda tecnica, no producto.</p>
+        <p class="mb-3 text-xs text-on-surface-variant">Un recibo solo existe cuando el dinero ya fue confirmado: todo pago registrado aqui queda <strong>Completado</strong>.</p>
         <div class="grid max-w-3xl grid-cols-1 gap-3 sm:grid-cols-2">
             <label class="block text-sm sm:col-span-2">
                 <span class="font-medium">Factura</span>
@@ -9549,11 +9553,8 @@ const renderPagosModule = async () => {
                 <input id="pay-reg-currency" maxlength="3" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm uppercase" value="${escapeHtml(cur || 'DOP')}" />
             </label>
             <label class="block text-sm">
-                <span class="font-medium">Estado pago</span>
-                <select id="pay-reg-status" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
-                    <option value="completed">Completado</option>
-                    <option value="pending">Pendiente</option>
-                </select>
+                <span class="font-medium">Fecha</span>
+                <input id="pay-reg-date" type="date" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(today)}" />
             </label>
             <label class="block text-sm sm:col-span-2">
                 <span class="font-medium">Referencia / notas</span>
@@ -9680,6 +9681,76 @@ const renderPagosModule = async () => {
         btn.addEventListener('click', () => void viewAccountingEntryForSource('payment', btn.getAttribute('data-pay-accounting')));
     });
 
+    // "Aplicar anticipo": lists the payment's customer's open invoices and
+    // posts the applied amounts via public.zyron_apply_customer_advance
+    // (paymentsApplyCustomerAdvanceViaDb) — see
+    // supabase/migrations/20261002000000_payment_posting_allocation_fix.sql.
+    const openAdvancePanel = (paymentId, customerId) => {
+        const panel = document.getElementById('pagos-advance-panel');
+        if (!panel) return;
+        const payment = (payRows || []).find((p) => String(p.id) === String(paymentId));
+        const available = Number(payment?.unallocated_amount || 0);
+        const openInvoices = window.ZyronCustomerAdvances.openInvoicesForCustomer(arRows, customerId || null);
+        panel.classList.remove('hidden');
+        if (!openInvoices.length) {
+            panel.innerHTML = `<p class="text-sm text-on-surface-variant">Este cliente no tiene facturas abiertas para aplicar el anticipo.</p>`;
+            return;
+        }
+        panel.innerHTML = `
+            <p class="mb-2 text-sm font-medium">Anticipo disponible: ${money(available)}</p>
+            <div class="space-y-2">
+                ${openInvoices
+                    .map((inv) => {
+                        const doc =
+                            `${inv.series || ''}-${inv.number || ''}`.replace(/^-|-$/g, '') || String(inv.id).slice(0, 8);
+                        const bal = Number(
+                            inv.balance_due != null ? inv.balance_due : Number(inv.total || 0) - Number(inv.amount_paid || 0)
+                        );
+                        return `<div class="flex items-center gap-2 text-sm">
+                            <span class="w-40 truncate">${escapeHtml(doc)} (saldo ${money(bal)})</span>
+                            <input type="number" step="0.01" min="0" max="${escapeHtml(bal)}" class="w-28 rounded border border-outline-variant/40 px-2 py-1 text-xs" data-advance-invoice="${escapeHtml(
+                            inv.id
+                        )}" placeholder="0.00" />
+                        </div>`;
+                    })
+                    .join('')}
+            </div>
+            <div class="mt-3 flex gap-2">
+                <button type="button" id="pagos-advance-submit" class="rounded-md bg-tertiary px-3 py-2 text-sm text-white">Aplicar</button>
+                <button type="button" id="pagos-advance-cancel" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">Cancelar</button>
+            </div>`;
+
+        document.getElementById('pagos-advance-cancel')?.addEventListener('click', () => {
+            panel.classList.add('hidden');
+            panel.innerHTML = '';
+        });
+        document.getElementById('pagos-advance-submit')?.addEventListener('click', async () => {
+            const entries = Array.from(panel.querySelectorAll('[data-advance-invoice]')).map((input) => ({
+                invoiceId: input.getAttribute('data-advance-invoice'),
+                amount: Number(input.value || 0)
+            }));
+            const allocations = window.ZyronCustomerAdvances.buildAdvanceAllocations(entries);
+            const check = window.ZyronCustomerAdvances.validateAdvanceAllocations(allocations, available);
+            if (!check.ok) {
+                window.ZyronDialog.alert(check.error);
+                return;
+            }
+            const res = await paymentsApplyCustomerAdvanceViaDb(tid, paymentId, entries);
+            const u = unwrapFnInvoke(res);
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
+            else {
+                window.ZyronDialog.alert('Anticipo aplicado.');
+                await renderPagosModule();
+            }
+        });
+    };
+
+    dashboardContent.querySelectorAll('[data-pay-apply-advance]').forEach((btn) => {
+        btn.addEventListener('click', () =>
+            openAdvancePanel(btn.getAttribute('data-pay-apply-advance'), btn.getAttribute('data-customer-id') || null)
+        );
+    });
+
     document.getElementById('pay-reg-invoice')?.addEventListener('change', (ev) => {
         const opt = ev.target?.selectedOptions?.[0];
         const bal = Number(opt?.getAttribute('data-balance') || 0);
@@ -9703,7 +9774,7 @@ const renderPagosModule = async () => {
             customerId: selectedOpt?.getAttribute('data-customer-id') || null,
             paymentMethodCode: document.getElementById('pay-reg-method')?.value || 'cash',
             currency: document.getElementById('pay-reg-currency')?.value || cur || 'DOP',
-            status: document.getElementById('pay-reg-status')?.value || 'completed',
+            paymentDate: document.getElementById('pay-reg-date')?.value || today,
             reference: document.getElementById('pay-reg-reference')?.value?.trim() || null,
             notes: document.getElementById('pay-reg-notes')?.value?.trim() || null,
             gatewayProvider: document.getElementById('pay-reg-gw-prov')?.value?.trim() || null,
@@ -15003,27 +15074,118 @@ const renderCadenaSuministroModule = async () => {
             window.ZyronDialog.alert('Se requiere al menos un proveedor y un almacén activo.');
             return;
         }
+        const supplier = sups[0];
+        const warehouse = whs[0];
         const conduce = await window.ZyronDialog.prompt('Número de Conduce / Remisión del proveedor:', 'REM-8921');
         if (!conduce) return;
-        const numRec = `REC-${Date.now().toString().slice(-6)}`;
 
-        const { error } = await dbInsert({
+        // Prefer defaulting the receipt lines from the supplier's most recent
+        // PO (remaining quantity_ordered - quantity_received, at the PO's
+        // unit cost) — see components/scm-receipts.js. Falls back to a single
+        // manually captured line when the PO has no items yet.
+        const { data: pos = [] } = await dbSelect({
+            table: 'scm_purchase_orders',
+            filters: [
+                { op: 'eq', column: 'tenant_id', value: tid },
+                { op: 'eq', column: 'supplier_id', value: supplier.id }
+            ],
+            order: { column: 'order_date', ascending: false },
+            limit: 1
+        });
+        const po = pos[0] || null;
+        let poItems = [];
+        let lines = [];
+        if (po) {
+            const poItemsRes = await dbSelect({
+                table: 'scm_purchase_order_items',
+                filters: [
+                    { op: 'eq', column: 'tenant_id', value: tid },
+                    { op: 'eq', column: 'order_id', value: po.id }
+                ]
+            });
+            poItems = poItemsRes.data || [];
+            lines = window.ZyronScmReceipts.defaultLinesFromPurchaseOrder(poItems);
+        }
+        if (!lines.length) {
+            const { data: products = [] } = await dbSelect({
+                table: 'products',
+                filters: [
+                    { op: 'eq', column: 'tenant_id', value: tid },
+                    { op: 'eq', column: 'tracks_stock', value: true }
+                ],
+                limit: 200
+            });
+            if (!products.length) {
+                window.ZyronDialog.alert('Se requiere al menos un producto con control de inventario para registrar la recepción.');
+                return;
+            }
+            const listing = products.map((p, i) => `${i + 1}) ${p.name}`).join('\n');
+            const pickRaw = await window.ZyronDialog.prompt(`Producto recibido:\n${listing}\nEscribe el numero de la lista:`, '1');
+            const idx = Math.min(products.length, Math.max(1, Number(pickRaw) || 1)) - 1;
+            const product = products[idx];
+            const qtyRaw = await window.ZyronDialog.prompt(`Cantidad recibida de "${product.name}":`, '1');
+            const quantity = Number(qtyRaw) || 0;
+            if (!(quantity > 0)) {
+                window.ZyronDialog.alert('La cantidad recibida debe ser mayor que cero.');
+                return;
+            }
+            const costRaw = await window.ZyronDialog.prompt('Costo unitario recibido:', String(product.cost_price || 0));
+            lines = [{ product_id: product.id, quantity, unit_cost: Number(costRaw) || 0 }];
+        }
+
+        const numRec = `REC-${Date.now().toString().slice(-6)}`;
+        const receiptIns = await dbInsert({
             table: 'scm_goods_receipts',
             values: {
                 tenant_id: tid,
                 receipt_number: numRec,
-                supplier_id: sups[0].id,
-                warehouse_id: whs[0].id,
+                purchase_order_id: po?.id || null,
+                supplier_id: supplier.id,
+                warehouse_id: warehouse.id,
                 delivery_note_ref: conduce.trim(),
                 status: 'completada',
                 notes: 'Recepción conforme en almacén principal'
             }
         });
-        if (error) {
-            window.ZyronDialog.alert('Error al registrar recepción: ' + (error.message || String(error)));
+        if (receiptIns.error || !receiptIns.data?.length) {
+            window.ZyronDialog.alert('Error al registrar recepción: ' + (receiptIns.error?.message || 'insert failed'));
             return;
         }
-        window.ZyronDialog.alert(`Recepción ${numRec} registrada. Stock actualizado.`);
+        const receipt = receiptIns.data[0];
+
+        const itemRows = window.ZyronScmReceipts.buildReceiptItemRows(tid, receipt.id, lines);
+        const itemsIns = await dbInsert({ table: 'scm_goods_receipt_items', values: itemRows });
+        if (itemsIns.error) {
+            window.ZyronDialog.alert('Error al registrar las líneas de la recepción: ' + (itemsIns.error.message || 'insert failed'));
+            return;
+        }
+
+        // Accounting event: Dr inventory / Cr GR-IR clearing + kardex entry.
+        // See public.zyron_post_goods_receipt in
+        // supabase/migrations/20260927000000_purchases_accounting_integration.sql.
+        const post = await dbRpc('zyron_post_goods_receipt', { p_tenant_id: tid, p_receipt_id: receipt.id });
+        if (post.error) {
+            window.ZyronDialog.alert('La recepción se guardó pero no se pudo contabilizar: ' + (post.error.message || 'error'));
+            return;
+        }
+
+        // The RPC never touches scm_purchase_order_items; advance
+        // quantity_received ourselves for every line that came from a PO.
+        if (po && poItems.length) {
+            const patches = window.ZyronScmReceipts.buildQuantityReceivedPatches(poItems, itemRows);
+            for (const patch of patches) {
+                await dbUpdate({
+                    table: 'scm_purchase_order_items',
+                    values: { quantity_received: patch.quantity_received },
+                    filters: [
+                        { op: 'eq', column: 'id', value: patch.id },
+                        { op: 'eq', column: 'tenant_id', value: tid }
+                    ]
+                });
+            }
+        }
+
+        window.ZyronDialog.alert(`Recepción ${numRec} registrada, contabilizada y stock actualizado.`);
         void renderCadenaSuministroModule();
     });
 };
