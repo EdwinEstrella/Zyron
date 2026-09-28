@@ -1,6 +1,6 @@
 {
   "name": "zyron",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "description": "Aplicacion para facturacion",
   "author": "Edwin",
   "main": "main.js",
@@ -118,6 +118,7 @@
       }
     ],
     "asar": true,
+    "afterPack": "./scripts/after-pack.cjs",
     "win": {
       "target": [
         "nsis"
