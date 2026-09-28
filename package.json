@@ -1,6 +1,6 @@
 {
   "name": "zyron",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Aplicacion para facturacion",
   "author": "Edwin",
   "main": "main.js",
