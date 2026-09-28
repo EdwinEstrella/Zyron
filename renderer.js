@@ -321,17 +321,13 @@ const state = {
         historyCustomerId: null
     },
     inventarioUi: {
-        section: 'catalog',
         tab: 'list',
         q: '',
         categoryId: '',
         itemKind: '',
         includeInactive: false,
         sheet: null,
-        editId: null,
-        invWarehouseId: '',
-        kardexWarehouseId: '',
-        kardexProductId: ''
+        editId: null
     },
     /** Solo superadmin: tenant elegido en modulo Roles (no muta currentTenantId del panel tenant). */
     rolesContextTenantId: null
@@ -613,6 +609,7 @@ const showDashboard = () => {
 };
 
 const updateSidebarToggleState = () => {
+    if (!sidebarToggleBtn || !sidebarToggleIcon) return;
     const isCollapsed = sidebarNav.classList.contains('hidden');
     sidebarToggleIcon.textContent = isCollapsed ? 'menu' : 'menu_open';
     const label = isCollapsed ? 'Mostrar barra lateral' : 'Ocultar barra lateral';
@@ -1445,7 +1442,7 @@ const paintDashboardSkeleton = (moduleKey) => {
             config: 'Configuracion'
         }[moduleKey] || 'Modulo';
     dashboardContent.innerHTML = `
-        <div class="mx-auto flex w-full max-w-7xl flex-col gap-8" aria-busy="true" data-zyron-skeleton="1">
+        <div class="flex w-full flex-col gap-6" aria-busy="true" data-zyron-skeleton="1">
             <div class="space-y-2">
                 <div class="h-7 w-44 max-w-[55%] animate-pulse rounded-md bg-outline-variant/25"></div>
                 <div class="h-4 w-72 max-w-[85%] animate-pulse rounded-md bg-outline-variant/18"></div>
@@ -3049,7 +3046,7 @@ const renderPanelModule = async () => {
         void openModule('clientes');
     });
     document.getElementById('panel-quick-product')?.addEventListener('click', () => {
-        state.inventarioUi = { ...state.inventarioUi, section: 'catalog', tab: 'list', sheet: 'form', editId: null };
+        state.inventarioUi = { ...state.inventarioUi, tab: 'list', sheet: 'form', editId: null };
         void openModule('inventario');
     });
     document.getElementById('panel-quick-estimate')?.addEventListener('click', () => {
@@ -4801,6 +4798,20 @@ const productsInvokeListCatalogLike = async (tenantId, rows) => {
 };
 
 /** Misma logica que edge manage-products (IPC). */
+const SUGGESTED_MEASUREMENT_UNITS = [
+    { code: 'unit', label: 'Unidad', symbol: 'u', sort_order: 10 },
+    { code: 'hour', label: 'Hora', symbol: 'h', sort_order: 20 },
+    { code: 'day', label: 'Dia', symbol: 'd', sort_order: 30 },
+    { code: 'kg', label: 'Kilogramo', symbol: 'kg', sort_order: 40 },
+    { code: 'g', label: 'Gramo', symbol: 'g', sort_order: 50 },
+    { code: 'lb', label: 'Libra', symbol: 'lb', sort_order: 60 },
+    { code: 'm', label: 'Metro', symbol: 'm', sort_order: 70 },
+    { code: 'm2', label: 'Metro cuadrado', symbol: 'm2', sort_order: 80 },
+    { code: 'm3', label: 'Metro cubico', symbol: 'm3', sort_order: 90 },
+    { code: 'box', label: 'Caja', symbol: 'cj', sort_order: 100 },
+    { code: 'pack', label: 'Paquete', symbol: 'paq', sort_order: 110 }
+];
+
 const productsManageViaDb = async (body) => {
     const tenantId = body.tenantId;
     const action = body.action;
@@ -4896,20 +4907,24 @@ const productsManageViaDb = async (body) => {
             if (error) return { data: { ok: true, rows: [], err: error.message }, error: null };
             return { data: { ok: true, rows: data || [] }, error: null };
         }
+        if (action === 'create_unit') {
+            const code = String(body.code || '').trim().toLowerCase();
+            const label = String(body.label || '').trim();
+            const symbol = String(body.symbol || '').trim() || null;
+            if (!code || !label) return { data: { error: 'Codigo y nombre son obligatorios.' }, error: null };
+            const suggested = SUGGESTED_MEASUREMENT_UNITS.find((u) => u.code === code);
+            const ins = await dbInsert({
+                table: 'measurement_units',
+                values: { tenant_id: tenantId, code, label, symbol, sort_order: suggested?.sort_order ?? 500 }
+            });
+            if (ins.error) {
+                const msg = ins.error.message || '';
+                return { data: { error: /duplicate|unique/i.test(msg) ? `Ya existe una unidad con el codigo "${code}".` : msg }, error: null };
+            }
+            return { data: { ok: true }, error: null };
+        }
         if (action === 'seed_units') {
-            const defaults = [
-                { code: 'unit', label: 'Unidad', symbol: 'u', sort_order: 10 },
-                { code: 'hour', label: 'Hora', symbol: 'h', sort_order: 20 },
-                { code: 'day', label: 'Dia', symbol: 'd', sort_order: 30 },
-                { code: 'kg', label: 'Kilogramo', symbol: 'kg', sort_order: 40 },
-                { code: 'g', label: 'Gramo', symbol: 'g', sort_order: 50 },
-                { code: 'lb', label: 'Libra', symbol: 'lb', sort_order: 60 },
-                { code: 'm', label: 'Metro', symbol: 'm', sort_order: 70 },
-                { code: 'm2', label: 'Metro cuadrado', symbol: 'm2', sort_order: 80 },
-                { code: 'm3', label: 'Metro cubico', symbol: 'm3', sort_order: 90 },
-                { code: 'box', label: 'Caja', symbol: 'cj', sort_order: 100 },
-                { code: 'pack', label: 'Paquete', symbol: 'paq', sort_order: 110 }
-            ];
+            const defaults = SUGGESTED_MEASUREMENT_UNITS;
             for (const d of defaults) {
                 const ins = await dbInsert({
                     table: 'measurement_units',
@@ -10349,299 +10364,9 @@ const renderInventarioModule = async () => {
     const includeInactive = Boolean(ui.includeInactive);
     const sheet = ui.sheet || null;
     const editId = ui.editId || null;
-    const section = ui.section || 'catalog';
-    const invWarehouseId = ui.invWarehouseId || '';
-    const kardexWarehouseId = ui.kardexWarehouseId || '';
-    const kardexProductId = ui.kardexProductId || '';
+    const stockFilter = ui.stockFilter || '';
 
-    if (section !== 'catalog') {
-        const secBtn = (key, label) => {
-            const on = section === key;
-            return `<button type="button" data-inv-section="${key}" class="rounded-md px-3 py-1.5 text-sm ${
-                on ? 'bg-primary text-white' : 'bg-surface-container-highest text-on-surface'
-            }">${label}</button>`;
-        };
-        const bootRes = await inventoryBootstrapViaDb(tid);
-        const bootU = unwrapFnInvoke(bootRes);
-        let invErr = '';
-        if (bootU.err) invErr = `<div class="mb-3 rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error">${escapeHtml(bootU.err)}</div>`;
-        else if (bootU.data && bootU.data.ok === false && bootU.data.error) {
-            invErr = `<div class="mb-3 rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error">${escapeHtml(
-                bootU.data.error
-            )}</div>`;
-        }
-        const whRes = await inventoryListWarehousesViaDb();
-        const whU = unwrapFnInvoke(whRes);
-        const warehouses = !whU.err && whU.data?.ok ? whU.data.rows || [] : [];
-        if (whU.err || whU.data?.err) {
-            invErr += `<div class="mb-3 rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error">Inventario: ${escapeHtml(
-                whU.err || whU.data?.err || 'error'
-            )}. Ejecuta inventory_module_advanced.sql en InsForge y revisa permisos RLS.</div>`;
-        }
-        const defWh = warehouses.find((w) => w.is_default) || warehouses[0];
-        const stockWhId = invWarehouseId || defWh?.id || '';
-        const alertWhId = invWarehouseId ? invWarehouseId : null;
-
-        let bodyHtml = '';
-        if (section === 'warehouses') {
-            const rowsWh = (warehouses || [])
-                .map(
-                    (w) => `<tr class="border-b border-outline-variant/20">
-                <td class="py-2 font-mono text-xs">${escapeHtml(w.code || '')}</td>
-                <td class="py-2">${escapeHtml(w.label || '')}</td>
-                <td class="py-2 text-center text-xs">${w.is_default ? 'Si' : '—'}</td>
-                <td class="py-2 text-center text-xs">${w.is_active === false ? 'No' : 'Si'}</td>
-                <td class="py-2 text-right">
-                    <button type="button" class="text-xs text-error" data-inv-wh-del="${escapeHtml(w.id)}">Eliminar</button>
-                </td>
-            </tr>`
-                )
-                .join('');
-            bodyHtml = `
-                <p class="mb-3 text-sm text-on-surface-variant">Crea bodegas; la predeterminada recibe salidas de factura y sincronia con el catalogo.</p>
-                <div class="mb-4 grid max-w-xl grid-cols-2 gap-2">
-                    <input id="inv-wh-code" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="codigo (ej. sur)" />
-                    <input id="inv-wh-label" class="rounded-md border border-outline-variant/40 px-2 py-2 text-sm" placeholder="Nombre visible" />
-                    <label class="col-span-2 flex items-center gap-2 text-sm"><input type="checkbox" id="inv-wh-default" /> Marcar como almacen predeterminado</label>
-                    <button type="button" id="inv-wh-add" class="col-span-2 rounded-md bg-primary px-3 py-2 text-sm text-white">Guardar almacen</button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-left text-sm">
-                        <thead><tr class="border-b border-outline-variant/30"><th class="py-2">Codigo</th><th class="py-2">Nombre</th><th class="py-2">Predet.</th><th class="py-2">Activo</th><th></th></tr></thead>
-                        <tbody>${rowsWh || `<tr><td colspan="5" class="py-6 text-on-surface-variant">Sin almacenes</td></tr>`}</tbody>
-                    </table>
-                </div>`;
-        } else if (section === 'stock') {
-            let stU = { err: null, data: { ok: true, rows: [] } };
-            if (stockWhId) {
-                const stRes = await inventoryListStockByWarehouseViaDb(tid, stockWhId);
-                stU = unwrapFnInvoke(stRes);
-            }
-            const stRows = !stU.err && stU.data?.ok ? stU.data.rows || [] : [];
-            if (stU.err || stU.data?.err) {
-                invErr += `<div class="text-xs text-error">${escapeHtml(stU.err || stU.data?.err || '')}</div>`;
-            }
-            const whOpts = (warehouses || [])
-                .map((w) => `<option value="${escapeHtml(w.id)}" ${stockWhId === w.id ? 'selected' : ''}>${escapeHtml(w.label || w.code)}</option>`)
-                .join('');
-            const stTable = (stRows || [])
-                .map(
-                    (r) => `<tr class="border-b border-outline-variant/20">
-                <td class="py-2 font-mono text-xs">${escapeHtml(r.sku || '')}</td>
-                <td class="py-2">${escapeHtml(r.name || '')}</td>
-                <td class="py-2 text-right">${Number(r.quantity_warehouse).toFixed(2)}</td>
-                <td class="py-2 text-right text-on-surface-variant">${Number(r.quantity_catalog).toFixed(2)}</td>
-                <td class="py-2 text-right">${Number(r.min_stock).toFixed(2)}</td>
-            </tr>`
-                )
-                .join('');
-            bodyHtml = `
-                <p class="mb-3 text-sm text-on-surface-variant">Existencias por bodega (sin fila en almacen se muestra el stock del catalogo como referencia).</p>
-                <div class="mb-4 flex flex-wrap items-center gap-2">
-                    <label class="text-sm">Almacen<select id="inv-stock-wh" class="ml-1 rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${whOpts}</select></label>
-                    <button type="button" id="inv-stock-apply" class="rounded-md border px-3 py-2 text-sm">Actualizar vista</button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full min-w-[640px] text-left text-sm">
-                        <thead><tr class="border-b border-outline-variant/30"><th class="py-2">SKU</th><th class="py-2">Producto</th><th class="py-2 text-right">Cant. almacen</th><th class="py-2 text-right">Stock catalogo</th><th class="py-2 text-right">Minimo</th></tr></thead>
-                        <tbody>${
-                            stTable ||
-                            `<tr><td colspan="5" class="py-8 text-center text-on-surface-variant">Sin datos o elige un almacen.</td></tr>`
-                        }</tbody>
-                    </table>
-                </div>`;
-        } else if (section === 'kardex') {
-            const kdPayload = { tenantId: tid, action: 'list_kardex', limit: 150 };
-            if (kardexWarehouseId) kdPayload.warehouseId = kardexWarehouseId;
-            if (kardexProductId.trim()) kdPayload.productId = kardexProductId.trim();
-            const kdRes = await inventoryListKardexViaDb(tid, kdPayload);
-            const kdU = unwrapFnInvoke(kdRes);
-            const kdRows = !kdU.err && kdU.data?.ok ? kdU.data.rows || [] : [];
-            if (kdU.err || kdU.data?.err) invErr += `<div class="text-xs text-error">${escapeHtml(kdU.err || kdU.data?.err || '')}</div>`;
-            const whOptsK = `<option value="">Todos</option>${(warehouses || [])
-                .map(
-                    (w) =>
-                        `<option value="${escapeHtml(w.id)}" ${kardexWarehouseId === w.id ? 'selected' : ''}>${escapeHtml(w.label || w.code)}</option>`
-                )
-                .join('')}`;
-            const kdTable = (kdRows || [])
-                .map((r) => {
-                    const dt = r.created_at ? new Date(r.created_at).toLocaleString() : '';
-                    const pl = r.product || {};
-                    const wl = r.warehouse || {};
-                    return `<tr class="border-b border-outline-variant/20">
-                    <td class="py-2 whitespace-nowrap text-xs">${escapeHtml(dt)}</td>
-                    <td class="py-2 text-xs">${escapeHtml(r.movement_type || '')}</td>
-                    <td class="py-2 text-right font-mono text-xs">${escapeHtml(String(r.quantity ?? ''))}</td>
-                    <td class="py-2 text-xs">${escapeHtml(pl.sku || '')} ${escapeHtml(pl.name || '')}</td>
-                    <td class="py-2 text-xs">${escapeHtml(wl.label || wl.code || '—')}</td>
-                    <td class="py-2 text-xs">${escapeHtml(r.reference_type || '')}</td>
-                    <td class="py-2 max-w-[180px] truncate text-xs" title="${escapeHtml(r.notes || '')}">${escapeHtml(r.notes || '')}</td>
-                </tr>`;
-                })
-                .join('');
-            bodyHtml = `
-                <p class="mb-3 text-sm text-on-surface-variant">Movimientos contables de inventario (facturas, anulaciones, ajustes manuales).</p>
-                <div class="mb-4 flex flex-wrap items-end gap-2">
-                    <label class="text-sm">Almacen<select id="inv-kd-wh" class="ml-1 rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${whOptsK}</select></label>
-                    <label class="text-sm">Producto UUID<input id="inv-kd-pid" class="ml-1 w-64 rounded-md border border-outline-variant/40 px-2 py-2 font-mono text-xs" value="${escapeHtml(
-                        kardexProductId
-                    )}" placeholder="opcional" /></label>
-                    <button type="button" id="inv-kd-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
-                </div>
-                <div class="overflow-x-auto">
-                    <table class="w-full min-w-[900px] text-left text-sm">
-                        <thead><tr class="border-b border-outline-variant/30"><th class="py-2">Fecha</th><th class="py-2">Tipo</th><th class="py-2 text-right">Cant.</th><th class="py-2">Producto</th><th class="py-2">Almacen</th><th class="py-2">Ref.</th><th class="py-2">Notas</th></tr></thead>
-                        <tbody>${kdTable || `<tr><td colspan="7" class="py-8 text-center text-on-surface-variant">Sin movimientos.</td></tr>`}</tbody>
-                    </table>
-                </div>`;
-        } else if (section === 'alerts') {
-            const alPayload = { tenantId: tid, action: 'list_low_stock' };
-            if (alertWhId) alPayload.warehouseId = alertWhId;
-            const alRes = await inventoryListLowStockViaDb(tid, alPayload);
-            const alU = unwrapFnInvoke(alRes);
-            const alRows = !alU.err && alU.data?.ok ? alU.data.rows || [] : [];
-            if (alU.err) invErr += `<div class="text-xs text-error">${escapeHtml(alU.err)}</div>`;
-            const whOptsA = `<option value="">Total catalogo (minimo)</option>${(warehouses || [])
-                .map(
-                    (w) =>
-                        `<option value="${escapeHtml(w.id)}" ${String(invWarehouseId || '') === String(w.id) ? 'selected' : ''}>${escapeHtml(
-                            w.label || w.code
-                        )}</option>`
-                )
-                .join('')}`;
-            const alTable = (alRows || [])
-                .map(
-                    (r) => `<tr class="border-b border-outline-variant/20">
-                <td class="py-2 font-mono text-xs">${escapeHtml(r.sku || '')}</td>
-                <td class="py-2">${escapeHtml(r.name || '')}</td>
-                <td class="py-2 text-right font-semibold text-error">${Number(r.quantity).toFixed(2)}</td>
-                <td class="py-2 text-right">${Number(r.min_stock).toFixed(2)}</td>
-                <td class="py-2 text-xs">${escapeHtml(r.scope || '')}</td>
-            </tr>`
-                )
-                .join('');
-            bodyHtml = `
-                <p class="mb-3 text-sm text-on-surface-variant">Articulos con minimo de alerta configurado en catalogo y existencia por debajo o igual.</p>
-                <div class="mb-4 flex flex-wrap items-center gap-2">
-                    <label class="text-sm">Ambito<select id="inv-al-wh" class="ml-1 rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${whOptsA}</select></label>
-                    <button type="button" id="inv-al-apply" class="rounded-md border px-3 py-2 text-sm">Actualizar</button>
-                </div>
-                <table class="w-full text-left text-sm">
-                    <thead><tr class="border-b border-outline-variant/30"><th class="py-2">SKU</th><th class="py-2">Nombre</th><th class="py-2 text-right">Cantidad</th><th class="py-2 text-right">Minimo</th><th class="py-2">Ambito</th></tr></thead>
-                    <tbody>${alTable || `<tr><td colspan="5" class="py-8 text-center text-on-surface-variant">Sin alertas.</td></tr>`}</tbody>
-                </table>`;
-        } else if (section === 'adjust') {
-            const catListRes = await productsManageViaDb({
-                tenantId: tid,
-                action: 'list_catalog',
-                itemKind: 'product',
-                includeInactive: false
-            });
-            const catListU = unwrapFnInvoke(catListRes);
-            const prods = !catListU.err && catListU.data?.ok ? catListU.data.rows || [] : [];
-            const prodOpts = (prods || [])
-                .filter((p) => String(p.item_kind || '').toLowerCase() !== 'service' && p.tracks_stock !== false)
-                .map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.sku || '')} — ${escapeHtml(p.name || '')}</option>`)
-                .join('');
-            const whOptsAd = (warehouses || [])
-                .map((w) => `<option value="${escapeHtml(w.id)}" ${stockWhId === w.id ? 'selected' : ''}>${escapeHtml(w.label || w.code)}</option>`)
-                .join('');
-            bodyHtml = `
-                <p class="mb-3 text-sm text-on-surface-variant">Suma o resta unidades en un almacen; se actualiza el stock del catalogo y queda traza en kardex (tipo adjustment).</p>
-                <form id="inv-adj-form" class="grid max-w-lg grid-cols-1 gap-3">
-                    <label class="text-sm">Almacen<select name="warehouseId" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${whOptsAd}</select></label>
-                    <label class="text-sm">Producto<select name="productId" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${prodOpts}</select></label>
-                    <label class="text-sm">Cantidad (+ entrada, - salida)<input name="delta" type="number" step="0.01" required class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="0" /></label>
-                    <label class="text-sm">Motivo<textarea name="reason" rows="2" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" required></textarea></label>
-                    <button type="submit" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Registrar ajuste</button>
-                </form>`;
-        }
-
-        dashboardContent.innerHTML = `
-            ${renderModuleHeader(
-                'Inventario',
-                'Almacenes, existencias por bodega, kardex, alertas por minimo y ajustes manuales. El catalogo y facturacion siguen en la pestana Catalogo.'
-            )}
-            <div class="mb-3 flex flex-wrap gap-2">${secBtn('catalog', 'Catalogo')}${secBtn('warehouses', 'Almacenes')}${secBtn('stock', 'Stock por almacen')}${secBtn(
-            'kardex',
-            'Kardex'
-        )}${secBtn('alerts', 'Alertas')}${secBtn('adjust', 'Ajuste manual')}</div>
-            ${invErr}
-            <div class="rounded-xl bg-surface-container-low p-1" data-inventario-root>
-                <div class="rounded-lg bg-surface-container-lowest p-5">${bodyHtml}</div>
-            </div>`;
-
-        dashboardContent.querySelectorAll('[data-inv-section]').forEach((btn) => {
-            btn.addEventListener('click', () => {
-                state.inventarioUi = { ...state.inventarioUi, section: btn.getAttribute('data-inv-section') };
-                void renderInventarioModule();
-            });
-        });
-        document.getElementById('inv-stock-wh')?.addEventListener('change', (e) => {
-            state.inventarioUi = { ...state.inventarioUi, invWarehouseId: e.target.value };
-        });
-        document.getElementById('inv-stock-apply')?.addEventListener('click', () => {
-            const v = document.getElementById('inv-stock-wh')?.value || '';
-            state.inventarioUi = { ...state.inventarioUi, invWarehouseId: v, section: 'stock' };
-            void renderInventarioModule();
-        });
-        document.getElementById('inv-kd-apply')?.addEventListener('click', () => {
-            state.inventarioUi = {
-                ...state.inventarioUi,
-                kardexWarehouseId: document.getElementById('inv-kd-wh')?.value || '',
-                kardexProductId: document.getElementById('inv-kd-pid')?.value?.trim() || '',
-                section: 'kardex'
-            };
-            void renderInventarioModule();
-        });
-        document.getElementById('inv-al-apply')?.addEventListener('click', () => {
-            state.inventarioUi = {
-                ...state.inventarioUi,
-                invWarehouseId: document.getElementById('inv-al-wh')?.value || '',
-                section: 'alerts'
-            };
-            void renderInventarioModule();
-        });
-        document.getElementById('inv-wh-add')?.addEventListener('click', async () => {
-            const code = document.getElementById('inv-wh-code')?.value?.trim();
-            const label = document.getElementById('inv-wh-label')?.value?.trim();
-            const isDefault = Boolean(document.getElementById('inv-wh-default')?.checked);
-            const res = await inventoryUpsertWarehouseViaDb(tid, { code, label, isDefault });
-            const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
-            else void renderInventarioModule();
-        });
-        dashboardContent.querySelectorAll('[data-inv-wh-del]').forEach((btn) => {
-            btn.addEventListener('click', async () => {
-                if (!(await window.ZyronDialog.confirm('Eliminar almacen vacio?'))) return;
-                const res = await inventoryDeleteWarehouseViaDb(tid, btn.getAttribute('data-inv-wh-del'));
-                const u = unwrapFnInvoke(res);
-                if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
-                else void renderInventarioModule();
-            });
-        });
-        document.getElementById('inv-adj-form')?.addEventListener('submit', async (ev) => {
-            ev.preventDefault();
-            const fd = new FormData(ev.target);
-            const res = await inventoryManualAdjustViaDb(tid, {
-                warehouseId: fd.get('warehouseId'),
-                productId: fd.get('productId'),
-                quantityDelta: fd.get('delta'),
-                reason: fd.get('reason')
-            });
-            const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
-            else {
-                window.ZyronDialog.alert('Ajuste registrado.');
-                void renderInventarioModule();
-            }
-        });
-        zyronLog('render:inventario:ops:done', { section });
-        return;
-    }
-
-    const [catRes, listRes, unitRes, accountsRes] = await Promise.all([
+    const [catRes, listRes, unitRes, accountsRes, whListRes, whStockRes] = await Promise.all([
         productsManageViaDb({ tenantId: tid, action: 'list_categories' }),
         productsManageViaDb({
             tenantId: tid,
@@ -10652,8 +10377,18 @@ const renderInventarioModule = async () => {
             includeInactive
         }),
         productsManageViaDb({ tenantId: tid, action: 'list_units' }),
-        dbSelect({ table: 'accounting_accounts', filters: [{ op: 'eq', column: 'is_active', value: true }], order: { column: 'code', ascending: true }, limit: 500 })
+        dbSelect({ table: 'accounting_accounts', filters: [{ op: 'eq', column: 'is_active', value: true }], order: { column: 'code', ascending: true }, limit: 500 }),
+        inventoryListWarehousesViaDb(),
+        dbSelect({ table: 'warehouse_stock', columns: 'product_id,warehouse_id,quantity', limit: 20000 })
     ]);
+    const catalogWarehouses = (unwrapFnInvoke(whListRes).data?.rows || []).filter((w) => w.is_active !== false);
+    // product_id -> Map(warehouse_id -> quantity)
+    const stockByProduct = new Map();
+    (whStockRes.error ? [] : whStockRes.data || []).forEach((r) => {
+        const key = String(r.product_id);
+        if (!stockByProduct.has(key)) stockByProduct.set(key, new Map());
+        stockByProduct.get(key).set(String(r.warehouse_id), inventoryNumOr(r.quantity, 0));
+    });
     const catU = unwrapFnInvoke(catRes);
     const listU = unwrapFnInvoke(listRes);
     const unitU = unwrapFnInvoke(unitRes);
@@ -10695,72 +10430,324 @@ const renderInventarioModule = async () => {
         .map((c) => `<option value="${escapeHtml(c.id)}" ${categoryId === c.id ? 'selected' : ''}>${escapeHtml(c.label)}</option>`)
         .join('')}`;
 
-    const prodRows = (rows || [])
-        .map(
-            (p) => `<tr class="border-b border-outline-variant/20 ${p.is_active === false ? 'opacity-60' : ''}">
-            <td class="py-2 font-mono text-xs">${escapeHtml(p.sku || '')}</td>
-            <td class="py-2">${escapeHtml(p.name || '')}</td>
-            <td class="py-2 text-xs">${escapeHtml(p.item_kind != null ? String(p.item_kind) : 'product')}</td>
-            <td class="py-2 text-right">${money(p.price)}</td>
-            <td class="py-2 text-right">${p.cost_price != null && p.cost_price !== '' ? money(p.cost_price) : '—'}</td>
-            <td class="py-2 text-right">${String(p.item_kind || '').toLowerCase() === 'service' ? '—' : money(p.stock)}</td>
-            <td class="py-2 text-center text-xs">${p.tracks_stock === false ? 'No' : 'Si'}</td>
-            <td class="py-2 text-right text-xs">${p.tax_rate_default != null && p.tax_rate_default !== '' ? money(p.tax_rate_default) : '—'}</td>
-            <td class="py-2 text-right text-xs">${money(p.discount_default ?? 0)}</td>
-            <td class="py-2 text-xs">${escapeHtml(p.category?.label || '—')}</td>
-            <td class="py-2 text-xs">${escapeHtml(p.unit?.label || p.unit?.code || '—')}</td>
-            <td class="py-2 text-right whitespace-nowrap">
-                <button type="button" class="rounded border border-primary/50 px-2 py-1 text-xs text-primary" data-inv-accounting="${escapeHtml(p.id)}" aria-label="Ver asientos contables de ${escapeHtml(p.name || '')}">Ver asiento contable</button>
-                <button type="button" class="rounded border border-outline-variant/40 px-2 py-1 text-xs" data-inv-edit="${escapeHtml(p.id)}">Editar</button>
-                <button type="button" class="rounded border px-2 py-1 text-xs" data-inv-toggle="${escapeHtml(p.id)}" data-active="${
-                    p.is_active === false ? '0' : '1'
-                }">${p.is_active === false ? 'Activar' : 'Desactivar'}</button>
-            </td>
-        </tr>`
-        )
+    const isService = (p) => String(p.item_kind || '').toLowerCase() === 'service';
+    const stockOf = (p) => (Number.isFinite(Number(p.stock)) ? Number(p.stock) : 0);
+    const priceWithTax = (p) => {
+        const price = Number(p.price);
+        const rate = Number(p.tax_rate_default);
+        if (!Number.isFinite(price)) return null;
+        return price * (1 + (Number.isFinite(rate) ? rate : 0) / 100);
+    };
+    const visibleRows = (rows || []).filter((p) => {
+        if (!stockFilter) return true;
+        if (isService(p)) return false;
+        const s = stockOf(p);
+        if (stockFilter === 'with') return s > 0;
+        if (stockFilter === 'without') return s === 0;
+        if (stockFilter === 'negative') return s < 0;
+        if (stockFilter === 'low') {
+            const min = Number(p.min_stock);
+            return p.tracks_stock !== false && Number.isFinite(min) && min > 0 && s <= min;
+        }
+        return true;
+    });
+    const rowsById = new Map(visibleRows.map((p) => [String(p.id), p]));
+    const selectedId = rowsById.has(String(ui.selectedId)) ? String(ui.selectedId) : visibleRows[0] ? String(visibleRows[0].id) : '';
+
+    // Muted rows mirror the legacy grid: no stock / services read as secondary, negatives flag an error.
+    const rowTone = (p) => {
+        if (p.is_active === false) return 'text-on-surface-variant/60 line-through';
+        if (isService(p)) return 'text-on-surface-variant';
+        const s = stockOf(p);
+        if (s < 0) return 'text-error';
+        if (s === 0) return 'text-primary/70';
+        return 'text-on-surface';
+    };
+    const cell = 'truncate whitespace-nowrap border-r border-outline-variant/15 px-3 py-2.5';
+    const prodRows = visibleRows
+        .map((p) => {
+            const id = String(p.id);
+            const selected = id === selectedId;
+            const withTax = priceWithTax(p);
+            const tone = `${rowTone(p)} hover:bg-surface-container-high`;
+            return `<tr data-inv-row="${escapeHtml(id)}" data-tone="${tone}" class="cursor-default select-none border-b border-outline-variant/10 ${
+                selected ? 'bg-primary text-white' : tone
+            }" aria-selected="${selected ? 'true' : 'false'}">
+            <td class="${cell} font-mono">${escapeHtml(p.sku || '')}</td>
+            <td class="${cell} truncate">${escapeHtml(p.name || '')}</td>
+            <td class="${cell}">${isService(p) ? 'Servicio' : 'Producto'}</td>
+            <td class="${cell}">${escapeHtml(p.category?.label || '')}</td>
+            <td class="${cell}">${escapeHtml(p.unit?.code || p.unit?.label || '')}</td>
+            <td class="${cell} text-right tabular-nums">${isService(p) ? '' : money(p.stock)}</td>
+            <td class="${cell} text-right tabular-nums">${p.cost_price != null && p.cost_price !== '' ? money(p.cost_price) : ''}</td>
+            <td class="${cell} text-right tabular-nums">${money(p.price)}</td>
+            <td class="${cell} text-right tabular-nums">${p.tax_rate_default != null && p.tax_rate_default !== '' ? money(p.tax_rate_default) : ''}</td>
+            <td class="${cell} text-right tabular-nums">${withTax == null ? '' : money(withTax)}</td>
+        </tr>`;
+        })
         .join('');
 
-    const listPanel = `
-        <div class="mb-4 rounded-xl border border-outline-variant/25 bg-surface-container-lowest p-4">
-            <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                    <h3 class="text-sm font-bold text-primary">Catalogo</h3>
-                    <p class="mt-1 text-xs text-on-surface-variant">Agrega productos o servicios desde aqui para usarlos despues en facturas e inventario.</p>
-                </div>
-                <button type="button" id="inv-new-btn-top" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Agregar producto o servicio</button>
+    const detailField = (label, value, extra = '') =>
+        `<div class="flex items-center gap-3"><span class="w-32 shrink-0 text-right text-on-surface-variant">${label}</span><span class="min-w-0 flex-1 truncate rounded border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 ${extra}">${
+            value === '' || value == null ? '&nbsp;' : value
+        }</span></div>`;
+    const warehouseStockHtml = (p) => {
+        if (isService(p)) return '<p class="text-sm text-on-surface-variant">Los servicios no llevan existencia.</p>';
+        if (!catalogWarehouses.length) {
+            return '<p class="text-sm text-on-surface-variant">No hay almacenes creados. Crealos en la pestana Almacenes.</p>';
+        }
+        const perWh = stockByProduct.get(String(p.id)) || new Map();
+        // Same fallback as "Stock por almacen": a default warehouse without a stock row mirrors the catalog stock.
+        const qtyFor = (w) => (perWh.has(String(w.id)) ? perWh.get(String(w.id)) : w.is_default ? stockOf(p) : 0);
+        const total = catalogWarehouses.reduce((sum, w) => sum + qtyFor(w), 0);
+        const line = (label, qty, extra = '') =>
+            `<div class="flex items-center justify-between gap-3 border-b border-outline-variant/15 py-2 ${extra}"><span class="truncate">${label}</span><span class="tabular-nums ${
+                qty < 0 ? 'text-error' : ''
+            }">${money(qty)}</span></div>`;
+        return `${catalogWarehouses
+            .map((w) =>
+                line(
+                    `${escapeHtml(w.label || w.code || '')}${
+                        w.is_default ? ' <span class="ml-1 rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-primary">Predet.</span>' : ''
+                    }`,
+                    qtyFor(w)
+                )
+            )
+            .join('')}${line('Total', total, 'border-b-0 font-semibold')}`;
+    };
+
+    // Tarjetero: stock card of one product (inventory_kardex, quantity signed: <0 = outflow).
+    const KARDEX_TYPE_LABELS = {
+        invoice_issue: 'Factura',
+        purchase_receipt: 'Recepcion de compra',
+        adjustment: 'Ajuste manual'
+    };
+    let cardFrom = ui.cardFrom || '';
+    let cardTo = ui.cardTo || '';
+    let cardWh = ui.cardWh || '';
+    const cardCache = new Map();
+
+    const loadProductCard = async (productId) => {
+        const key = `${productId}|${cardWh}`;
+        if (cardCache.has(key)) return cardCache.get(key);
+        const kdRes = await inventoryListKardexViaDb(tid, { productId, warehouseId: cardWh || undefined, limit: 500 });
+        const kdU = unwrapFnInvoke(kdRes);
+        const movements = !kdU.err && kdU.data?.ok ? kdU.data.rows || [] : [];
+        const loadError = kdU.err || kdU.data?.err || '';
+
+        const invoiceIds = [...new Set(movements.filter((m) => m.reference_type === 'invoice' && m.reference_id).map((m) => m.reference_id))];
+        const receiptIds = [...new Set(movements.filter((m) => m.reference_type === 'goods_receipt' && m.reference_id).map((m) => m.reference_id))];
+        const [invRes, recRes] = await Promise.all([
+            invoiceIds.length ? dbSelect({ table: 'invoices', columns: '*', filters: [{ op: 'in', column: 'id', value: invoiceIds }], limit: 500 }) : { data: [] },
+            receiptIds.length
+                ? dbSelect({ table: 'scm_goods_receipts', columns: '*', filters: [{ op: 'in', column: 'id', value: receiptIds }], limit: 500 })
+                : { data: [] }
+        ]);
+        const invoiceMap = new Map((invRes.data || []).map((r) => [r.id, r]));
+        const receiptMap = new Map((recRes.data || []).map((r) => [r.id, r]));
+        const customerIds = [...new Set([...invoiceMap.values()].map((r) => r.customer_id).filter(Boolean))];
+        const custRes = customerIds.length
+            ? await dbSelect({ table: 'customers', columns: 'id,name', filters: [{ op: 'in', column: 'id', value: customerIds }], limit: 500 })
+            : { data: [] };
+        const customerMap = new Map((custRes.data || []).map((c) => [c.id, c.name]));
+
+        // Running balance over the full history (oldest first) so date filters don't break it.
+        let balance = 0;
+        const rows = [...movements]
+            .sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)))
+            .map((m) => {
+                const qty = inventoryNumOr(m.quantity, 0);
+                balance += qty;
+                const inv = m.reference_type === 'invoice' ? invoiceMap.get(m.reference_id) : null;
+                const rec = m.reference_type === 'goods_receipt' ? receiptMap.get(m.reference_id) : null;
+                return {
+                    date: m.created_at,
+                    type: KARDEX_TYPE_LABELS[m.movement_type] || m.movement_type || '',
+                    document: inv ? `${inv.series || ''}-${inv.number || ''}` : rec ? rec.receipt_number || '' : '',
+                    ncf: inv ? inv.ncf || inv.e_ncf || '' : '',
+                    party: inv ? customerMap.get(inv.customer_id) || '' : m.notes || '',
+                    warehouse: m.warehouse?.code || m.warehouse?.label || '',
+                    cost: m.unit_cost,
+                    qtyIn: qty > 0 ? qty : 0,
+                    qtyOut: qty < 0 ? -qty : 0,
+                    balance
+                };
+            });
+        const result = { rows, error: loadError };
+        cardCache.set(key, result);
+        return result;
+    };
+
+    const cardBodyHtml = ({ rows, error }) => {
+        const dayOf = (iso) => String(iso || '').slice(0, 10);
+        const visible = rows.filter((r) => (!cardFrom || dayOf(r.date) >= cardFrom) && (!cardTo || dayOf(r.date) <= cardTo)).reverse();
+        const totalIn = rows.reduce((s, r) => s + r.qtyIn, 0);
+        const totalOut = rows.reduce((s, r) => s + r.qtyOut, 0);
+        const c = 'whitespace-nowrap border-r border-outline-variant/15 px-2 py-1.5';
+        const h = 'sticky top-0 z-10 border-b border-r border-outline-variant/30 bg-surface-container-high px-2 py-2 font-semibold';
+        const body = visible
+            .map(
+                (r) => `<tr class="border-b border-outline-variant/10 hover:bg-surface-container-high">
+                <td class="${c}">${escapeHtml(r.date ? new Date(r.date).toLocaleDateString() : '')}</td>
+                <td class="${c}">${escapeHtml(r.type)}</td>
+                <td class="${c} font-mono">${escapeHtml(r.document)}</td>
+                <td class="${c} font-mono">${escapeHtml(r.ncf)}</td>
+                <td class="${c} max-w-[16rem] truncate" title="${escapeHtml(r.party)}">${escapeHtml(r.party)}</td>
+                <td class="${c}">${escapeHtml(r.warehouse)}</td>
+                <td class="${c} text-right tabular-nums">${r.cost != null ? money(r.cost) : ''}</td>
+                <td class="${c} text-right tabular-nums">${r.qtyIn ? money(r.qtyIn) : ''}</td>
+                <td class="${c} text-right tabular-nums">${r.qtyOut ? money(r.qtyOut) : ''}</td>
+                <td class="${c} text-right font-semibold tabular-nums ${r.balance < 0 ? 'text-error' : ''}">${money(r.balance)}</td>
+            </tr>`
+            )
+            .join('');
+        return `
+            ${error ? `<p class="mb-2 text-xs text-error">${escapeHtml(error)}</p>` : ''}
+            <div class="max-h-64 overflow-auto rounded-md border border-outline-variant/30">
+                <table class="w-full min-w-[900px] text-left text-sm">
+                    <thead><tr>
+                        <th class="${h}">Fecha</th><th class="${h}">Tipo</th><th class="${h}">Documento</th><th class="${h}">NCF</th>
+                        <th class="${h}">Cliente | Suplidor | Detalle</th><th class="${h}">Alm.</th>
+                        <th class="${h} text-right">Costo</th><th class="${h} text-right">Entradas</th><th class="${h} text-right">Salidas</th><th class="${h} text-right">Existencia</th>
+                    </tr></thead>
+                    <tbody>${body || `<tr><td colspan="10" class="py-6 text-center text-on-surface-variant">Sin movimientos para este filtro.</td></tr>`}</tbody>
+                </table>
             </div>
-        </div>
-        <div class="mb-4 flex flex-col flex-wrap gap-2 sm:flex-row sm:items-end">
-            <input id="inv-filter-q" type="search" class="max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="SKU o nombre…" value="${escapeHtml(
+            <div class="mt-2 flex flex-wrap items-center justify-end gap-4 text-sm tabular-nums">
+                <span>Entradas <strong>${money(totalIn)}</strong></span>
+                <span>Salidas <strong>${money(totalOut)}</strong></span>
+                <span class="rounded bg-surface-container-high px-2 py-1">Existencia = Entradas − Salidas <strong>${money(totalIn - totalOut)}</strong></span>
+            </div>`;
+    };
+
+    const cardPanelHtml = () => {
+        const whOpts = `<option value="">Todos</option>${catalogWarehouses
+            .map((w) => `<option value="${escapeHtml(w.id)}" ${cardWh === String(w.id) ? 'selected' : ''}>${escapeHtml(w.label || w.code || '')}</option>`)
+            .join('')}`;
+        const input = 'rounded-md border border-outline-variant/40 bg-surface-container-lowest px-2 py-1.5 text-sm';
+        return `
+            <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                <label for="inv-card-from">Desde</label><input id="inv-card-from" type="date" class="${input}" value="${escapeHtml(cardFrom)}" />
+                <label for="inv-card-to">Hasta</label><input id="inv-card-to" type="date" class="${input}" value="${escapeHtml(cardTo)}" />
+                <label for="inv-card-wh">Almacen</label><select id="inv-card-wh" class="${input}">${whOpts}</select>
+                <button type="button" data-inv-card-filter class="rounded-md bg-primary px-3 py-1.5 text-sm text-white">Filtrar</button>
+            </div>
+            <div id="inv-card-body"><p class="py-6 text-center text-sm text-on-surface-variant">Cargando movimientos…</p></div>`;
+    };
+
+    let detailTab = ui.detailTab === 'card' ? 'card' : 'general';
+    const detailTabBtn = (key, label) =>
+        `<button type="button" data-inv-dtab="${key}" class="border-b-2 px-3 py-1.5 text-sm font-semibold ${
+            detailTab === key ? 'border-primary text-primary' : 'border-transparent text-on-surface-variant hover:text-on-surface'
+        }">${label}</button>`;
+
+    const detailHtml = (p) => {
+        if (!p) return '<p class="py-8 text-center text-sm text-on-surface-variant">Selecciona un articulo para ver sus datos.</p>';
+        const service = isService(p);
+        const withTax = priceWithTax(p);
+        const tabs = `
+            <div class="mb-3 flex flex-wrap items-center gap-1 border-b border-outline-variant/30">
+                ${detailTabBtn('general', 'Datos generales')}${service ? '' : detailTabBtn('card', 'Tarjetero')}
+            </div>`;
+        if (detailTab === 'card' && !service) return `${tabs}${cardPanelHtml()}`;
+        return `
+            ${tabs}
+            <div class="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_18rem]">
+            <div class="grid grid-cols-1 content-start gap-x-8 gap-y-2 text-sm md:grid-cols-3">
+                ${detailField('SKU', escapeHtml(p.sku || ''), 'font-mono')}
+                ${detailField('Nombre', escapeHtml(p.name || ''))}
+                ${detailField('Tipo', service ? 'Servicio' : 'Producto')}
+                ${detailField('Categoria', escapeHtml(p.category?.label || ''))}
+                ${detailField('Unidad', escapeHtml(p.unit?.label || p.unit?.code || ''))}
+                ${detailField('Estado', p.is_active === false ? 'Inactivo' : 'Activo')}
+                ${detailField('Costo', p.cost_price != null && p.cost_price !== '' ? money(p.cost_price) : '', 'text-right tabular-nums')}
+                ${detailField('Precio', money(p.price), 'text-right tabular-nums')}
+                ${detailField('Precio + ITBIS', withTax == null ? '' : money(withTax), 'text-right tabular-nums')}
+                ${detailField('ITBIS %', p.tax_rate_default != null && p.tax_rate_default !== '' ? money(p.tax_rate_default) : '', 'text-right tabular-nums')}
+                ${detailField('Desc. fijo', money(p.discount_default ?? 0), 'text-right tabular-nums')}
+                ${detailField('Controla exist.', p.tracks_stock === false ? 'No' : 'Si')}
+                ${detailField('Existencia', service ? '' : money(p.stock), 'text-right tabular-nums font-semibold')}
+                ${detailField('Stock minimo', service ? '' : money(p.min_stock ?? 0), 'text-right tabular-nums')}
+            </div>
+            <aside class="rounded-md border border-outline-variant/30 bg-surface-container-low px-4 py-3 text-sm">
+                <h5 class="mb-1 text-xs font-bold uppercase tracking-wide text-on-surface-variant">Existencia por almacen</h5>
+                ${warehouseStockHtml(p)}
+            </aside>
+            </div>`;
+    };
+
+    // Catalog actions live on the tabs row: create | actions on the selected row | export.
+    const segBtn =
+        'flex items-center gap-1.5 px-3 py-2 text-sm hover:bg-surface-container-high disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent';
+    const icon = (name) => `<span class="material-symbols-outlined text-[18px]" aria-hidden="true">${name}</span>`;
+    const listActions = `
+        <div class="flex flex-wrap items-center gap-2">
+            <button type="button" id="inv-export-btn" class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">${icon(
+                'download'
+            )}Exportar CSV</button>
+            <div class="flex divide-x divide-outline-variant/40 overflow-hidden rounded-md border border-outline-variant/50" role="group" aria-label="Acciones del articulo seleccionado">
+                <button type="button" id="inv-view-selected" class="${segBtn}" ${selectedId ? '' : 'disabled'}>${icon('visibility')}Ver</button>
+                <button type="button" id="inv-edit-selected" class="${segBtn}" ${selectedId ? '' : 'disabled'}>${icon('edit')}Editar</button>
+                <button type="button" id="inv-adjust-selected" class="${segBtn}" ${
+                    selectedId && !isService(rowsById.get(selectedId)) ? '' : 'disabled'
+                }>${icon('inventory')}Ajustar existencia</button>
+            </div>
+            <button type="button" id="inv-new-btn" class="flex items-center gap-1.5 rounded-md bg-primary px-4 py-2 text-sm font-semibold text-white">${icon(
+                'add'
+            )}Nuevo articulo</button>
+        </div>`;
+    const toolbarInput = 'rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm';
+    const th = 'sticky top-0 z-10 border-b border-r border-outline-variant/30 bg-surface-container-high px-3 py-3 font-semibold';
+    const listPanel = `
+        <div class="mb-4 flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-outline-variant/25 bg-surface-container-low px-4 py-3">
+            <label class="text-sm font-semibold" for="inv-filter-q">Buscar</label>
+            <input id="inv-filter-q" type="search" autocomplete="off" class="${toolbarInput} w-72" placeholder="SKU o nombre…" value="${escapeHtml(
                 q
             )}" />
-            <select id="inv-filter-cat" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${catOpts}</select>
-            <select id="inv-filter-kind" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
-                <option value="" ${!itemKind ? 'selected' : ''}>Todos los tipos</option>
+            <label class="text-sm" for="inv-filter-cat">Categoria</label>
+            <select id="inv-filter-cat" class="${toolbarInput}">${catOpts}</select>
+            <label class="text-sm" for="inv-filter-kind">Tipo</label>
+            <select id="inv-filter-kind" class="${toolbarInput}">
+                <option value="" ${!itemKind ? 'selected' : ''}>Todos</option>
                 <option value="product" ${itemKind === 'product' ? 'selected' : ''}>Producto</option>
                 <option value="service" ${itemKind === 'service' ? 'selected' : ''}>Servicio</option>
             </select>
+            <label class="text-sm" for="inv-filter-stock">Existencia</label>
+            <select id="inv-filter-stock" class="${toolbarInput}">
+                <option value="" ${!stockFilter ? 'selected' : ''}>Todas</option>
+                <option value="with" ${stockFilter === 'with' ? 'selected' : ''}>Con existencia</option>
+                <option value="without" ${stockFilter === 'without' ? 'selected' : ''}>Sin existencia</option>
+                <option value="negative" ${stockFilter === 'negative' ? 'selected' : ''}>Negativa</option>
+                <option value="low" ${stockFilter === 'low' ? 'selected' : ''}>Bajo minimo</option>
+            </select>
             <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="inv-filter-inactive" ${includeInactive ? 'checked' : ''} /> Inactivos</label>
-            <button type="button" id="inv-filter-apply" class="rounded-md bg-primary px-3 py-2 text-sm text-white">Filtrar</button>
-            <button type="button" id="inv-new-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Agregar producto o servicio</button>
-            <button type="button" id="inv-export-btn" class="rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Exportar CSV</button>
+            <button type="button" id="inv-filter-apply" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Filtrar</button>
         </div>
-        <div class="overflow-x-auto">
-            <table class="w-full min-w-[1100px] text-left text-sm">
+        <div id="inv-grid" tabindex="0" class="min-h-[10rem] flex-1 overflow-auto rounded-lg border border-outline-variant/30 bg-surface-container-lowest outline-none focus:ring-1 focus:ring-primary/40">
+            <table class="w-full min-w-[1100px] table-fixed text-left text-sm">
+                <colgroup>
+                    <col class="w-60" /><col /><col class="w-24" /><col class="w-36" /><col class="w-20" />
+                    <col class="w-28" /><col class="w-28" /><col class="w-28" /><col class="w-20" /><col class="w-32" />
+                </colgroup>
                 <thead>
-                    <tr class="border-b border-outline-variant/30">
-                        <th class="py-2">SKU</th><th class="py-2">Nombre</th><th class="py-2">Tipo</th>
-                        <th class="py-2 text-right">Precio</th><th class="py-2 text-right">Costo</th><th class="py-2 text-right">Stock</th>
-                        <th class="py-2">Stock auto</th><th class="py-2 text-right">ITBIS %</th><th class="py-2 text-right">Desc.</th>
-                        <th class="py-2">Categoria</th><th class="py-2">Unidad</th><th class="py-2 text-right"></th>
+                    <tr>
+                        <th class="${th}">Referencia</th><th class="${th}">Nombre</th><th class="${th}">Tipo</th>
+                        <th class="${th}">Categoria</th><th class="${th}">Unidad</th>
+                        <th class="${th} text-right">Existencia</th><th class="${th} text-right">Costo</th>
+                        <th class="${th} text-right">Precio</th><th class="${th} text-right">ITBIS %</th><th class="${th} text-right">Precio + ITBIS</th>
                     </tr>
                 </thead>
                 <tbody>${
                     prodRows ||
-                    `<tr><td colspan="12" class="py-8 text-center text-on-surface-variant">Sin filas. Crea categorias/unidades y articulos.</td></tr>`
+                    `<tr><td colspan="10" class="py-8 text-center text-on-surface-variant">Sin articulos para este filtro.</td></tr>`
                 }</tbody>
             </table>
-        </div>`;
+        </div>
+        <div class="flex shrink-0 items-center justify-between px-1 py-2 text-xs text-on-surface-variant">
+            <span>${visibleRows.length} encontrado(s)</span>
+            <span>↑/↓ para moverte · Usa Ver o Editar para abrir el articulo</span>
+        </div>
+        <div id="inv-detail" class="mt-2 max-h-[45%] shrink-0 overflow-y-auto rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-4">${detailHtml(rowsById.get(selectedId))}</div>`;
 
     const catTable = (categories || [])
         .map(
@@ -10784,19 +10771,46 @@ const renderInventarioModule = async () => {
 
     const unitTable = (units || [])
         .map(
-            (u) => `<tr class="border-b border-outline-variant/20">
-            <td class="py-2">${escapeHtml(u.code)}</td>
-            <td class="py-2">${escapeHtml(u.label)}</td>
-            <td class="py-2">${escapeHtml(u.symbol || '')}</td>
-            <td class="py-2 text-right"><button type="button" class="text-xs text-error" data-inv-unit-del="${escapeHtml(u.id)}">Eliminar</button></td>
+            (u) => `<tr class="border-b border-outline-variant/15">
+            <td class="px-3 py-2.5 font-mono text-xs">${escapeHtml(u.code)}</td>
+            <td class="px-3 py-2.5">${escapeHtml(u.label)}</td>
+            <td class="px-3 py-2.5">${escapeHtml(u.symbol || '')}</td>
+            <td class="px-3 py-2.5 text-right"><button type="button" class="rounded-md border border-error/40 px-2 py-1 text-xs text-error" data-inv-unit-del="${escapeHtml(
+                u.id
+            )}" data-label="${escapeHtml(u.label)}">Eliminar</button></td>
         </tr>`
         )
         .join('');
+    const existingUnitCodes = new Set((units || []).map((u) => String(u.code).toLowerCase()));
+    const pendingSuggestions = SUGGESTED_MEASUREMENT_UNITS.filter((s) => !existingUnitCodes.has(s.code));
+    const unitInput = 'mt-1 block rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm';
 
     const unitPanel = `
-        <button type="button" id="inv-unit-seed" class="mb-3 rounded-md border border-outline-variant/50 px-3 py-2 text-sm">Unidades sugeridas (u, kg, h…)</button>
-        <table class="w-full text-left text-sm"><thead><tr class="border-b border-outline-variant/30"><th class="py-2">Codigo</th><th class="py-2">Etiqueta</th><th class="py-2">Simbolo</th><th></th></tr></thead>
-        <tbody>${unitTable || `<tr><td colspan="4" class="py-4 text-on-surface-variant">Sin unidades</td></tr>`}</tbody></table>`;
+        <form id="inv-unit-form" class="mb-4 flex flex-wrap items-end gap-3 rounded-lg border border-outline-variant/25 bg-surface-container-low px-4 py-3">
+            <label class="text-sm">Codigo *<input name="code" required autocomplete="off" class="${unitInput} w-32 font-mono" placeholder="ej. gal" /></label>
+            <label class="text-sm">Nombre *<input name="label" required autocomplete="off" class="${unitInput} w-56" placeholder="ej. Galon" /></label>
+            <label class="text-sm">Simbolo<input name="symbol" autocomplete="off" class="${unitInput} w-24" placeholder="ej. gal" /></label>
+            <button type="submit" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Agregar unidad</button>
+        </form>
+        ${
+            pendingSuggestions.length
+                ? `<div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+                <span class="text-on-surface-variant">Sugeridas:</span>
+                ${pendingSuggestions
+                    .map(
+                        (s) =>
+                            `<button type="button" data-inv-unit-suggest="${escapeHtml(s.code)}" class="rounded-full border border-outline-variant/50 px-3 py-1 text-xs hover:border-primary hover:text-primary">+ ${escapeHtml(
+                                s.label
+                            )} (${escapeHtml(s.symbol)})</button>`
+                    )
+                    .join('')}
+            </div>`
+                : ''
+        }
+        <div class="overflow-x-auto rounded-md border border-outline-variant/25">
+            <table class="w-full text-left text-sm"><thead class="bg-surface-container-high"><tr><th class="px-3 py-2">Codigo</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2">Simbolo</th><th></th></tr></thead>
+            <tbody>${unitTable || `<tr><td colspan="4" class="py-6 text-center text-on-surface-variant">Sin unidades. Agrega las que uses.</td></tr>`}</tbody></table>
+        </div>`;
 
     const fc = editRow || {};
     const catSel = (categories || [])
@@ -10808,99 +10822,119 @@ const renderInventarioModule = async () => {
     const accountOptions = (selectedId) => `<option value="">Usar configuración de categoría/control</option>${accountingAccounts
         .map((account) => `<option value="${escapeHtml(account.id)}" ${String(selectedId || '') === String(account.id) ? 'selected' : ''}>${escapeHtml(account.code)} · ${escapeHtml(account.name)}</option>`)
         .join('')}`;
+    const fieldCls =
+        'mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm disabled:cursor-default disabled:bg-surface-container-low disabled:text-on-surface';
+    const numField = (name, label, value, hint = '') =>
+        `<label class="block text-sm">${label}<input name="${name}" type="number" step="0.01" class="${fieldCls} text-right tabular-nums" value="${escapeHtml(value)}" />${
+            hint ? `<span class="mt-1 block text-xs text-on-surface-variant">${hint}</span>` : ''
+        }</label>`;
+    const formSection = (title, description, body) => `
+        <section class="grid grid-cols-1 gap-4 border-b border-outline-variant/20 py-6 last:border-b-0 lg:grid-cols-[16rem_1fr] lg:gap-10">
+            <div>
+                <h4 class="text-sm font-bold text-primary">${title}</h4>
+                <p class="mt-1 text-xs text-on-surface-variant">${description}</p>
+            </div>
+            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">${body}</div>
+        </section>`;
+    const isServiceForm = String(fc.item_kind || '').toLowerCase() === 'service';
+    const readOnly = Boolean(editId && ui.readOnly);
+    const formFooter = readOnly
+        ? `<button type="button" id="inv-form-cancel" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Volver</button>
+                <button type="button" id="inv-form-edit" class="rounded-md bg-primary px-5 py-2 text-sm text-white">Editar</button>`
+        : `<button type="button" id="inv-form-cancel" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Cancelar</button>
+                <button type="submit" class="rounded-md bg-primary px-5 py-2 text-sm text-white">${editId ? 'Guardar cambios' : 'Crear articulo'}</button>`;
     const formPanel = `
-        <form id="inv-form" class="grid max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
-            <label class="block text-sm">SKU *<input name="sku" required class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.sku || ''
-            )}" /></label>
-            <label class="block text-sm">Nombre *<input name="name" required class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.name || ''
-            )}" /></label>
-            <label class="sm:col-span-2 block text-sm">Descripcion<textarea name="description" rows="2" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${escapeHtml(
-                fc.description || ''
-            )}</textarea></label>
-            <label class="block text-sm">Tipo
-                <select name="item_kind" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm">
-                    <option value="product" ${String(fc.item_kind || 'product').toLowerCase() !== 'service' ? 'selected' : ''}>Producto (inventario)</option>
-                    <option value="service" ${String(fc.item_kind || '').toLowerCase() === 'service' ? 'selected' : ''}>Servicio</option>
-                </select>
-            </label>
-            <label class="flex items-center gap-2 text-sm pt-6"><input type="checkbox" name="tracks_stock" ${fc.tracks_stock === false ? '' : 'checked'} /> Llevar stock automatico (facturas emitidas)</label>
-            <label class="block text-sm">Precio venta<input name="price" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.price != null ? String(fc.price) : '0'
-            )}" /></label>
-            <label class="block text-sm">Costo<input name="cost_price" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.cost_price != null && fc.cost_price !== '' ? String(fc.cost_price) : ''
-            )}" /></label>
-            <label class="block text-sm">Stock actual<input name="stock" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.stock != null ? String(fc.stock) : '0'
-            )}" /></label>
-            <label class="block text-sm">Stock minimo alerta<input name="min_stock" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.min_stock != null ? String(fc.min_stock) : '0'
-            )}" /></label>
-            <label class="block text-sm">ITBIS % sugerido en factura<input name="tax_rate_default" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.tax_rate_default != null && fc.tax_rate_default !== '' ? String(fc.tax_rate_default) : '18'
-            )}" /></label>
-            <label class="block text-sm">Descuento fijo sugerido<input name="discount_default" type="number" step="0.01" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm" value="${escapeHtml(
-                fc.discount_default != null && fc.discount_default !== '' ? String(fc.discount_default) : '0'
-            )}" /></label>
-            <label class="block text-sm">Categoria<select name="category_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm"><option value="">—</option>${catSel}</select></label>
-            <label class="block text-sm">Unidad<select name="unit_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm"><option value="">—</option>${unitSel}</select></label>
-            <fieldset class="sm:col-span-2 rounded-md border border-outline-variant/40 p-3">
-                <legend class="px-1 text-sm font-semibold">Configuración contable</legend>
-                <p class="mb-3 text-xs text-on-surface-variant">La creación del producto no genera un asiento. Estas cuentas se usarán en eventos confirmados; vacío aplica categoría o cuentas de control.</p>
-                <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                    <label class="text-sm">Ingresos<select name="sales_account_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${accountOptions(accountMapping.sales_account_id)}</select></label>
-                    <label class="text-sm">Inventario<select name="inventory_account_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${accountOptions(accountMapping.inventory_account_id)}</select></label>
-                    <label class="text-sm">Costo de ventas<select name="cost_of_sales_account_id" class="mt-1 w-full rounded-md border border-outline-variant/40 px-2 py-2 text-sm">${accountOptions(accountMapping.cost_of_sales_account_id)}</select></label>
-                </div>
+        <form id="inv-form">
+            <fieldset class="m-0 min-w-0 border-0 p-0" ${readOnly ? 'disabled' : ''}>
+            ${formSection(
+                'Datos generales',
+                'Identificacion del articulo tal como aparecera en facturas y reportes.',
+                `<label class="block text-sm">SKU / Referencia *<input name="sku" required autocomplete="off" class="${fieldCls} font-mono" value="${escapeHtml(fc.sku || '')}" /></label>
+                <label class="block text-sm sm:col-span-1 xl:col-span-2">Nombre *<input name="name" required autocomplete="off" class="${fieldCls}" value="${escapeHtml(fc.name || '')}" /></label>
+                <label class="block text-sm">Tipo
+                    <select name="item_kind" class="${fieldCls}">
+                        <option value="product" ${!isServiceForm ? 'selected' : ''}>Producto (inventario)</option>
+                        <option value="service" ${isServiceForm ? 'selected' : ''}>Servicio</option>
+                    </select>
+                </label>
+                <label class="block text-sm">Categoria<select name="category_id" class="${fieldCls}"><option value="">Sin categoria</option>${catSel}</select></label>
+                <label class="block text-sm">Unidad<select name="unit_id" class="${fieldCls}"><option value="">Sin unidad</option>${unitSel}</select></label>
+                <label class="block text-sm sm:col-span-2 xl:col-span-3">Descripcion<textarea name="description" rows="3" class="${fieldCls}">${escapeHtml(fc.description || '')}</textarea></label>`
+            )}
+            ${formSection(
+                'Precios e impuestos',
+                'Valores sugeridos al agregar el articulo a una factura. Se pueden cambiar en cada linea.',
+                `${numField('price', 'Precio de venta', fc.price != null ? String(fc.price) : '0')}
+                ${numField('cost_price', 'Costo', fc.cost_price != null && fc.cost_price !== '' ? String(fc.cost_price) : '')}
+                ${numField('tax_rate_default', 'ITBIS %', fc.tax_rate_default != null && fc.tax_rate_default !== '' ? String(fc.tax_rate_default) : '18', 'Tasa sugerida en factura')}
+                ${numField('discount_default', 'Descuento fijo', fc.discount_default != null && fc.discount_default !== '' ? String(fc.discount_default) : '0', 'Monto sugerido por linea')}`
+            )}
+            ${formSection(
+                'Inventario',
+                'Control de existencia. Los servicios no llevan stock.',
+                `${numField('stock', 'Existencia actual', fc.stock != null ? String(fc.stock) : '0')}
+                ${numField('min_stock', 'Stock minimo', fc.min_stock != null ? String(fc.min_stock) : '0', 'Genera alerta al bajar de este valor')}
+                <label class="flex items-start gap-3 rounded-md border border-outline-variant/30 p-3 text-sm sm:col-span-2 xl:col-span-1">
+                    <input type="checkbox" name="tracks_stock" class="mt-0.5" ${fc.tracks_stock === false ? '' : 'checked'} />
+                    <span>Controlar existencia<span class="mt-1 block text-xs text-on-surface-variant">Descuenta stock automaticamente al emitir facturas.</span></span>
+                </label>`
+            )}
+            ${formSection(
+                'Contabilidad',
+                'Crear el articulo no genera asiento. Estas cuentas se usan en eventos confirmados; vacio aplica la configuracion de la categoria o las cuentas de control.',
+                `<label class="block text-sm">Cuenta de ingresos<select name="sales_account_id" class="${fieldCls}">${accountOptions(accountMapping.sales_account_id)}</select></label>
+                <label class="block text-sm">Cuenta de inventario<select name="inventory_account_id" class="${fieldCls}">${accountOptions(accountMapping.inventory_account_id)}</select></label>
+                <label class="block text-sm">Cuenta de costo de ventas<select name="cost_of_sales_account_id" class="${fieldCls}">${accountOptions(accountMapping.cost_of_sales_account_id)}</select></label>`
+            )}
             </fieldset>
-            <div class="sm:col-span-2 flex gap-2">
-                <button type="submit" class="rounded-md bg-primary px-4 py-2 text-sm text-white">${editId ? 'Guardar' : 'Crear'}</button>
-                <button type="button" id="inv-form-cancel" class="rounded-md border px-4 py-2 text-sm">Cerrar</button>
+            <div class="sticky bottom-0 -mx-5 mt-2 flex justify-end gap-2 border-t border-outline-variant/30 bg-surface-container-lowest px-5 py-4">
+                ${formFooter}
             </div>
         </form>`;
+    const formTitle = !editId ? 'Nuevo producto o servicio' : readOnly ? 'Articulo' : 'Editar articulo';
 
-    const mainBody = tab === 'categories' ? catPanel : tab === 'units' ? unitPanel : listPanel;
-    const sheetHtml =
-        sheet === 'form'
-            ? `<div id="inv-sheet" class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-                <div class="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-xl bg-surface-container-lowest p-6 shadow-lg">
-                    <h3 class="mb-4 text-lg font-semibold">${editId ? 'Editar articulo' : 'Nuevo producto o servicio'}</h3>
-                    ${editId && !editRow ? '<p class="text-sm text-error">No se pudo cargar.</p>' : formPanel}
-                </div></div>`
-            : '';
+    const formPage = `
+        <div class="mb-2 flex flex-wrap items-center justify-between gap-3 border-b border-outline-variant/30 pb-4">
+            <div class="flex items-center gap-3">
+                <button type="button" id="inv-form-back" class="rounded-md border border-outline-variant/50 px-3 py-1.5 text-sm">← Volver al catalogo</button>
+                <h3 class="text-lg font-semibold">${formTitle}${editId && fc.sku ? ` · <span class="font-mono text-base">${escapeHtml(fc.sku)}</span>` : ''}</h3>
+                ${readOnly ? '<span class="rounded bg-surface-container-highest px-2 py-0.5 text-xs text-on-surface-variant">Solo lectura</span>' : ''}
+            </div>
+            ${readOnly ? '<button type="button" id="inv-form-edit-top" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Editar</button>' : ''}
+        </div>
+        ${editId && !editRow ? '<p class="py-6 text-sm text-error">No se pudo cargar el articulo.</p>' : formPanel}`;
 
-    const secBtnTop = (key, label) => {
-        const on = section === key;
-        return `<button type="button" data-inv-section="${key}" class="rounded-md px-3 py-1.5 text-sm ${
-            on ? 'bg-primary text-white' : 'bg-surface-container-highest text-on-surface'
-        }">${label}</button>`;
-    };
+    const listBody = tab === 'categories' ? catPanel : tab === 'units' ? unitPanel : listPanel;
+    const fitViewport = sheet !== 'form' && tab !== 'categories' && tab !== 'units';
+    const mainBody = sheet === 'form' ? formPage : listBody;
 
     dashboardContent.innerHTML = `
-        ${renderModuleHeader(
-            'Inventario',
-            'Catalogo de articulos, categorias y unidades. Almacenes, stock por bodega, kardex, alertas por minimo y ajustes en las demas pestanas.'
-        )}
-        <div class="mb-3 flex flex-wrap gap-2">${secBtnTop('catalog', 'Catalogo')}${secBtnTop('warehouses', 'Almacenes')}${secBtnTop(
-        'stock',
-        'Stock por almacen'
-    )}${secBtnTop('kardex', 'Kardex')}${secBtnTop('alerts', 'Alertas')}${secBtnTop('adjust', 'Ajuste manual')}</div>
+        ${renderModuleHeader('Inventario', 'Catalogo de articulos, categorias y unidades.')}
         ${fnErr}
-        <div class="rounded-xl bg-surface-container-low p-1" data-inventario-root>
-            <div class="rounded-lg bg-surface-container-lowest p-5">
-                <div class="mb-4 flex flex-wrap gap-2">${tabBtn('list', 'Articulos')}${tabBtn('categories', 'Categorias')}${tabBtn(
-        'units',
-        'Unidades'
-    )}</div>
+        <div class="rounded-xl bg-surface-container-low p-1 ${fitViewport ? 'flex min-h-0 flex-1 flex-col' : ''}" data-inventario-root ${
+        fitViewport ? 'data-fit-viewport' : ''
+    }>
+            <div class="rounded-lg bg-surface-container-lowest p-5 ${fitViewport ? 'flex min-h-0 flex-1 flex-col' : ''}">
+                ${
+                    sheet === 'form'
+                        ? ''
+                        : `<div class="mb-4 flex shrink-0 flex-wrap items-center justify-between gap-3">
+                              <div class="flex flex-wrap gap-2">${tabBtn('list', 'Articulos')}${tabBtn('categories', 'Categorias')}${tabBtn('units', 'Unidades')}</div>
+                              ${tab === 'list' ? listActions : ''}
+                          </div>`
+                }
                 ${mainBody}
             </div>
-        </div>
-        ${sheetHtml}`;
+        </div>`;
 
-    const closeSheet = () => {
-        state.inventarioUi = { ...state.inventarioUi, sheet: null, editId: null };
+    const closeSheet = (selectId) => {
+        state.inventarioUi = {
+            ...state.inventarioUi,
+            sheet: null,
+            editId: null,
+            tab: 'list',
+            ...(selectId ? { selectedId: String(selectId) } : {})
+        };
         void renderInventarioModule();
     };
 
@@ -10911,69 +10945,183 @@ const renderInventarioModule = async () => {
         });
     });
 
-    dashboardContent.querySelectorAll('[data-inv-section]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            state.inventarioUi = { ...state.inventarioUi, section: btn.getAttribute('data-inv-section') };
-            void renderInventarioModule();
-        });
-    });
-
-    document.getElementById('inv-filter-apply')?.addEventListener('click', () => {
+    const applyFilters = () => {
         state.inventarioUi = {
             ...state.inventarioUi,
             q: document.getElementById('inv-filter-q')?.value?.trim() || '',
             categoryId: document.getElementById('inv-filter-cat')?.value?.trim() || '',
             itemKind: document.getElementById('inv-filter-kind')?.value?.trim() || '',
-            includeInactive: Boolean(document.getElementById('inv-filter-inactive')?.checked)
+            stockFilter: document.getElementById('inv-filter-stock')?.value?.trim() || '',
+            includeInactive: Boolean(document.getElementById('inv-filter-inactive')?.checked),
+            selectedId: null
         };
         void renderInventarioModule();
+    };
+    document.getElementById('inv-filter-apply')?.addEventListener('click', applyFilters);
+    document.getElementById('inv-filter-q')?.addEventListener('keydown', (ev) => {
+        if (ev.key === 'Enter') applyFilters();
+    });
+    ['inv-filter-cat', 'inv-filter-kind', 'inv-filter-stock', 'inv-filter-inactive'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('change', applyFilters);
     });
 
     document.getElementById('inv-new-btn')?.addEventListener('click', () => {
         state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null };
         void renderInventarioModule();
     });
-    document.getElementById('inv-new-btn-top')?.addEventListener('click', () => {
-        state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null };
-        void renderInventarioModule();
-    });
 
-    dashboardContent.querySelectorAll('[data-inv-edit]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: btn.getAttribute('data-inv-edit') };
-            void renderInventarioModule();
+    const openProduct = (id, readOnlyMode) => {
+        if (!id) return;
+        state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: id, selectedId: id, readOnly: readOnlyMode };
+        void renderInventarioModule();
+    };
+    const openView = (id) => openProduct(id, true);
+    const openEdit = (id) => {
+        openProduct(id, false);
+    };
+    const invGrid = document.getElementById('inv-grid');
+    const invDetail = document.getElementById('inv-detail');
+    const currentDetailId = () => String(state.inventarioUi?.selectedId || selectedId || '');
+    const refreshDetail = async () => {
+        if (!invDetail) return;
+        const id = currentDetailId();
+        const product = rowsById.get(id);
+        invDetail.innerHTML = detailHtml(product);
+        if (!product || detailTab !== 'card' || isService(product)) return;
+        const card = await loadProductCard(id);
+        // Ignore a late response if the user moved to another row or tab meanwhile.
+        if (currentDetailId() !== id || detailTab !== 'card') return;
+        const body = document.getElementById('inv-card-body');
+        if (body) body.innerHTML = cardBodyHtml(card);
+    };
+    const selectRow = (tr) => {
+        if (!tr || !invGrid) return;
+        const prev = invGrid.querySelector('tr[aria-selected="true"]');
+        if (prev === tr) return;
+        if (prev) {
+            prev.className = `cursor-default select-none border-b border-outline-variant/10 ${prev.getAttribute('data-tone') || ''}`;
+            prev.setAttribute('aria-selected', 'false');
+        }
+        tr.className = 'cursor-default select-none border-b border-outline-variant/10 bg-primary text-white';
+        tr.setAttribute('aria-selected', 'true');
+        tr.scrollIntoView({ block: 'nearest' });
+        const id = tr.getAttribute('data-inv-row');
+        state.inventarioUi = { ...state.inventarioUi, selectedId: id };
+        const adjustBtn = document.getElementById('inv-adjust-selected');
+        if (adjustBtn) adjustBtn.disabled = isService(rowsById.get(id));
+        void refreshDetail();
+    };
+
+    // Manual stock adjustment (+ inflow / - outflow) for the selected product; leaves an 'adjustment' kardex row.
+    const openAdjustDialog = (productId) => {
+        const product = rowsById.get(String(productId));
+        if (!product || isService(product)) return;
+        if (!catalogWarehouses.length) {
+            window.ZyronDialog.alert('Primero crea un almacen en Configuracion > Almacenes.');
+            return;
+        }
+        const field = 'mt-1 w-full rounded-md border border-outline-variant/40 px-3 py-2 text-sm';
+        const whOpts = catalogWarehouses
+            .map((w) => `<option value="${escapeHtml(w.id)}" ${w.is_default ? 'selected' : ''}>${escapeHtml(w.label || w.code || '')}</option>`)
+            .join('');
+        const backdrop = document.createElement('div');
+        backdrop.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4';
+        backdrop.innerHTML = `
+            <form class="w-full max-w-md rounded-xl bg-surface-container-lowest p-6 shadow-lg" role="dialog" aria-modal="true" aria-labelledby="inv-adj-title">
+                <h3 id="inv-adj-title" class="text-lg font-semibold">Ajustar existencia</h3>
+                <p class="mt-1 text-sm text-on-surface-variant"><span class="font-mono">${escapeHtml(product.sku || '')}</span> · ${escapeHtml(product.name || '')}</p>
+                <div class="mt-4 grid gap-3">
+                    <label class="block text-sm">Almacen<select name="warehouseId" class="${field}">${whOpts}</select></label>
+                    <label class="block text-sm">Cantidad<input name="delta" type="number" step="0.01" required class="${field} text-right tabular-nums" placeholder="ej. 5 o -3" />
+                        <span class="mt-1 block text-xs text-on-surface-variant">Positivo suma (entrada), negativo resta (salida).</span></label>
+                    <label class="block text-sm">Motivo<textarea name="reason" rows="2" required class="${field}" placeholder="ej. Conteo fisico"></textarea></label>
+                </div>
+                <div class="mt-5 flex justify-end gap-2">
+                    <button type="button" data-adj-cancel class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Cancelar</button>
+                    <button type="submit" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Registrar ajuste</button>
+                </div>
+            </form>`;
+        const close = () => backdrop.remove();
+        backdrop.addEventListener('click', (e) => {
+            if (e.target === backdrop || e.target.closest('[data-adj-cancel]')) close();
         });
-    });
-    dashboardContent.querySelectorAll('[data-inv-accounting]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-            const result = await dbRpc('zyron_product_accounting_entries', {
-                p_tenant_id: tid,
-                p_product_id: btn.getAttribute('data-inv-accounting')
-            });
-            if (result.error || !result.data?.length) {
-                window.ZyronDialog.alert('Este producto aún no tiene asientos contables asociados.');
+        backdrop.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') close();
+        });
+        backdrop.querySelector('form').addEventListener('submit', async (ev) => {
+            ev.preventDefault();
+            const fd = new FormData(ev.target);
+            const delta = Number(fd.get('delta'));
+            if (!Number.isFinite(delta) || delta === 0) {
+                window.ZyronDialog.alert('La cantidad debe ser distinta de cero.');
                 return;
             }
-            state.contabilidadUi = { ...(state.contabilidadUi || {}), tab: 'asientos', sheet: 'detalle_asiento', editId: result.data[0].entry_id };
-            await openModule('contabilidad');
+            const u = unwrapFnInvoke(
+                await inventoryManualAdjustViaDb(tid, {
+                    warehouseId: fd.get('warehouseId'),
+                    productId: product.id,
+                    quantityDelta: delta,
+                    reason: String(fd.get('reason') || '').trim()
+                })
+            );
+            if (u.err || u.data?.error) {
+                window.ZyronDialog.alert(u.err || u.data.error || 'Error');
+                return;
+            }
+            close();
+            state.inventarioUi = { ...state.inventarioUi, selectedId: String(product.id) };
+            void renderInventarioModule();
         });
+        document.body.appendChild(backdrop);
+        backdrop.querySelector('[name="delta"]')?.focus();
+    };
+    document.getElementById('inv-adjust-selected')?.addEventListener('click', () =>
+        openAdjustDialog(invGrid?.querySelector('tr[aria-selected="true"]')?.getAttribute('data-inv-row'))
+    );
+    document.getElementById('inv-edit-selected')?.addEventListener('click', () =>
+        openEdit(invGrid?.querySelector('tr[aria-selected="true"]')?.getAttribute('data-inv-row'))
+    );
+    invGrid?.addEventListener('click', (ev) => selectRow(ev.target.closest('tr[data-inv-row]')));
+    document.getElementById('inv-view-selected')?.addEventListener('click', () =>
+        openView(invGrid?.querySelector('tr[aria-selected="true"]')?.getAttribute('data-inv-row'))
+    );
+    invGrid?.addEventListener('keydown', (ev) => {
+        const current = invGrid.querySelector('tr[aria-selected="true"]');
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+            ev.preventDefault();
+            const next = current
+                ? ev.key === 'ArrowDown'
+                    ? current.nextElementSibling
+                    : current.previousElementSibling
+                : invGrid.querySelector('tr[data-inv-row]');
+            if (next?.hasAttribute('data-inv-row')) selectRow(next);
+        }
     });
+    invGrid?.querySelector('tr[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' });
 
-    dashboardContent.querySelectorAll('[data-inv-toggle]').forEach((btn) => {
-        btn.addEventListener('click', async () => {
-            const id = btn.getAttribute('data-inv-toggle');
-            const active = btn.getAttribute('data-active') === '1';
-            const res = await productsManageViaDb({
-                tenantId: tid,
-                action: 'update_product',
-                productId: id,
-                isActive: !active
-            });
-            const u = unwrapFnInvoke(res);
-            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
-            else await renderInventarioModule();
-        });
+    // Detail actions are delegated because the panel is re-rendered on every row selection.
+    invDetail?.addEventListener('click', async (ev) => {
+        const editBtn = ev.target.closest('[data-inv-edit]');
+        if (editBtn) {
+            openEdit(editBtn.getAttribute('data-inv-edit'));
+            return;
+        }
+        const tabBtnEl = ev.target.closest('[data-inv-dtab]');
+        if (tabBtnEl) {
+            detailTab = tabBtnEl.getAttribute('data-inv-dtab') === 'card' ? 'card' : 'general';
+            state.inventarioUi = { ...state.inventarioUi, detailTab };
+            void refreshDetail();
+            return;
+        }
+        if (ev.target.closest('[data-inv-card-filter]')) {
+            cardFrom = document.getElementById('inv-card-from')?.value || '';
+            cardTo = document.getElementById('inv-card-to')?.value || '';
+            cardWh = document.getElementById('inv-card-wh')?.value || '';
+            state.inventarioUi = { ...state.inventarioUi, cardFrom, cardTo, cardWh };
+            void refreshDetail();
+        }
     });
+    if (detailTab === 'card') void refreshDetail();
 
     document.getElementById('inv-export-btn')?.addEventListener('click', async () => {
         const res = await productsManageViaDb({ tenantId: tid, action: 'export_catalog' });
@@ -11016,16 +11164,26 @@ const renderInventarioModule = async () => {
         });
     });
 
-    document.getElementById('inv-unit-seed')?.addEventListener('click', async () => {
-        const res = await productsManageViaDb({ tenantId: tid, action: 'seed_units' });
-        const u = unwrapFnInvoke(res);
+    const createUnit = async (unit) => {
+        const u = unwrapFnInvoke(await productsManageViaDb({ tenantId: tid, action: 'create_unit', ...unit }));
         if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
         else await renderInventarioModule();
+    };
+    document.getElementById('inv-unit-form')?.addEventListener('submit', (ev) => {
+        ev.preventDefault();
+        const fd = new FormData(ev.target);
+        void createUnit({ code: fd.get('code'), label: fd.get('label'), symbol: fd.get('symbol') });
+    });
+    dashboardContent.querySelectorAll('[data-inv-unit-suggest]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const s = SUGGESTED_MEASUREMENT_UNITS.find((x) => x.code === btn.getAttribute('data-inv-unit-suggest'));
+            if (s) void createUnit({ code: s.code, label: s.label, symbol: s.symbol });
+        });
     });
 
     dashboardContent.querySelectorAll('[data-inv-unit-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!(await window.ZyronDialog.confirm('Eliminar unidad?'))) return;
+            if (!(await window.ZyronDialog.confirm(`Eliminar la unidad "${btn.getAttribute('data-label') || ''}"?`))) return;
             const res = await productsManageViaDb({ tenantId: tid, action: 'delete_unit', unitId: btn.getAttribute('data-inv-unit-del') });
             const u = unwrapFnInvoke(res);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
@@ -11071,13 +11229,15 @@ const renderInventarioModule = async () => {
             }
         }
         if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
-        else closeSheet();
+        else closeSheet(productId || editId);
     });
 
-    document.getElementById('inv-form-cancel')?.addEventListener('click', closeSheet);
-    document.getElementById('inv-sheet')?.addEventListener('click', (e) => {
-        if (e.target.id === 'inv-sheet') closeSheet();
+    document.getElementById('inv-form-cancel')?.addEventListener('click', () => closeSheet());
+    document.getElementById('inv-form-back')?.addEventListener('click', () => closeSheet());
+    ['inv-form-edit', 'inv-form-edit-top'].forEach((id) => {
+        document.getElementById(id)?.addEventListener('click', () => openEdit(editId));
     });
+    if (sheet === 'form' && !readOnly) document.querySelector('#inv-form [name="sku"]')?.focus();
 
     zyronLog('render:inventario:done', { tab, count: rows.length });
 };
@@ -11776,6 +11936,462 @@ const NOMENCLATURA_ESTANDAR = [
     { code: "9.2", name: "Pérdida del Ejercicio", account_type: "expense", normal_balance: "debit" }
 ];
 
+// ---------------------------------------------------------------------------
+// Accounting reports: account ledger ("mayor") and balances / statements.
+// Source data comes from zyron_accounting_account_balances / _ledger
+// (supabase/migrations/20261005000000_accounting_reports.sql); roll-ups through
+// parent_account_id and the statements themselves are computed here.
+// ---------------------------------------------------------------------------
+const accountingReportDefaults = () => {
+    const today = new Date();
+    const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    return { from: `${today.getFullYear()}-01-01`, to: iso(today) };
+};
+
+const fmtAccMoney = (n) => {
+    const x = Number(n) || 0;
+    const s = Math.abs(x).toLocaleString('es-DO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return x < 0 ? `(${s})` : s;
+};
+
+const accountingRpcError = (error) => {
+    const msg = error?.message || String(error || '');
+    if (/function .* does not exist|could not find the function/i.test(msg)) {
+        return 'Falta aplicar la migracion 20261005000000_accounting_reports.sql en la base de datos.';
+    }
+    return msg || 'No se pudo cargar el reporte.';
+};
+
+/** Builds per-account own + rolled-up (own + descendants) figures from the balances RPC rows. */
+const buildAccountTree = (accounts, balanceRows) => {
+    const own = new Map((balanceRows || []).map((r) => [String(r.account_id), r]));
+    const byId = new Map(accounts.map((a) => [String(a.id), a]));
+    const children = new Map();
+    accounts.forEach((a) => {
+        const pid = a.parent_account_id ? String(a.parent_account_id) : '';
+        if (!children.has(pid)) children.set(pid, []);
+        children.get(pid).push(a);
+    });
+    const sortByCode = (list) => [...list].sort((x, y) => String(x.code).localeCompare(String(y.code), undefined, { numeric: true }));
+    const rolled = new Map();
+    const roll = (a) => {
+        const key = String(a.id);
+        if (rolled.has(key)) return rolled.get(key);
+        const o = own.get(key) || {};
+        const sum = {
+            openingDebit: Number(o.opening_debit) || 0,
+            openingCredit: Number(o.opening_credit) || 0,
+            periodDebit: Number(o.period_debit) || 0,
+            periodCredit: Number(o.period_credit) || 0
+        };
+        (children.get(key) || []).forEach((c) => {
+            const cs = roll(c);
+            sum.openingDebit += cs.openingDebit;
+            sum.openingCredit += cs.openingCredit;
+            sum.periodDebit += cs.periodDebit;
+            sum.periodCredit += cs.periodCredit;
+        });
+        rolled.set(key, sum);
+        return sum;
+    };
+    accounts.forEach(roll);
+    // Roots: no parent, or a parent that is not in the list.
+    const roots = sortByCode(accounts.filter((a) => !a.parent_account_id || !byId.has(String(a.parent_account_id))));
+    const ordered = [];
+    const walk = (a, depth) => {
+        ordered.push({ account: a, depth, isParent: (children.get(String(a.id)) || []).length > 0, totals: rolled.get(String(a.id)) });
+        sortByCode(children.get(String(a.id)) || []).forEach((c) => walk(c, depth + 1));
+    };
+    roots.forEach((r) => walk(r, 0));
+    const descendantsOf = (id) => {
+        const out = [String(id)];
+        (children.get(String(id)) || []).forEach((c) => out.push(...descendantsOf(c.id)));
+        return out;
+    };
+    // Grand totals use own figures only, so parents are never double counted.
+    const grand = { openingDebit: 0, openingCredit: 0, periodDebit: 0, periodCredit: 0 };
+    own.forEach((o) => {
+        grand.openingDebit += Number(o.opening_debit) || 0;
+        grand.openingCredit += Number(o.opening_credit) || 0;
+        grand.periodDebit += Number(o.period_debit) || 0;
+        grand.periodCredit += Number(o.period_credit) || 0;
+    });
+    return { ordered, rolled, descendantsOf, grand };
+};
+
+/** Balance in the account's natural direction (debit-normal: D - C; credit-normal: C - D). */
+const naturalBalance = (account, debit, credit) => (account.normal_balance === 'credit' ? credit - debit : debit - credit);
+
+const downloadCsv = (filename, rows) => {
+    const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+    const csv = rows.map((r) => r.map(esc).join(',')).join('\r\n');
+    const blob = new Blob([`﻿${csv}`], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(a.href);
+};
+
+const renderAccountingReports = async ({ mount, tid, accounts, kind }) => {
+    if (!mount) return;
+    const ui = state.contabilidadUi;
+    ui.rep = { ...accountingReportDefaults(), statement: 'trial', onlyMoves: false, hideZero: true, accountId: '', ...(ui.rep || {}) };
+    const rep = ui.rep;
+    const rerender = () => renderAccountingReports({ mount, tid, accounts, kind });
+    const input = 'rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm';
+    const th = 'sticky top-0 z-10 border-b border-outline-variant/30 bg-surface-container-high px-3 py-2 text-xs font-semibold uppercase tracking-wide';
+    const td = 'border-b border-outline-variant/10 px-3 py-1.5';
+    const num = `${td} text-right tabular-nums whitespace-nowrap`;
+    const errorBox = (msg) => `<div class="rounded-md border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">${escapeHtml(msg)}</div>`;
+    const accById = new Map(accounts.map((a) => [String(a.id), a]));
+
+    // ------------------------------------------------------------- Ledger ---
+    if (kind === 'mayor') {
+        const accOpts = `<option value="">Selecciona una cuenta…</option>${[...accounts]
+            .sort((x, y) => String(x.code).localeCompare(String(y.code), undefined, { numeric: true }))
+            .map((a) => `<option value="${escapeHtml(a.id)}" ${String(rep.accountId) === String(a.id) ? 'selected' : ''}>${escapeHtml(a.code)} · ${escapeHtml(a.name)}</option>`)
+            .join('')}`;
+        let body = '<p class="py-10 text-center text-sm text-on-surface-variant">Elige una cuenta para ver sus movimientos.</p>';
+        let exportRows = null;
+        const account = accById.get(String(rep.accountId));
+        if (account) {
+            const balRes = await dbRpc('zyron_accounting_account_balances', { p_tenant_id: tid, p_from: rep.from || null, p_to: rep.to || null });
+            if (balRes.error) {
+                body = errorBox(accountingRpcError(balRes.error));
+            } else {
+                const t = buildAccountTree(accounts, balRes.data);
+                const ids = t.descendantsOf(account.id);
+                const ledgerResults = await Promise.all(
+                    ids.map((id) => dbRpc('zyron_accounting_account_ledger', { p_tenant_id: tid, p_account_id: id, p_from: rep.from || null, p_to: rep.to || null }))
+                );
+                const failed = ledgerResults.find((r) => r.error);
+                if (failed) {
+                    body = errorBox(accountingRpcError(failed.error));
+                } else {
+                    const lines = ledgerResults
+                        .flatMap((r, i) => (r.data || []).map((l) => ({ ...l, account: accById.get(ids[i]) })))
+                        .sort((x, y) => String(x.entry_date).localeCompare(String(y.entry_date)) || String(x.entry_number || '').localeCompare(String(y.entry_number || '')));
+                    const totals = t.rolled.get(String(account.id));
+                    const opening = naturalBalance(account, totals.openingDebit, totals.openingCredit);
+                    let running = opening;
+                    const showAccountCol = ids.length > 1;
+                    const rowsHtml = lines
+                        .map((l) => {
+                            running += naturalBalance(account, Number(l.debit_amount) || 0, Number(l.credit_amount) || 0);
+                            l.running = running;
+                            return `<tr class="hover:bg-surface-container-low">
+                                <td class="${td} whitespace-nowrap">${escapeHtml(l.entry_date || '')}</td>
+                                <td class="${td}"><button type="button" class="font-mono text-xs text-primary hover:underline" data-rep-entry="${escapeHtml(l.entry_id)}">${escapeHtml(
+                                    l.entry_number || '—'
+                                )}</button></td>
+                                ${showAccountCol ? `<td class="${td} font-mono text-xs">${escapeHtml(l.account?.code || '')}</td>` : ''}
+                                <td class="${td} max-w-[28rem] truncate" title="${escapeHtml(l.description || l.memo || '')}">${escapeHtml(l.description || l.memo || l.source_label || '')}</td>
+                                <td class="${num}">${Number(l.debit_amount) ? fmtAccMoney(l.debit_amount) : ''}</td>
+                                <td class="${num}">${Number(l.credit_amount) ? fmtAccMoney(l.credit_amount) : ''}</td>
+                                <td class="${num} font-semibold ${running < 0 ? 'text-error' : ''}">${fmtAccMoney(running)}</td>
+                            </tr>`;
+                        })
+                        .join('');
+                    const cols = showAccountCol ? 7 : 6;
+                    body = `
+                        <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
+                            <h4 class="text-sm font-bold text-primary">${escapeHtml(account.code)} · ${escapeHtml(account.name)}</h4>
+                            <span class="text-xs text-on-surface-variant">${escapeHtml(ACCOUNT_TYPE_LABELS[account.account_type] || '')} · saldo normal ${
+                        account.normal_balance === 'credit' ? 'credito' : 'debito'
+                    }${showAccountCol ? ' · incluye subcuentas' : ''}</span>
+                        </div>
+                        <div class="max-h-[60vh] overflow-auto rounded-md border border-outline-variant/30">
+                            <table class="w-full min-w-[820px] text-left text-sm">
+                                <thead><tr>
+                                    <th class="${th}">Fecha</th><th class="${th}">Asiento</th>${showAccountCol ? `<th class="${th}">Cuenta</th>` : ''}<th class="${th}">Concepto</th>
+                                    <th class="${th} text-right">Debito</th><th class="${th} text-right">Credito</th><th class="${th} text-right">Saldo</th>
+                                </tr></thead>
+                                <tbody>
+                                    <tr class="bg-surface-container-low font-semibold"><td class="${td}" colspan="${cols - 1}">Saldo anterior</td><td class="${num}">${fmtAccMoney(opening)}</td></tr>
+                                    ${rowsHtml || `<tr><td colspan="${cols}" class="py-8 text-center text-on-surface-variant">Sin movimientos en el periodo.</td></tr>`}
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="mt-3 flex flex-wrap justify-end gap-4 text-sm tabular-nums">
+                            <span>Debitos <strong>${fmtAccMoney(totals.periodDebit)}</strong></span>
+                            <span>Creditos <strong>${fmtAccMoney(totals.periodCredit)}</strong></span>
+                            <span class="rounded bg-surface-container-high px-2 py-1">Saldo final <strong>${fmtAccMoney(running)}</strong></span>
+                        </div>`;
+                    exportRows = [
+                        ['Fecha', 'Asiento', 'Cuenta', 'Concepto', 'Debito', 'Credito', 'Saldo'],
+                        ['', '', '', 'Saldo anterior', '', '', opening.toFixed(2)],
+                        ...lines.map((l) => [
+                            l.entry_date,
+                            l.entry_number,
+                            l.account?.code,
+                            l.description || l.memo || '',
+                            Number(l.debit_amount || 0).toFixed(2),
+                            Number(l.credit_amount || 0).toFixed(2),
+                            l.running.toFixed(2)
+                        ])
+                    ];
+                }
+            }
+        }
+        mount.innerHTML = `
+            <div class="rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-5 shadow-sm">
+                <div class="mb-4 flex flex-wrap items-end gap-3">
+                    <label class="text-sm">Cuenta<select id="rep-account" class="${input} mt-1 block w-96 max-w-full">${accOpts}</select></label>
+                    <label class="text-sm">Desde<input id="rep-from" type="date" class="${input} mt-1 block" value="${escapeHtml(rep.from)}" /></label>
+                    <label class="text-sm">Hasta<input id="rep-to" type="date" class="${input} mt-1 block" value="${escapeHtml(rep.to)}" /></label>
+                    <button type="button" id="rep-run" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Consultar</button>
+                    ${exportRows ? '<button type="button" id="rep-export" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Exportar CSV</button>' : ''}
+                </div>
+                ${body}
+            </div>`;
+        const read = () => {
+            rep.accountId = mount.querySelector('#rep-account')?.value || '';
+            rep.from = mount.querySelector('#rep-from')?.value || '';
+            rep.to = mount.querySelector('#rep-to')?.value || '';
+        };
+        mount.querySelector('#rep-run')?.addEventListener('click', () => {
+            read();
+            void rerender();
+        });
+        mount.querySelector('#rep-account')?.addEventListener('change', () => {
+            read();
+            void rerender();
+        });
+        mount.querySelector('#rep-export')?.addEventListener('click', () => downloadCsv(`mayor-${account?.code || 'cuenta'}.csv`, exportRows));
+        mount.querySelectorAll('[data-rep-entry]').forEach((btn) =>
+            btn.addEventListener('click', () => {
+                state.contabilidadUi = { ...state.contabilidadUi, tab: 'asientos', sheet: 'detalle_asiento', editId: btn.getAttribute('data-rep-entry') };
+                void renderContabilidadModule();
+            })
+        );
+        return;
+    }
+
+    // ---------------------------------------------- Balances / statements ---
+    const statement = ['trial', 'balance', 'income'].includes(rep.statement) ? rep.statement : 'trial';
+    // The balance sheet is a position at a date: everything up to "Hasta", no opening split.
+    const rpcFrom = statement === 'balance' ? null : rep.from || null;
+    const balRes = await dbRpc('zyron_accounting_account_balances', { p_tenant_id: tid, p_from: rpcFrom, p_to: rep.to || null });
+    let body = '';
+    let exportRows = null;
+
+    if (balRes.error) {
+        body = errorBox(accountingRpcError(balRes.error));
+    } else {
+        const t = buildAccountTree(accounts, balRes.data);
+        const nameCell = (row) =>
+            `<td class="${td}"><div style="padding-left:${row.depth * 18}px" class="${row.isParent ? 'font-semibold' : ''}">${escapeHtml(row.account.name)}</div></td>`;
+        const codeCell = (row) =>
+            `<td class="${td} font-mono text-xs"><button type="button" class="hover:text-primary hover:underline" data-rep-ledger="${escapeHtml(row.account.id)}">${escapeHtml(
+                row.account.code
+            )}</button></td>`;
+
+        if (statement === 'trial') {
+            const rows = t.ordered.filter(({ account, totals }) => {
+                const moved = totals.periodDebit || totals.periodCredit;
+                const final = naturalBalance(account, totals.openingDebit + totals.periodDebit, totals.openingCredit + totals.periodCredit);
+                if (rep.onlyMoves && !moved) return false;
+                if (rep.hideZero && !moved && Math.abs(final) < 0.005 && Math.abs(naturalBalance(account, totals.openingDebit, totals.openingCredit)) < 0.005) return false;
+                return true;
+            });
+            const g = t.grand;
+            const diff = (d, c) => d - c;
+            body = `
+                <div class="max-h-[60vh] overflow-auto rounded-md border border-outline-variant/30">
+                    <table class="w-full min-w-[900px] text-left text-sm">
+                        <thead><tr>
+                            <th class="${th}">Codigo</th><th class="${th}">Nombre</th><th class="${th}">Tipo</th>
+                            <th class="${th} text-right">Saldo anterior</th><th class="${th} text-right">Debitos</th><th class="${th} text-right">Creditos</th><th class="${th} text-right">Saldo final</th>
+                        </tr></thead>
+                        <tbody>${
+                            rows
+                                .map(({ account, depth, isParent, totals }) => {
+                                    const opening = naturalBalance(account, totals.openingDebit, totals.openingCredit);
+                                    const final = naturalBalance(account, totals.openingDebit + totals.periodDebit, totals.openingCredit + totals.periodCredit);
+                                    return `<tr class="hover:bg-surface-container-low ${isParent ? 'bg-surface-container-low/40' : ''}">
+                                        ${codeCell({ account })}${nameCell({ account, depth, isParent })}
+                                        <td class="${td} text-xs">${escapeHtml(ACCOUNT_TYPE_LABELS[account.account_type] || '')}</td>
+                                        <td class="${num}">${fmtAccMoney(opening)}</td>
+                                        <td class="${num}">${fmtAccMoney(totals.periodDebit)}</td>
+                                        <td class="${num}">${fmtAccMoney(totals.periodCredit)}</td>
+                                        <td class="${num} font-semibold">${fmtAccMoney(final)}</td>
+                                    </tr>`;
+                                })
+                                .join('') || `<tr><td colspan="7" class="py-8 text-center text-on-surface-variant">Sin cuentas para este filtro.</td></tr>`
+                        }</tbody>
+                    </table>
+                </div>
+                <div class="mt-3 grid gap-1 text-sm tabular-nums sm:justify-end">
+                    ${[
+                        ['Anterior', g.openingDebit, g.openingCredit],
+                        ['Del periodo', g.periodDebit, g.periodCredit],
+                        ['Acumulado', g.openingDebit + g.periodDebit, g.openingCredit + g.periodCredit]
+                    ]
+                        .map(([label, d, c]) => {
+                            const dd = diff(d, c);
+                            return `<div class="grid grid-cols-[7rem_repeat(3,minmax(9rem,auto))] items-center gap-3 sm:justify-end">
+                                <span class="text-right text-on-surface-variant">${label}</span>
+                                <span class="text-right">Debitos <strong>${fmtAccMoney(d)}</strong></span>
+                                <span class="text-right">Creditos <strong>${fmtAccMoney(c)}</strong></span>
+                                <span class="text-right ${Math.abs(dd) >= 0.005 ? 'text-error' : 'text-on-surface-variant'}">Diferencia <strong>${fmtAccMoney(dd)}</strong></span>
+                            </div>`;
+                        })
+                        .join('')}
+                </div>`;
+            exportRows = [
+                ['Codigo', 'Nombre', 'Tipo', 'Saldo anterior', 'Debitos', 'Creditos', 'Saldo final'],
+                ...rows.map(({ account, totals }) => [
+                    account.code,
+                    account.name,
+                    ACCOUNT_TYPE_LABELS[account.account_type] || '',
+                    naturalBalance(account, totals.openingDebit, totals.openingCredit).toFixed(2),
+                    totals.periodDebit.toFixed(2),
+                    totals.periodCredit.toFixed(2),
+                    naturalBalance(account, totals.openingDebit + totals.periodDebit, totals.openingCredit + totals.periodCredit).toFixed(2)
+                ])
+            ];
+        } else {
+            // Statement sections: balance sheet (position) or income statement (period).
+            const amountOf = (account, totals) =>
+                statement === 'balance'
+                    ? naturalBalance(account, totals.openingDebit + totals.periodDebit, totals.openingCredit + totals.periodCredit)
+                    : naturalBalance(account, totals.periodDebit, totals.periodCredit);
+            const sectionTotal = (type) =>
+                t.ordered
+                    .filter((r) => r.account.account_type === type && r.depth === 0)
+                    .reduce((s, r) => s + amountOf(r.account, r.totals), 0);
+            const sectionRows = (type) =>
+                t.ordered.filter((r) => {
+                    if (r.account.account_type !== type) return false;
+                    return !rep.hideZero || Math.abs(amountOf(r.account, r.totals)) >= 0.005;
+                });
+            const section = (title, type) => {
+                const rows = sectionRows(type);
+                const total = sectionTotal(type);
+                return {
+                    total,
+                    html: `
+                        <tr><td colspan="3" class="bg-primary/5 px-3 py-2 text-xs font-bold uppercase tracking-wide text-primary">${title}</td></tr>
+                        ${
+                            rows
+                                .map(
+                                    (r) => `<tr class="hover:bg-surface-container-low">${codeCell(r)}${nameCell(r)}<td class="${num} ${r.isParent ? 'font-semibold' : ''}">${fmtAccMoney(
+                                        amountOf(r.account, r.totals)
+                                    )}</td></tr>`
+                                )
+                                .join('') || `<tr><td colspan="3" class="${td} text-on-surface-variant">Sin saldos.</td></tr>`
+                        }
+                        <tr class="font-semibold"><td colspan="2" class="${td} text-right">Total ${title.toLowerCase()}</td><td class="${num} border-t-2 border-outline-variant/40">${fmtAccMoney(
+                        total
+                    )}</td></tr>`,
+                    exp: [[title.toUpperCase(), '', ''], ...rows.map((r) => [r.account.code, r.account.name, amountOf(r.account, r.totals).toFixed(2)]), ['', `Total ${title.toLowerCase()}`, total.toFixed(2)]]
+                };
+            };
+            const bigRow = (label, value, strong = true) =>
+                `<tr class="${strong ? 'bg-surface-container-high font-bold' : ''}"><td colspan="2" class="${td} text-right">${label}</td><td class="${num} ${
+                    value < 0 ? 'text-error' : ''
+                }">${fmtAccMoney(value)}</td></tr>`;
+            let tbody = '';
+            let checkHtml = '';
+            if (statement === 'balance') {
+                const a = section('Activos', 'asset');
+                const l = section('Pasivos', 'liability');
+                const e = section('Patrimonio', 'equity');
+                // Revenue/expense are not closed into equity yet: show the result so the equation balances.
+                const result = sectionTotal('revenue') - sectionTotal('expense');
+                const liabEquity = l.total + e.total + result;
+                tbody = `${a.html}${bigRow('TOTAL ACTIVOS', a.total)}${l.html}${e.html}${bigRow('Resultado del ejercicio (no cerrado)', result, false)}${bigRow(
+                    'TOTAL PASIVOS + PATRIMONIO',
+                    liabEquity
+                )}`;
+                const gap = a.total - liabEquity;
+                checkHtml =
+                    Math.abs(gap) < 0.005
+                        ? '<p class="mt-3 text-right text-sm text-success">Cuadrado: Activos = Pasivos + Patrimonio</p>'
+                        : `<p class="mt-3 text-right text-sm text-error">Descuadre de ${fmtAccMoney(gap)} entre Activos y Pasivos + Patrimonio</p>`;
+                exportRows = [['Codigo', 'Nombre', 'Monto'], ...a.exp, ['', 'TOTAL ACTIVOS', a.total.toFixed(2)], ...l.exp, ...e.exp, ['', 'Resultado del ejercicio', result.toFixed(2)], ['', 'TOTAL PASIVOS + PATRIMONIO', liabEquity.toFixed(2)]];
+            } else {
+                const r = section('Ingresos', 'revenue');
+                const x = section('Costos y gastos', 'expense');
+                const net = r.total - x.total;
+                tbody = `${r.html}${x.html}${bigRow(net >= 0 ? 'UTILIDAD NETA' : 'PERDIDA NETA', net)}`;
+                exportRows = [['Codigo', 'Nombre', 'Monto'], ...r.exp, ...x.exp, ['', 'Resultado neto', net.toFixed(2)]];
+            }
+            body = `
+                <div class="max-h-[62vh] overflow-auto rounded-md border border-outline-variant/30">
+                    <table class="w-full min-w-[640px] text-left text-sm">
+                        <thead><tr><th class="${th} w-40">Codigo</th><th class="${th}">Cuenta</th><th class="${th} w-48 text-right">Monto</th></tr></thead>
+                        <tbody>${tbody}</tbody>
+                    </table>
+                </div>
+                ${checkHtml}`;
+        }
+    }
+
+    const periodNote =
+        statement === 'balance'
+            ? `Situacion al ${escapeHtml(rep.to || 'dia de hoy')}`
+            : `Periodo ${escapeHtml(rep.from || 'inicio')} a ${escapeHtml(rep.to || 'hoy')}`;
+    mount.innerHTML = `
+        <div class="rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-5 shadow-sm">
+            <div class="mb-4 flex flex-wrap items-end gap-3">
+                <label class="text-sm">Reporte<select id="rep-statement" class="${input} mt-1 block">
+                    <option value="trial" ${statement === 'trial' ? 'selected' : ''}>Balanza de comprobacion</option>
+                    <option value="balance" ${statement === 'balance' ? 'selected' : ''}>Balance general (situacion)</option>
+                    <option value="income" ${statement === 'income' ? 'selected' : ''}>Estado de resultados</option>
+                </select></label>
+                ${
+                    statement === 'balance'
+                        ? ''
+                        : `<label class="text-sm">Desde<input id="rep-from" type="date" class="${input} mt-1 block" value="${escapeHtml(rep.from)}" /></label>`
+                }
+                <label class="text-sm">${statement === 'balance' ? 'Al' : 'Hasta'}<input id="rep-to" type="date" class="${input} mt-1 block" value="${escapeHtml(rep.to)}" /></label>
+                <div class="flex flex-col gap-1 pb-1 text-sm">
+                    ${
+                        statement === 'trial'
+                            ? `<label class="flex items-center gap-2"><input type="checkbox" id="rep-only-moves" ${rep.onlyMoves ? 'checked' : ''} /> Solo cuentas con movimientos</label>`
+                            : ''
+                    }
+                    <label class="flex items-center gap-2"><input type="checkbox" id="rep-hide-zero" ${rep.hideZero ? 'checked' : ''} /> Ocultar cuentas en cero</label>
+                </div>
+                <button type="button" id="rep-run" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Generar</button>
+                ${exportRows ? '<button type="button" id="rep-export" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Exportar CSV</button>' : ''}
+                <span class="ml-auto self-center text-xs text-on-surface-variant">${periodNote}</span>
+            </div>
+            ${body}
+        </div>`;
+
+    const read = () => {
+        rep.statement = mount.querySelector('#rep-statement')?.value || 'trial';
+        const fromEl = mount.querySelector('#rep-from');
+        if (fromEl) rep.from = fromEl.value || '';
+        rep.to = mount.querySelector('#rep-to')?.value || '';
+        const moves = mount.querySelector('#rep-only-moves');
+        if (moves) rep.onlyMoves = moves.checked;
+        rep.hideZero = Boolean(mount.querySelector('#rep-hide-zero')?.checked);
+    };
+    mount.querySelector('#rep-run')?.addEventListener('click', () => {
+        read();
+        void rerender();
+    });
+    ['#rep-statement', '#rep-only-moves', '#rep-hide-zero'].forEach((sel) =>
+        mount.querySelector(sel)?.addEventListener('change', () => {
+            read();
+            void rerender();
+        })
+    );
+    const names = { trial: 'balanza-comprobacion', balance: 'balance-general', income: 'estado-resultados' };
+    mount.querySelector('#rep-export')?.addEventListener('click', () => downloadCsv(`${names[statement]}-${rep.to || 'hoy'}.csv`, exportRows));
+    // Account code -> its ledger.
+    mount.querySelectorAll('[data-rep-ledger]').forEach((btn) =>
+        btn.addEventListener('click', () => {
+            state.contabilidadUi = { ...state.contabilidadUi, tab: 'mayor', rep: { ...rep, accountId: btn.getAttribute('data-rep-ledger') } };
+            void renderContabilidadModule();
+        })
+    );
+};
+
 const renderContabilidadModule = async () => {
     zyronLog('render:contabilidad:start', { tenantId: state.currentTenantId });
     if (!state.currentTenantId) {
@@ -11803,12 +12419,15 @@ const renderContabilidadModule = async () => {
     });
     const accounts = accountsRes?.data || [];
 
-    // Cargar Asientos Contables
-    const entriesRes = await dbSelect({
-        table: 'accounting_journal_entries',
-        filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
-        order: { column: 'entry_date', ascending: false }
-    });
+    // Journal entries (one lines query per entry) are only needed by the Asientos tab and its detail sheet.
+    const needsEntries = ui.tab === 'asientos' || ui.sheet === 'detalle_asiento';
+    const entriesRes = needsEntries
+        ? await dbSelect({
+              table: 'accounting_journal_entries',
+              filters: [{ op: 'eq', column: 'tenant_id', value: tid }],
+              order: { column: 'entry_date', ascending: false }
+          })
+        : { data: [] };
     const entriesRaw = entriesRes?.data || [];
 
     // Cargar totales para los asientos de forma asíncrona
@@ -11903,14 +12522,16 @@ const renderContabilidadModule = async () => {
 
     let contentHtml = '';
 
-    if (ui.tab === 'cuentas') {
+    if (ui.tab === 'mayor' || ui.tab === 'balanzas') {
+        contentHtml = '<div id="acc-reports-mount"><p class="py-10 text-center text-sm text-on-surface-variant">Cargando…</p></div>';
+    } else if (ui.tab === 'cuentas') {
         const rowsHtml = filteredAccounts.map(acc => {
             const parts = acc.code.split('.');
             const indent = (parts.length - 1) * 16; // Sangría en px basada en nivel
             const isParent = accounts.some(a => a.parent_account_id === acc.id);
             return `
                 <tr class="border-b border-outline-variant/20 hover:bg-surface-container-low/40 transition-colors">
-                    <td class="py-3 px-4 font-mono text-xs text-on-surface-variant">${escapeHtml(acc.code)}</td>
+                    <td class="py-3 px-4 font-mono text-xs text-on-surface-variant"><button type="button" class="hover:text-primary hover:underline" data-acc-ledger="${escapeHtml(acc.id)}" title="Ver movimientos">${escapeHtml(acc.code)}</button></td>
                     <td class="py-3 px-4">
                         <div style="padding-left: ${indent}px" class="flex items-center gap-2 ${isParent ? 'font-semibold text-on-surface' : 'text-on-surface-variant'}">
                             ${isParent ? '<span class="material-symbols-outlined text-xs select-none">folder</span>' : '<span class="material-symbols-outlined text-xs select-none">description</span>'}
@@ -12371,6 +12992,12 @@ const renderContabilidadModule = async () => {
                 <button type="button" data-tab-key="asientos" class="py-3 px-6 text-sm font-medium transition-all border-b-2 border-transparent ${ui.tab === 'asientos' ? activeTabClass : inactiveTabClass}">
                     Historial de Asientos
                 </button>
+                <button type="button" data-tab-key="mayor" class="py-3 px-6 text-sm font-medium transition-all border-b-2 border-transparent ${ui.tab === 'mayor' ? activeTabClass : inactiveTabClass}">
+                    Movimientos de Cuenta
+                </button>
+                <button type="button" data-tab-key="balanzas" class="py-3 px-6 text-sm font-medium transition-all border-b-2 border-transparent ${ui.tab === 'balanzas' ? activeTabClass : inactiveTabClass}">
+                    Balanzas | Estados
+                </button>
             </div>
 
             <!-- Contenido Activo -->
@@ -12392,6 +13019,18 @@ const renderContabilidadModule = async () => {
             void renderContabilidadModule();
         });
     });
+
+    dashboardContent.querySelectorAll('[data-acc-ledger]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            ui.tab = 'mayor';
+            ui.rep = { ...(ui.rep || {}), accountId: btn.getAttribute('data-acc-ledger') };
+            void renderContabilidadModule();
+        });
+    });
+
+    if (ui.tab === 'mayor' || ui.tab === 'balanzas') {
+        await renderAccountingReports({ mount: document.getElementById('acc-reports-mount'), tid, accounts, kind: ui.tab });
+    }
 
     // Eventos de Catálogo
     if (ui.tab === 'cuentas') {
@@ -12853,6 +13492,71 @@ const renderContabilidadModule = async () => {
     zyronLog('render:contabilidad:done', { tab: ui.tab });
 };
 
+// Warehouses are company-level settings (not per product), so they live under Configuracion.
+const renderWarehouseSettings = async (mount, tid) => {
+    if (!mount) return;
+    await inventoryBootstrapViaDb(tid);
+    const whU = unwrapFnInvoke(await inventoryListWarehousesViaDb());
+    const warehouses = !whU.err && whU.data?.ok ? whU.data.rows || [] : [];
+    const loadErr = whU.err || whU.data?.err || '';
+    const input = 'rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm';
+    const rows = warehouses
+        .map(
+            (w) => `<tr class="border-b border-outline-variant/15">
+            <td class="px-3 py-2.5 font-mono text-xs">${escapeHtml(w.code || '')}</td>
+            <td class="px-3 py-2.5">${escapeHtml(w.label || '')}</td>
+            <td class="px-3 py-2.5 text-center">${
+                w.is_default ? '<span class="rounded bg-primary/10 px-2 py-0.5 text-xs font-semibold text-primary">Predeterminado</span>' : ''
+            }</td>
+            <td class="px-3 py-2.5 text-center text-xs">${w.is_active === false ? 'No' : 'Si'}</td>
+            <td class="px-3 py-2.5 text-right">
+                <button type="button" class="rounded-md border border-error/40 px-2 py-1 text-xs text-error" data-wh-del="${escapeHtml(w.id)}">Eliminar</button>
+            </td>
+        </tr>`
+        )
+        .join('');
+    mount.innerHTML = `
+        <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-5 shadow-sm">
+            <h3 class="text-sm font-bold text-primary">Almacenes</h3>
+            <p class="mt-1 text-xs text-on-surface-variant">Lugares donde guardas mercancia. El predeterminado es de donde salen las unidades al emitir facturas.</p>
+            ${loadErr ? `<p class="mt-3 text-xs text-error">${escapeHtml(loadErr)}</p>` : ''}
+            <div class="mt-4 flex flex-wrap items-end gap-3">
+                <label class="text-sm">Codigo<input id="wh-code" class="${input} mt-1 block w-40 font-mono" placeholder="ej. principal" autocomplete="off" /></label>
+                <label class="text-sm">Nombre<input id="wh-label" class="${input} mt-1 block w-64" placeholder="ej. Tienda principal" autocomplete="off" /></label>
+                <label class="flex items-center gap-2 pb-2 text-sm"><input type="checkbox" id="wh-default" /> Predeterminado</label>
+                <button type="button" id="wh-add" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Agregar almacen</button>
+            </div>
+            <div class="mt-5 overflow-x-auto rounded-md border border-outline-variant/25">
+                <table class="w-full text-left text-sm">
+                    <thead class="bg-surface-container-high"><tr>
+                        <th class="px-3 py-2">Codigo</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2 text-center">Predeterminado</th>
+                        <th class="px-3 py-2 text-center">Activo</th><th class="px-3 py-2"></th>
+                    </tr></thead>
+                    <tbody>${rows || '<tr><td colspan="5" class="py-6 text-center text-on-surface-variant">Sin almacenes</td></tr>'}</tbody>
+                </table>
+            </div>
+        </div>`;
+    const rerender = () => renderWarehouseSettings(mount, tid);
+    mount.querySelector('#wh-add')?.addEventListener('click', async () => {
+        const res = await inventoryUpsertWarehouseViaDb(tid, {
+            code: mount.querySelector('#wh-code')?.value?.trim(),
+            label: mount.querySelector('#wh-label')?.value?.trim(),
+            isDefault: Boolean(mount.querySelector('#wh-default')?.checked)
+        });
+        const u = unwrapFnInvoke(res);
+        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
+        else await rerender();
+    });
+    mount.querySelectorAll('[data-wh-del]').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+            if (!(await window.ZyronDialog.confirm('Eliminar almacen vacio?'))) return;
+            const u = unwrapFnInvoke(await inventoryDeleteWarehouseViaDb(tid, btn.getAttribute('data-wh-del')));
+            if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
+            else await rerender();
+        });
+    });
+};
+
 const renderConfigModule = async () => {
     zyronLog('render:config:start', { tenantId: state.currentTenantId });
     if (!state.currentTenantId) {
@@ -13139,6 +13843,7 @@ const renderConfigModule = async () => {
         { key: 'preferencias', icon: 'tune', label: 'Preferencias' },
         { key: 'documentos', icon: 'description', label: 'Facturas y presupuestos' },
         { key: 'impuestos', icon: 'request_quote', label: 'Impuestos' },
+        { key: 'almacenes', icon: 'warehouse', label: 'Almacenes' },
         { key: 'pagos', icon: 'payments', label: 'Pagos' },
         { key: 'notas', icon: 'notes', label: 'Notas' },
         { key: 'campos', icon: 'dynamic_form', label: 'Campos personalizados' },
@@ -13307,6 +14012,7 @@ const renderConfigModule = async () => {
         preferencias: preferencesBlock,
         documentos: invoiceFormatBlock,
         impuestos: '<div id="config-fiscal-mount"></div>',
+        almacenes: '<div id="config-warehouses-mount"></div>',
         pagos: shortcutCard('Pagos', 'Metodos de pago, cuentas por cobrar, vencimientos y conciliacion viven en Pagos y cobros.', 'Abrir pagos', 'pagos'),
         notas: devCard('Notas', 'Plantillas de notas para documentos y clientes estaran disponibles aqui.'),
         campos: devCard('Campos personalizados', 'Campos extra para clientes, productos y documentos se agregaran en esta seccion.'),
@@ -13349,6 +14055,9 @@ const renderConfigModule = async () => {
     }
     if (activeSetting === 'impuestos') {
         await renderFiscalModule({ embedded: true, mount: document.getElementById('config-fiscal-mount') });
+    }
+    if (activeSetting === 'almacenes') {
+        await renderWarehouseSettings(document.getElementById('config-warehouses-mount'), tid);
     }
     document.querySelectorAll('[data-config-tab]').forEach((btn) => {
         btn.addEventListener('click', async () => {
@@ -16057,7 +16766,7 @@ const performLogout = async () => {
 
 logoutBtn.addEventListener('click', () => performLogout());
 
-sidebarToggleBtn.addEventListener('click', () => {
+sidebarToggleBtn?.addEventListener('click', () => {
     sidebarNav.classList.toggle('hidden');
     updateSidebarToggleState();
 });

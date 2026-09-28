@@ -31,12 +31,12 @@
             -webkit-app-region: drag;
             height: 32px;
             flex-shrink: 0;
-            background: #f4f7fb;
+            background: #0f2744;
             display: flex;
             align-items: center;
             padding: 0 12px;
-            border-bottom: 1px solid rgba(15, 39, 68, 0.08);
-            color: #0f2744;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+            color: #ffffff;
         }
 
         .titlebar-brand {
@@ -64,7 +64,7 @@
         }
 
         .titlebar-logo-btn:hover {
-            background: rgba(15, 39, 68, 0.1);
+            background: rgba(255, 255, 255, 0.12);
             transform: scale(1.08);
         }
 
@@ -106,12 +106,13 @@
             align-items: center;
             justify-content: center;
             font-size: 16px;
-            color: #0f2744;
+            color: #ffffff;
             transition: background 0.1s;
         }
 
         .titlebar button:hover {
-            background: rgba(15, 39, 68, 0.06);
+            background: rgba(255, 255, 255, 0.12);
+            color: #ffffff;
         }
 
         .titlebar button.close:hover {
@@ -234,6 +235,12 @@
             background: linear-gradient(135deg, #0f2744 0%, #1e4976 100%);
         }
 
+        /* @tailwindcss/forms draws the chevron on the right; keep room for it even when
+           px-* utilities override padding-right. Higher specificity than a single utility. */
+        select:not([multiple]):not([size]) {
+            padding-right: 2.25rem;
+        }
+
         .app-sidebar {
             background: rgba(255, 255, 255, 0.92);
             border-right: 1px solid rgba(148, 163, 184, 0.35);
@@ -255,23 +262,18 @@
         }
 
         .nav-module:hover {
-            background: #1e4976;
-            color: #bfdbfe;
-        }
-
-        .nav-module.is-active {
-            background: #fff;
+            background: #e8eef6;
             color: #0f2744;
-            font-weight: 600;
-            box-shadow: 0 4px 12px rgba(15, 39, 68, 0.06);
-            border-color: rgba(15, 39, 68, 0.08);
         }
 
+        /* Active module stays "lit" in the same navy as the titlebar. */
+        .nav-module.is-active,
         .nav-module.is-active:hover {
-            background: #1e4976;
-            color: #bfdbfe;
-            box-shadow: 0 4px 12px rgba(15, 39, 68, 0.15);
-            border-color: rgba(30, 73, 118, 0.2);
+            background: #0f2744;
+            color: #ffffff;
+            font-weight: 600;
+            box-shadow: 0 6px 16px rgba(15, 39, 68, 0.28);
+            border-color: #0f2744;
         }
 
         .dash-main {
@@ -279,6 +281,19 @@
             min-width: 0;
             min-height: 0;
             overflow-y: auto;
+        }
+
+        /* Views marked with [data-fit-viewport] fill the window height and scroll internally
+           (e.g. inventory catalog: only the grid scrolls, the detail panel stays visible). */
+        .dash-main:has([data-fit-viewport]) {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .dash-main:has([data-fit-viewport]) #dashboard-content {
+            flex: 1;
+            min-height: 0;
         }
 
         .sr-only {
@@ -345,17 +360,17 @@
                 </svg>
             </button>
             <button id="max-btn" type="button" aria-label="Maximizar">
-                <svg id="max-icon" width="12" height="12" viewBox="0 0 12 12" style="display: block;" aria-hidden="true">
-                    <rect x="1" y="1" width="10" height="10" fill="none" stroke="currentColor" stroke-width="1" />
+                <svg id="max-icon" width="12" height="12" viewBox="0 0 12 12" style="display: block;" shape-rendering="crispEdges" aria-hidden="true">
+                    <rect x="1.5" y="1.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.2" />
                 </svg>
-                <svg id="restore-icon" width="12" height="12" viewBox="0 0 12 12" style="display: none;" aria-hidden="true">
-                    <rect x="1" y="3" width="8" height="8" fill="none" stroke="currentColor" stroke-width="1" />
-                    <polyline points="3 3 3 1 11 1 11 9" fill="none" stroke="currentColor" stroke-width="1" />
+                <svg id="restore-icon" width="12" height="12" viewBox="0 0 12 12" style="display: none;" shape-rendering="crispEdges" aria-hidden="true">
+                    <rect x="1.5" y="3.5" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.2" />
+                    <polyline points="3.5 3.5 3.5 1.5 10.5 1.5 10.5 8.5" fill="none" stroke="currentColor" stroke-width="1.2" />
                 </svg>
             </button>
             <button id="close-btn" type="button" class="close" aria-label="Cerrar">
                 <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-                    <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="1" />
+                    <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="1.2" />
                 </svg>
             </button>
         </div>
@@ -621,39 +636,9 @@
         </nav>
 
         <div class="flex min-w-0 min-h-0 flex-1 flex-col">
-            <header id="dashboard-app-header" class="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-outline-variant/50 bg-surface-container-low px-5 lg:px-8">
-                <div class="flex min-w-0 flex-1 items-center gap-5">
-                    <button id="sidebar-toggle-btn" type="button" class="flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-primary transition-colors hover:bg-black/[0.04]" aria-label="Ocultar barra lateral" title="Ocultar barra lateral">
-                        <span id="sidebar-toggle-icon" class="material-symbols-outlined text-[22px]">menu_open</span>
-                    </button>
-                    <div class="relative hidden max-w-xs flex-1 lg:block">
-                        <span class="material-symbols-outlined pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant">search</span>
-                        <input class="w-full rounded-full border-0 bg-surface-container-lowest py-2 pl-10 pr-4 text-sm text-on-surface shadow-sm ring-1 ring-outline-variant/30 placeholder:text-outline/70 focus:outline-none focus:ring-2 focus:ring-primary/25" type="search" placeholder="Buscar facturas, clientes, SKU…" />
-                    </div>
-                </div>
-                <nav class="hidden items-center gap-6 text-xs font-bold uppercase tracking-wide text-slate-400 md:flex" aria-label="Atajos">
-                    <a class="transition-colors hover:text-primary" href="#">Análisis</a>
-                    <a class="transition-colors hover:text-primary" href="#">Informes</a>
-                    <a class="transition-colors hover:text-primary" href="#">Auditoría</a>
-                </nav>
-                <div class="flex shrink-0 items-center gap-1">
-                    <button type="button" class="relative rounded-md p-2 text-primary transition-colors hover:bg-black/[0.04]" aria-label="Notificaciones">
-                        <span class="material-symbols-outlined text-[22px]">notifications</span>
-                        <span class="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-error" aria-hidden="true"></span>
-                        <span class="sr-only">Hay avisos nuevos</span>
-                    </button>
-                    <button type="button" class="rounded-md p-2 text-primary transition-colors hover:bg-black/[0.04]" aria-label="Historial">
-                        <span class="material-symbols-outlined text-[22px]">history</span>
-                    </button>
-                    <button type="button" class="rounded-md p-2 text-primary transition-colors hover:bg-black/[0.04]" aria-label="Cuenta">
-                        <span class="material-symbols-outlined text-[22px]">account_circle</span>
-                    </button>
-                </div>
-            </header>
-
-            <main class="dash-main p-6 lg:p-9">
-                <div id="session-notice-banner" class="mx-auto mb-4 hidden w-full max-w-7xl rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3 text-sm text-on-surface" role="status"></div>
-                <div id="dashboard-content" class="mx-auto flex w-full max-w-7xl flex-col gap-8">
+            <main class="dash-main p-4 lg:p-6">
+                <div id="session-notice-banner" class="mb-4 hidden w-full rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3 text-sm text-on-surface" role="status"></div>
+                <div id="dashboard-content" class="flex w-full flex-col gap-6">
                     <div id="dashboard-panel-mount" class="rounded-xl border border-outline-variant/25 bg-surface-container-lowest/60 p-8 text-center text-sm text-on-surface-variant">
                         <span class="material-symbols-outlined mb-2 block text-3xl text-primary/40" aria-hidden="true">dashboard</span>
                         <p>Contenido del panel cargado desde la base de datos al abrir <strong class="text-on-surface">Panel principal</strong>.</p>
