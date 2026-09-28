@@ -3778,7 +3778,7 @@ const renderSuperAccessModule = async () => {
     dashboardContent.querySelectorAll('[data-sa-delete-user]').forEach((button) => {
         button.addEventListener('click', async () => {
             const userId = button.getAttribute('data-sa-delete-user');
-            if (!window.ZyronDialog.confirm('Eliminar usuario y todas sus membresías? Esta acción no se puede deshacer.')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar usuario y todas sus membresías? Esta acción no se puede deshacer.'))) return;
             const r = await invokeFn('manage-super-access', { action: 'delete_platform_user', appUserId: userId });
             const u = unwrapFnInvoke(r);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data?.error || 'Error');
@@ -3789,7 +3789,7 @@ const renderSuperAccessModule = async () => {
     dashboardContent.querySelectorAll('[data-sa-demote]').forEach((button) => {
         button.addEventListener('click', async () => {
             const userId = button.getAttribute('data-sa-demote');
-            if (!window.ZyronDialog.confirm('Degradar a usuario de plataforma (global_role: user)? Requiere haber otro super admin activo.')) return;
+            if (!(await window.ZyronDialog.confirm('Degradar a usuario de plataforma (global_role: user)? Requiere haber otro super admin activo.'))) return;
             const r = await invokeFn('manage-super-access', { action: 'patch_app_user', appUserId: userId, globalRole: 'user' });
             const u = unwrapFnInvoke(r);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data?.error || 'Error');
@@ -8286,7 +8286,7 @@ const renderFacturasModule = async () => {
             window.ZyronDialog.alert('Selecciona el documento padre para NC/ND.');
             return;
         }
-        if (state.tenantPreferences?.confirmBeforeIssue !== false && !window.ZyronDialog.confirm('Emitir esta factura?')) return;
+        if (state.tenantPreferences?.confirmBeforeIssue !== false && !(await window.ZyronDialog.confirm('Emitir esta factura?'))) return;
         await persistFacturaTemplateChoice(meta.templateId);
         const iid = document.getElementById('factura-sheet-invoice-id').value.trim();
         if (!iid) {
@@ -8497,7 +8497,7 @@ const renderFacturasModule = async () => {
             await renderFacturasModule();
         }
         if (act === 'del') {
-            if (!window.ZyronDialog.confirm('Eliminar esta factura?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar esta factura?'))) return;
             const res = await invokeFn('delete-invoice', { tenantId: tid, invoiceId: id });
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Eliminar fallo.');
@@ -8561,7 +8561,7 @@ const renderFacturasModule = async () => {
     document.querySelectorAll('[data-series-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
             const sid = btn.getAttribute('data-series-del');
-            if (!window.ZyronDialog.confirm('Eliminar esta serie?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar esta serie?'))) return;
             const res = await invoiceSeriesDeleteViaDb(tid, sid);
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo eliminar.');
@@ -8598,7 +8598,7 @@ const renderFacturasModule = async () => {
     document.querySelectorAll('[data-rec-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
             const rid = btn.getAttribute('data-rec-del');
-            if (!window.ZyronDialog.confirm('Eliminar plantilla?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar plantilla?'))) return;
             const res = await invoiceRecurrenceDeleteViaDb(tid, rid);
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'No se pudo eliminar.');
@@ -9132,7 +9132,7 @@ const renderPresupuestosModule = async () => {
             window.ZyronDialog.alert('Anade al menos una linea valida.');
             return;
         }
-        if (issue && state.tenantPreferences?.confirmBeforeIssue !== false && !window.ZyronDialog.confirm('Emitir este presupuesto?')) return;
+        if (issue && state.tenantPreferences?.confirmBeforeIssue !== false && !(await window.ZyronDialog.confirm('Emitir este presupuesto?'))) return;
         const id = document.getElementById('estimate-sheet-id').value.trim();
         const payload = {
             tenantId: tid,
@@ -9304,7 +9304,7 @@ const renderPresupuestosModule = async () => {
             await renderPresupuestosModule();
         }
         if (act === 'del') {
-            if (!window.ZyronDialog.confirm('Eliminar este presupuesto?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar este presupuesto?'))) return;
             const res = await invokeFn('delete-invoice', { tenantId: tid, invoiceId: id });
             const u = unwrapFnInvoke(res);
             if (u.err || !u.data?.ok) window.ZyronDialog.alert(u.err || u.data?.error || 'Eliminar fallo.');
@@ -10282,7 +10282,7 @@ const renderClientesModule = async () => {
 
     dashboardContent.querySelectorAll('[data-seg-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('Eliminar segmento?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar segmento?'))) return;
             const res = await customersManageViaDb({
                 tenantId: tid,
                 action: 'delete_segment',
@@ -10614,7 +10614,7 @@ const renderInventarioModule = async () => {
         });
         dashboardContent.querySelectorAll('[data-inv-wh-del]').forEach((btn) => {
             btn.addEventListener('click', async () => {
-                if (!window.ZyronDialog.confirm('Eliminar almacen vacio?')) return;
+                if (!(await window.ZyronDialog.confirm('Eliminar almacen vacio?'))) return;
                 const res = await inventoryDeleteWarehouseViaDb(tid, btn.getAttribute('data-inv-wh-del'));
                 const u = unwrapFnInvoke(res);
                 if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
@@ -11008,7 +11008,7 @@ const renderInventarioModule = async () => {
 
     dashboardContent.querySelectorAll('[data-inv-cat-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('Eliminar categoria?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar categoria?'))) return;
             const res = await productsManageViaDb({ tenantId: tid, action: 'delete_category', categoryId: btn.getAttribute('data-inv-cat-del') });
             const u = unwrapFnInvoke(res);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
@@ -11025,7 +11025,7 @@ const renderInventarioModule = async () => {
 
     dashboardContent.querySelectorAll('[data-inv-unit-del]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('Eliminar unidad?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar unidad?'))) return;
             const res = await productsManageViaDb({ tenantId: tid, action: 'delete_unit', unitId: btn.getAttribute('data-inv-unit-del') });
             const u = unwrapFnInvoke(res);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
@@ -11262,7 +11262,7 @@ const renderFiscalModule = async (opts = {}) => {
     });
     target.querySelectorAll('[data-fisc-del-rate]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('Eliminar tasa?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar tasa?'))) return;
             const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'delete_tax_rate', id: btn.getAttribute('data-fisc-del-rate') });
             const u = unwrapFnInvoke(res);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
@@ -11295,7 +11295,7 @@ const renderFiscalModule = async (opts = {}) => {
     });
     target.querySelectorAll('[data-fisc-del-ncf]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('Eliminar secuencia?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar secuencia?'))) return;
             const res = await taxComplianceManageViaDb({ tenantId: tid, action: 'delete_ncf_sequence', id: btn.getAttribute('data-fisc-del-ncf') });
             const u = unwrapFnInvoke(res);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
@@ -11604,7 +11604,7 @@ const renderReportesModule = async () => {
     });
     dashboardContent.querySelectorAll('[data-rep-del-custom]').forEach((btn) => {
         btn.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('Eliminar plantilla?')) return;
+            if (!(await window.ZyronDialog.confirm('Eliminar plantilla?'))) return;
             const res = await reportsManageViaDb({ tenantId: tid, action: 'delete_custom_definition', id: btn.getAttribute('data-rep-del-custom') });
             const u = unwrapFnInvoke(res);
             if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
@@ -12417,7 +12417,7 @@ const renderContabilidadModule = async () => {
         document.getElementById('acc-seed-btn')?.addEventListener('click', async () => {
             window.ZyronDialog.alert('El catálogo contable se gestiona desde las cuentas de control de la base de datos. No se reemplazan cuentas existentes.');
             return;
-            if (!window.ZyronDialog.confirm('¿Deseas sembrar la nomenclatura estándar del catálogo de cuentas en español?')) return;
+            if (!(await window.ZyronDialog.confirm('¿Deseas sembrar la nomenclatura estándar del catálogo de cuentas en español?'))) return;
             
             try {
                 // Limpieza opcional de cuentas inglesas vacías del tenant
@@ -12512,7 +12512,7 @@ const renderContabilidadModule = async () => {
         dashboardContent.querySelectorAll('[data-ent-reverse]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const id = btn.getAttribute('data-ent-reverse');
-                if (!window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
+                if (!(await window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.'))) return;
                 try {
                     const result = await dbRpc('zyron_reverse_journal_entry', { p_tenant_id: tid, p_entry_id: id });
                     if (result.error) throw new Error(result.error.message || 'No se pudo reversar el asiento.');
@@ -12529,7 +12529,7 @@ const renderContabilidadModule = async () => {
         dashboardContent.querySelectorAll('[data-ent-del]').forEach(btn => {
             btn.addEventListener('click', async () => {
                 const id = btn.getAttribute('data-ent-del');
-                if (!window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
+                if (!(await window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?'))) return;
                 
                 try {
                     const result = await dbRpc('zyron_delete_draft_journal', { p_tenant_id: tid, p_entry_id: id });
@@ -12800,7 +12800,7 @@ const renderContabilidadModule = async () => {
 
         // Reversar desde detalle
         document.getElementById('ent-detail-reverse')?.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.')) return;
+            if (!(await window.ZyronDialog.confirm('¿Seguro que deseas reversar este asiento publicado? Se creará automáticamente un contra-asiento de anulación invertido.'))) return;
             
             try {
                 const result = await dbRpc('zyron_reverse_journal_entry', { p_tenant_id: tid, p_entry_id: selectedEntry.id });
@@ -12837,7 +12837,7 @@ const renderContabilidadModule = async () => {
 
         // Eliminar borrador desde detalle
         document.getElementById('ent-detail-delete')?.addEventListener('click', async () => {
-            if (!window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?')) return;
+            if (!(await window.ZyronDialog.confirm('¿Seguro que deseas eliminar este borrador de asiento contable?'))) return;
             
             try {
                 const result = await dbRpc('zyron_delete_draft_journal', { p_tenant_id: tid, p_entry_id: selectedEntry.id });
@@ -15462,7 +15462,7 @@ const renderCalidadModule = async () => {
         const inspector = await window.ZyronDialog.prompt('Nombre del auditor/inspector:', 'Inspector de Calidad');
         if (!inspector) return;
         const lote = await window.ZyronDialog.prompt('Número de lote inspeccionado:', 'LOT-2026-09');
-        const aprueba = window.ZyronDialog.confirm('¿El lote aprueba todos los requisitos de calidad?');
+        const aprueba = await window.ZyronDialog.confirm('¿El lote aprueba todos los requisitos de calidad?');
 
         const { error } = await dbInsert({
             table: 'qm_inspections',
