@@ -958,6 +958,34 @@ function resolveWindowIcon () {
   return undefined
 }
 
+// Dev-only: reload the window when renderer-side files change (`npm run dev`).
+// main.js itself is not watched; changes there still need an app restart.
+function startLiveReload (win) {
+  if (app.isPackaged || process.env.ZYRON_LIVE_RELOAD !== '1') return
+  const targets = ['index.html', 'renderer.js', 'preload.js', 'components', 'fragments', path.join('public', 'tailwind.css')]
+  let timer = null
+  const scheduleReload = (file) => {
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      if (win.isDestroyed()) return
+      zyronLog('dev:live-reload', { file })
+      win.webContents.reloadIgnoringCache()
+    }, 150)
+  }
+  const watchers = targets
+    .map((rel) => path.join(__dirname, rel))
+    .filter((abs) => fs.existsSync(abs))
+    .map((abs) => {
+      const recursive = fs.statSync(abs).isDirectory()
+      return fs.watch(abs, { recursive }, (_event, name) => scheduleReload(name || abs))
+    })
+  win.on('closed', () => {
+    clearTimeout(timer)
+    watchers.forEach((w) => w.close())
+  })
+  zyronLog('dev:live-reload:on', { targets })
+}
+
 function createWindow () {
   mainWindow = new BrowserWindow({
     width: 1080,
@@ -990,6 +1018,7 @@ function createWindow () {
   })
 
   mainWindow.loadFile('index.html')
+  startLiveReload(mainWindow)
 
   // Notify renderer when window is maximized/unmaximized
   mainWindow.on('maximize', () => {

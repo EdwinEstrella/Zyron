@@ -28,5 +28,5 @@
 
 ## Smoke Validation
 - [ ] Run `npm run qa:saas`.
-- [ ] Start app with `npm run start`.
+- [ ] Start app with `npm run start:plain` (no live reload or Tailwind watcher).
 - [ ] Validate login for super admin and a tenant admin.

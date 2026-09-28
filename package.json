@@ -5,7 +5,9 @@
   "author": "Edwin",
   "main": "main.js",
   "scripts": {
-    "start": "electron-forge start",
+    "start": "npm run dev",
+    "start:plain": "electron-forge start",
+    "dev": "node ./scripts/dev.cjs",
     "lint": "eslint .",
     "format:check": "prettier . --check",
     "format": "prettier . --write",
