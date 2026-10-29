@@ -14,7 +14,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getVersions: () => process.versions,
   savePdfFromHtml: (payload) => ipcRenderer.invoke('desktop:save-pdf-from-html', payload),
   openHtmlPreview: (payload) => ipcRenderer.invoke('desktop:open-html-preview', payload),
-  onWindowMaximized: (callback) => onMainEvent('window-maximized', callback)
+  onWindowMaximized: (callback) => onMainEvent('window-maximized', callback),
+  getUpdateState: () => ipcRenderer.invoke('update:get-state'),
+  onUpdateReady: (callback) => onMainEvent('update-ready', callback),
+  installUpdate: () => ipcRenderer.send('update:install')
 })
 
 const backendAPI = {

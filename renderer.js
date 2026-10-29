@@ -124,6 +124,23 @@ if (window.electronAPI) {
     document.getElementById('min-btn').addEventListener('click', () => window.electronAPI.minimize());
     document.getElementById('max-btn').addEventListener('click', () => window.electronAPI.maximize());
     document.getElementById('close-btn').addEventListener('click', () => window.electronAPI.close());
+
+    const updateBtn = document.getElementById('update-btn');
+    const showUpdateButton = (update) => {
+        if (!updateBtn || !update) return;
+        const label = update.version ? `Reiniciar para actualizar a v${update.version}` : 'Reiniciar para actualizar';
+        updateBtn.title = label;
+        updateBtn.setAttribute('aria-label', label);
+        updateBtn.hidden = false;
+    };
+    if (updateBtn && window.electronAPI.onUpdateReady) {
+        window.electronAPI.onUpdateReady(showUpdateButton);
+        window.electronAPI.getUpdateState().then(showUpdateButton).catch(() => {});
+        updateBtn.addEventListener('click', async () => {
+            const ok = await window.ZyronDialog.confirm('Zyron se reiniciará para instalar la actualización. Guarda tu trabajo antes de continuar.');
+            if (ok) window.electronAPI.installUpdate();
+        });
+    }
 }
 
 const passwordInput = document.getElementById('password');
@@ -2502,7 +2519,8 @@ const upsertAppUser = async (authUser) => {
     return { appUser: insertedRows && insertedRows[0], error: insertError };
 };
 
-const bootstrapSession = async () => {
+/** @param {{ accessScope?: 'any' | 'tenant' | 'global' }} [options] */
+const bootstrapSession = async ({ accessScope = 'any' } = {}) => {
     zyronLog('bootstrapSession:start', {});
     const { data: currentUserData, error: userError } = await safeCall(
         () => (window.supabaseAPI || window.insforgeAPI).auth.getCurrentUser(),
@@ -2532,6 +2550,20 @@ const bootstrapSession = async () => {
     state.isStaff = appUser.global_role === 'staff';
     state.isGlobalAccess = state.isSuperAdmin || state.isStaff;
     zyronLog('bootstrapSession:appUser', { id: appUser.id, status: appUser.status, isSuperAdmin: state.isSuperAdmin, isStaff: state.isStaff });
+
+    // Platform accounts only enter through the titlebar admin access; tenant users only through the login form.
+    const scopeRejected =
+        (accessScope === 'tenant' && state.isGlobalAccess) || (accessScope === 'global' && !state.isGlobalAccess);
+    if (scopeRejected) {
+        zyronLog('bootstrapSession:scopeRejected', { accessScope, isGlobalAccess: state.isGlobalAccess });
+        await safeCall(() => (window.supabaseAPI || window.insforgeAPI).auth.signOut(), 'auth.signOut:scopeRejected');
+        state.sessionUser = null;
+        state.appUser = null;
+        state.isSuperAdmin = false;
+        state.isStaff = false;
+        state.isGlobalAccess = false;
+        return { ok: false, scopeRejected: true, message: 'Credenciales incorrectas.' };
+    }
 
     const accountStatus = String(appUser.status || '').toLowerCase();
     const pendingGate = !state.isGlobalAccess && accountStatus === 'pending';
@@ -2753,17 +2785,26 @@ const renderPanelModule = async () => {
     if (state.isGlobalAccess && !state.isImpersonating) {
         dashboardContent.innerHTML = `<div class="flex flex-col gap-6" id="super-panel-root"></div>`;
         const root = document.getElementById('super-panel-root');
-        const inv = await invokeFn('get-super-admin-overview', {}, 'GET');
-        zyronLog('render:panel:overviewResponse', summarizeInsforgeResult(inv));
-        const overview = inv.data;
-        if (!overview?.metrics || !root) {
-            zyronLog('render:panel:noMetrics', { hasOverview: Boolean(overview) });
+        // The get-super-admin-overview edge function was removed; RLS already grants global access here.
+        const [{ data: tenantRows, error: tenantsError }, usersRows, requestRows] = await Promise.all([
+            dbSelect({ table: 'tenants', columns: 'id,status' }),
+            loadAppUsersSuperOrFallback(),
+            loadAccessRequestsSuperOrFallback()
+        ]);
+        if (tenantsError || !root) {
+            zyronLog('render:panel:overviewError', { err: tenantsError?.message });
             if (root) {
-                root.innerHTML = `${renderModuleHeader('Panel', 'Super admin')}<p class="text-sm text-on-surface-variant">No se pudo cargar el resumen global. Comprueba que la funcion get-super-admin-overview este desplegada.</p>`;
+                root.innerHTML = `${renderModuleHeader('Panel', 'Super admin')}<p class="text-sm text-on-surface-variant">No se pudo cargar el resumen global: ${escapeHtml(tenantsError?.message || 'error desconocido')}</p>`;
             }
             return;
         }
-        const m = overview.metrics;
+        const tenants = Array.isArray(tenantRows) ? tenantRows : [];
+        const m = {
+            totalTenants: tenants.length,
+            totalUsers: (usersRows || []).length,
+            pendingRequests: (requestRows || []).filter((r) => r.request_status === 'pending').length,
+            blockedTenants: tenants.filter((t) => t.status === 'blocked').length
+        };
         root.innerHTML = `
             ${renderModuleHeader('Panel', 'Indicadores globales del SaaS')}
             <div class="rounded-xl border border-outline-variant/30 bg-surface-container-low p-4">
@@ -16559,6 +16600,12 @@ loginForm.addEventListener('submit', async (event) => {
     }
     zyronLog('login:signInOk', { userId: data.user.id });
 
+    const boot = await bootstrapSession({ accessScope: 'tenant' });
+    if (boot.scopeRejected) {
+        setStatus(loginStatus, boot.message, true);
+        return;
+    }
+
     const remember = Boolean(formData.get('remember'));
     try {
         if (remember) {
@@ -16572,7 +16619,6 @@ loginForm.addEventListener('submit', async (event) => {
         /* ignore */
     }
 
-    const boot = await bootstrapSession();
     if (!boot.ok) {
         zyronLog('login:bootstrapFailed', { email, message: boot.message });
         setStatus(
@@ -16772,6 +16818,8 @@ sidebarToggleBtn?.addEventListener('click', () => {
 });
 updateSidebarToggleState();
 
+const ADMIN_EMAIL_DOMAIN = 'zyron.local';
+
 const promptAdminAccess = () => {
     return new Promise((resolve) => {
         const backdrop = document.createElement('div');
@@ -16837,57 +16885,58 @@ const promptAdminAccess = () => {
         document.addEventListener('keydown', handleKey);
         cancelBtn?.addEventListener('click', close);
 
-        form?.addEventListener('submit', (e) => {
+        const submitBtn = card.querySelector('#admin-auth-submit');
+        const showError = (message) => {
+            if (errorEl) {
+                errorEl.textContent = message;
+                errorEl.classList.remove('hidden');
+            }
+            passInput?.select();
+        };
+
+        form?.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const u = String(userInput?.value || '').trim().toLowerCase();
-            const p = String(passInput?.value || '').trim().toLowerCase();
+            const user = String(userInput?.value || '').trim().toLowerCase();
+            const password = String(passInput?.value || '');
+            if (!user || !password) return;
+            // Short usernames map to the platform admin domain; full emails pass through.
+            const email = user.includes('@') ? user : `${user}@${ADMIN_EMAIL_DOMAIN}`;
 
-            const isMatch = (u === 'admin' && (p === 'admin' || p === 'admin admin')) ||
-                            (u === 'admin admin' && (p === 'admin admin' || p === 'admin')) ||
-                            (p === 'admin admin');
+            if (submitBtn) submitBtn.disabled = true;
+            errorEl?.classList.add('hidden');
+            try {
+                const { data, error } = await safeCall(
+                    () => (window.supabaseAPI || window.insforgeAPI).auth.signInWithPassword({ email, password }),
+                    'auth.signInWithPassword:admin'
+                );
+                if (error || !data?.user) {
+                    zyronLog('adminAccess:signInError', { message: error?.message });
+                    showError('Credenciales incorrectas.');
+                    return;
+                }
 
-            if (isMatch) {
+                const boot = await bootstrapSession({ accessScope: 'global' });
+                if (!boot.ok) {
+                    zyronLog('adminAccess:bootstrapFailed', { message: boot.message, scopeRejected: Boolean(boot.scopeRejected) });
+                    if (!boot.scopeRejected) await performLogout();
+                    showError(boot.message || 'Credenciales incorrectas.');
+                    return;
+                }
+
                 document.removeEventListener('keydown', handleKey);
                 backdrop.remove();
                 resolve(true);
-            } else {
-                if (errorEl) {
-                    errorEl.textContent = 'Credenciales incorrectas.';
-                    errorEl.classList.remove('hidden');
-                }
-                passInput?.select();
+            } finally {
+                if (submitBtn) submitBtn.disabled = false;
             }
         });
     });
 };
 
+// promptAdminAccess already ran bootstrapSession with a real super admin session.
 const activateSuperAdminPanel = async () => {
-    zyronLog('adminAccess:activated', { by: 'titlebar_logo' });
-
-    state.isSuperAdmin = true;
-    state.isStaff = false;
-    state.isGlobalAccess = true;
-    state.isImpersonating = false;
-    state.membership = null;
-    state.currentTenantId = null;
-    state.membershipsList = [];
-    window.ZyronActionBar.permissions.reset();
-
-    state.appUser = {
-        id: 'fe2a042e-dac7-4243-8a4a-abdf139b3375',
-        email: 'admin@zyron.local',
-        full_name: 'Super Administrador',
-        global_role: 'super_admin',
-        status: 'active'
-    };
-
-    hideAllViews();
-    showDashboard();
+    zyronLog('adminAccess:activated', { by: 'titlebar_logo', appUserId: state.appUser?.id });
     refreshTitlebarLogoState();
-    await loadUiCatalogsFromDb();
-    await renderSidebar();
-    refreshSessionRoleUi();
-    updateSessionNoticeBanner();
     await openModule('empresas');
 };
 

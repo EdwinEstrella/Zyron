@@ -1049,6 +1049,37 @@ ipcMain.on('window-close', () => {
   if (mainWindow) mainWindow.close()
 })
 
+// Auto-update: surface a downloaded update to the renderer titlebar
+const UPDATE_CHECK_INTERVAL_MS = 2 * 60 * 60 * 1000
+/** @type {{ version: string } | null} */
+let downloadedUpdate = null
+
+if (typeof autoUpdater.on === 'function') {
+  autoUpdater.on('update-downloaded', (info) => {
+    downloadedUpdate = { version: info?.version || '' }
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('update-ready', downloadedUpdate)
+    }
+  })
+  autoUpdater.on('error', (error) => {
+    log.warn('autoUpdater error', error?.message || error)
+  })
+}
+
+const checkForUpdatesSafe = () => {
+  autoUpdater.checkForUpdates().catch((error) => {
+    log.warn('checkForUpdates failed', error?.message || error)
+  })
+}
+
+ipcMain.handle('update:get-state', () => downloadedUpdate)
+
+ipcMain.on('update:install', () => {
+  if (!downloadedUpdate) return
+  // isSilent=false, isForceRunAfter=true: relaunch Zyron after installing
+  autoUpdater.quitAndInstall(false, true)
+})
+
 const sanitizePreviewTitle = (title) => {
   const value = typeof title === 'string' ? title : 'Vista previa'
   return value.replace(/[<>:"/\\|?*\x00-\x1f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120) || 'Vista previa'
@@ -1464,9 +1495,11 @@ if (process.env.ZYRON_MAIN_TEST_HOOKS === '1') {
 
     createWindow()
 
-    // Check for updates like Cyberbistro
     if (app.isPackaged) {
-      autoUpdater.checkForUpdatesAndNotify()
+      checkForUpdatesSafe()
+      setInterval(() => {
+        if (!downloadedUpdate) checkForUpdatesSafe()
+      }, UPDATE_CHECK_INTERVAL_MS)
     }
 
     app.on('activate', () => {
