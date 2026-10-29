@@ -4772,6 +4772,15 @@ const productsCsvEsc = (v) => {
     return s;
 };
 
+const productsFriendlyDbError = (err, sku) => {
+    if (!err) return null;
+    const msg = String(err.message || '');
+    if (err.code === '23505' || /products_tenant_id_sku_key/.test(msg)) {
+        return `Ya existe un artículo con el código (SKU) "${sku || ''}".`;
+    }
+    return err.message || null;
+};
+
 const productsSyncDefaultWarehouseStock = async (tenantId, productId, stockQty, itemKind, tracksStock) => {
     try {
         if (String(itemKind || '').toLowerCase() === 'service') return;
@@ -5092,7 +5101,7 @@ const productsManageViaDb = async (body) => {
                 err = ins.error;
             }
             const row0 = Array.isArray(data) ? data[0] : data;
-            if (err || !row0) return { data: { error: err?.message || 'insert failed' }, error: null };
+            if (err || !row0) return { data: { error: productsFriendlyDbError(err, sku) || err?.message || 'insert failed' }, error: null };
             await productsSyncDefaultWarehouseStock(tenantId, row0.id, row0.stock, row0.item_kind, row0.tracks_stock);
             return { data: { ok: true, product: row0 }, error: null };
         }
@@ -5157,7 +5166,7 @@ const productsManageViaDb = async (body) => {
                 err = r.error;
             }
             const row0 = Array.isArray(data) ? data[0] : data;
-            if (err || !row0) return { data: { error: err?.message || 'update failed' }, error: null };
+            if (err || !row0) return { data: { error: productsFriendlyDbError(err, patch.sku ?? body.sku) || err?.message || 'update failed' }, error: null };
             if (patch.stock !== undefined || patch.item_kind !== undefined || patch.tracks_stock !== undefined) {
                 await productsSyncDefaultWarehouseStock(tenantId, productId, row0.stock, row0.item_kind, row0.tracks_stock);
             }
@@ -11265,6 +11274,14 @@ const renderInventarioModule = async () => {
                 cost_of_sales_account_id: fd.get('cost_of_sales_account_id')
             });
             if (mappingError) {
+                if (!editId) {
+                    state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: String(productId), selectedId: String(productId) };
+                    await renderInventarioModule();
+                    window.ZyronDialog.alert(
+                        'El artículo se guardó, pero no su configuración contable: ' + (mappingError.message || 'error desconocido')
+                    );
+                    return;
+                }
                 window.ZyronDialog.alert(mappingError.message || 'El artículo se guardó, pero no su configuración contable.');
                 return;
             }
