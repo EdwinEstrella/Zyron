@@ -26,8 +26,8 @@ Mode: off (no project/session config enables it). Runner: `npm run test:behavior
 
 ## Tasks
 
-- [ ] T1 Migration `supabase/migrations/20261029000000_product_form_drafts.sql` + behavior test; apply to zyron.azokia.com after review. Route: delegated (agy).
-- [ ] T2 renderer.js: draft save / load banner / resume / discard / clear on create + behavior test. Route: delegated (agy).
+- [x] T1 Migration `supabase/migrations/20261029000000_product_form_drafts.sql` + behavior test; applied to zyron.azokia.com and verified (RLS on, anon denied, 1 policy, 1 trigger). Route: delegated (agy). Commit 35982e3.
+- [x] T2 renderer.js: draft save / load banner / resume / discard / clear on create + behavior test. Route: delegated (agy); review found 2 issues (unresumed draft deleted on unrelated create; table missing from TENANT_SCOPED_TABLES), re-prompted and fixed. Commit: see git log (feat(inventory): product form drafts).
 
 ## Acceptance criteria
 
@@ -44,7 +44,8 @@ Mode: off (no project/session config enables it). Runner: `npm run test:behavior
 ## Progress
 
 - Created 2026-10-29.
+- 2026-10-29: T1 and T2 done. `npm run test:behavior`: 171 pass, 4 fail (the known pre-existing SQL failures). ESLint clean, syntax check OK. Not tested manually in the running app yet. Draft is kept (not deleted) when the user creates a product without resuming it.
 
 ## Next step
 
-T1.
+Manual check in the app (save draft, reopen, resume, discard), then push/PR decision by the user.

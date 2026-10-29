@@ -344,7 +344,9 @@ const state = {
         itemKind: '',
         includeInactive: false,
         sheet: null,
-        editId: null
+        editId: null,
+        draft: undefined,
+        draftResumed: false
     },
     /** Solo superadmin: tenant elegido en modulo Roles (no muta currentTenantId del panel tenant). */
     rolesContextTenantId: null
@@ -2290,6 +2292,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'customers',
     'customer_segments',
     'products',
+    'product_form_drafts',
     'app_settings',
     'audit_logs',
     'invoice_series',
@@ -3087,7 +3090,7 @@ const renderPanelModule = async () => {
         void openModule('clientes');
     });
     document.getElementById('panel-quick-product')?.addEventListener('click', () => {
-        state.inventarioUi = { ...state.inventarioUi, tab: 'list', sheet: 'form', editId: null };
+        state.inventarioUi = { ...state.inventarioUi, tab: 'list', sheet: 'form', editId: null, draft: undefined, draftResumed: false };
         void openModule('inventario');
     });
     document.getElementById('panel-quick-estimate')?.addEventListener('click', () => {
@@ -7183,6 +7186,46 @@ const saveProductAccountMappingViaDb = async (tenantId, productId, values) => {
     return result.error || null;
 };
 
+const productDraftLoadViaDb = async (tenantId) => {
+    const { data, error } = await dbSelect({
+        table: 'product_form_drafts',
+        columns: 'payload, updated_at',
+        filters: [{ op: 'eq', column: 'tenant_id', value: tenantId }],
+        limit: 1
+    });
+    if (error) return { draft: null, error };
+    return { draft: data?.[0] || null, error: null };
+};
+
+const productDraftSaveViaDb = async (tenantId, payload) => {
+    const { data: existing, error: readError } = await dbSelect({
+        table: 'product_form_drafts',
+        columns: 'id',
+        filters: [{ op: 'eq', column: 'tenant_id', value: tenantId }],
+        limit: 1
+    });
+    if (readError) return readError;
+    const result = existing?.length
+        ? await dbUpdate({
+              table: 'product_form_drafts',
+              values: { payload },
+              filters: [{ op: 'eq', column: 'tenant_id', value: tenantId }]
+          })
+        : await dbInsert({
+              table: 'product_form_drafts',
+              values: { tenant_id: tenantId, payload }
+          });
+    return result.error || null;
+};
+
+const productDraftDeleteViaDb = async (tenantId) => {
+    const result = await dbDelete({
+        table: 'product_form_drafts',
+        filters: [{ op: 'eq', column: 'tenant_id', value: tenantId }]
+    });
+    return result.error || null;
+};
+
 const fmtDocMoneyInvoice = (n, currency) => {
     const x = Number(n);
     if (!Number.isFinite(x)) return '-';
@@ -10459,10 +10502,31 @@ const renderInventarioModule = async () => {
         const gU = unwrapFnInvoke(gRes);
         if (!gU.err && gU.data?.ok) editRow = gU.data.product;
     }
+    if (sheet === 'form' && !editId && ui.draft === undefined) {
+        try {
+            const { draft, error: draftErr } = await productDraftLoadViaDb(tid);
+            if (draftErr) {
+                console.warn('Error loading product draft:', draftErr);
+                state.inventarioUi.draft = null;
+            } else {
+                state.inventarioUi.draft = draft || null;
+            }
+        } catch (err) {
+            console.warn('Error loading product draft:', err);
+            state.inventarioUi.draft = null;
+        }
+    }
+    const draftPayload = !editId && state.inventarioUi?.draftResumed ? state.inventarioUi?.draft?.payload || {} : null;
     let accountMapping = {};
     if (editId) {
         const { data: mappingRows } = await dbSelect({ table: 'product_account_mappings', filters: [{ op: 'eq', column: 'product_id', value: editId }], limit: 1 });
         accountMapping = mappingRows?.[0] || {};
+    } else if (draftPayload) {
+        accountMapping = {
+            sales_account_id: draftPayload.sales_account_id || '',
+            inventory_account_id: draftPayload.inventory_account_id || '',
+            cost_of_sales_account_id: draftPayload.cost_of_sales_account_id || ''
+        };
     }
 
     const money = (n) => {
@@ -10862,7 +10926,7 @@ const renderInventarioModule = async () => {
             <tbody>${unitTable || `<tr><td colspan="4" class="py-6 text-center text-on-surface-variant">Sin unidades. Agrega las que uses.</td></tr>`}</tbody></table>
         </div>`;
 
-    const fc = editRow || {};
+    const fc = editRow || draftPayload || {};
     const catSel = (categories || [])
         .map((c) => `<option value="${escapeHtml(c.id)}" ${String(fc.category_id) === String(c.id) ? 'selected' : ''}>${escapeHtml(c.label)}</option>`)
         .join('');
@@ -10892,6 +10956,7 @@ const renderInventarioModule = async () => {
         ? `<button type="button" id="inv-form-cancel" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Volver</button>
                 <button type="button" id="inv-form-edit" class="rounded-md bg-primary px-5 py-2 text-sm text-white">Editar</button>`
         : `<button type="button" id="inv-form-cancel" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Cancelar</button>
+                ${!editId ? '<button type="button" id="inv-form-draft" class="rounded-md border border-outline-variant/50 px-4 py-2 text-sm">Guardar borrador</button>' : ''}
                 <button type="submit" class="rounded-md bg-primary px-5 py-2 text-sm text-white">${editId ? 'Guardar cambios' : 'Crear articulo'}</button>`;
     const formPanel = `
         <form id="inv-form">
@@ -10942,6 +11007,29 @@ const renderInventarioModule = async () => {
             </div>
         </form>`;
     const formTitle = !editId ? 'Nuevo producto o servicio' : readOnly ? 'Articulo' : 'Editar articulo';
+    const draftRow = !editId ? state.inventarioUi?.draft : null;
+    const showDraftBanner = Boolean(draftRow && !state.inventarioUi?.draftResumed);
+    let draftBanner = '';
+    if (showDraftBanner) {
+        const rawPayload = draftRow.payload || {};
+        const draftTitle = (rawPayload.name && String(rawPayload.name).trim()) || (rawPayload.sku && String(rawPayload.sku).trim()) || 'Sin nombre';
+        let draftTime = '';
+        if (draftRow.updated_at) {
+            try {
+                draftTime = new Date(draftRow.updated_at).toLocaleString('es-DO');
+            } catch (_) {
+                draftTime = String(draftRow.updated_at);
+            }
+        }
+        draftBanner = `
+        <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-on-surface">
+            <div>Tienes un borrador sin terminar: <b>${escapeHtml(draftTitle)}</b> (guardado ${escapeHtml(draftTime)})</div>
+            <div class="flex items-center gap-2">
+                <button type="button" id="inv-draft-resume" class="rounded-md bg-primary px-3 py-1.5 text-xs font-semibold text-white">Seguir editando</button>
+                <button type="button" id="inv-draft-discard" class="rounded-md border border-outline-variant/50 px-3 py-1.5 text-xs text-error hover:bg-error/10">Descartar borrador</button>
+            </div>
+        </div>`;
+    }
 
     const formPage = `
         <div class="mb-2 flex flex-wrap items-center justify-between gap-3 border-b border-outline-variant/30 pb-4">
@@ -10952,6 +11040,7 @@ const renderInventarioModule = async () => {
             </div>
             ${readOnly ? '<button type="button" id="inv-form-edit-top" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Editar</button>' : ''}
         </div>
+        ${draftBanner}
         ${editId && !editRow ? '<p class="py-6 text-sm text-error">No se pudo cargar el articulo.</p>' : formPanel}`;
 
     const listBody = tab === 'categories' ? catPanel : tab === 'units' ? unitPanel : listPanel;
@@ -10983,6 +11072,8 @@ const renderInventarioModule = async () => {
             sheet: null,
             editId: null,
             tab: 'list',
+            draft: undefined,
+            draftResumed: false,
             ...(selectId ? { selectedId: String(selectId) } : {})
         };
         void renderInventarioModule();
@@ -11016,7 +11107,7 @@ const renderInventarioModule = async () => {
     });
 
     document.getElementById('inv-new-btn')?.addEventListener('click', () => {
-        state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null };
+        state.inventarioUi = { ...state.inventarioUi, sheet: 'form', editId: null, draft: undefined, draftResumed: false };
         void renderInventarioModule();
     });
 
@@ -11286,12 +11377,55 @@ const renderInventarioModule = async () => {
                 return;
             }
         }
-        if (u.err || u.data?.error) window.ZyronDialog.alert(u.err || u.data.error || 'Error');
-        else closeSheet(productId || editId);
+        if (u.err || u.data?.error) {
+            window.ZyronDialog.alert(u.err || u.data.error || 'Error');
+        } else {
+            if (!editId && state.inventarioUi?.draftResumed) {
+                try {
+                    const delErr = await productDraftDeleteViaDb(tid);
+                    if (delErr) console.warn('Error deleting product draft:', delErr);
+                } catch (err) {
+                    console.warn('Error deleting product draft:', err);
+                }
+            }
+            closeSheet(productId || editId);
+        }
     });
 
     document.getElementById('inv-form-cancel')?.addEventListener('click', () => closeSheet());
     document.getElementById('inv-form-back')?.addEventListener('click', () => closeSheet());
+    document.getElementById('inv-draft-resume')?.addEventListener('click', () => {
+        state.inventarioUi = { ...state.inventarioUi, draftResumed: true };
+        void renderInventarioModule();
+    });
+    document.getElementById('inv-draft-discard')?.addEventListener('click', async () => {
+        const ok = await window.ZyronDialog.confirm('¿Descartar el borrador? Esta acción no se puede deshacer.');
+        if (!ok) return;
+        const err = await productDraftDeleteViaDb(tid);
+        if (err) {
+            window.ZyronDialog.alert(err.message || String(err));
+            return;
+        }
+        state.inventarioUi = { ...state.inventarioUi, draft: null, draftResumed: false };
+        await renderInventarioModule();
+    });
+    document.getElementById('inv-form-draft')?.addEventListener('click', async () => {
+        const form = document.getElementById('inv-form');
+        if (!form) return;
+        const fd = new FormData(form);
+        const payload = Object.fromEntries(fd.entries());
+        payload.tracks_stock = Boolean(form.querySelector('[name="tracks_stock"]')?.checked);
+        payload.sales_account_id = fd.get('sales_account_id') || '';
+        payload.inventory_account_id = fd.get('inventory_account_id') || '';
+        payload.cost_of_sales_account_id = fd.get('cost_of_sales_account_id') || '';
+        const err = await productDraftSaveViaDb(tid, payload);
+        if (err) {
+            window.ZyronDialog.alert(err.message || String(err));
+            return;
+        }
+        closeSheet();
+        window.ZyronDialog.alert('Borrador guardado.');
+    });
     ['inv-form-edit', 'inv-form-edit-top'].forEach((id) => {
         document.getElementById(id)?.addEventListener('click', () => openEdit(editId));
     });
