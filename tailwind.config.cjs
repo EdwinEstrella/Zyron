@@ -13,19 +13,21 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        surface: '#f4f7fb',
+        surface: '#e6ecf4',
         'on-surface': '#0f172a',
         'on-surface-variant': '#334155',
         primary: '#0f2744',
         'on-primary': '#ffffff',
         'primary-container': '#1e4976',
         'on-primary-container': '#bfdbfe',
-        outline: '#64748b',
-        'outline-variant': '#a9b8cc',
-        'surface-container': '#e8eef6',
-        'surface-container-low': '#f1f5f9',
+        'primary-variant': '#1a3b61',
+        outline: '#475569',
+        'outline-variant': '#64748b',
+        'surface-container': '#dfe7f1',
+        'surface-container-low': '#eef2f8',
         'surface-container-lowest': '#ffffff',
-        'surface-container-high': '#dce7f4',
+        'surface-container-high': '#d3deec',
+        'surface-container-highest': '#c4d3e6',
         tertiary: '#0f766e',
         'tertiary-container': '#115e59',
         'tertiary-fixed': '#ccfbf1',
@@ -35,11 +37,18 @@ module.exports = {
         'error-container': '#fecaca',
         'on-error-container': '#7f1d1d',
         'surface-tint': '#3d5e80',
-        'surface-dim': '#e2e8f0',
+        'surface-dim': '#d5dde8',
         'on-primary-fixed-variant': '#1e3a5f',
         'on-primary-fixed': '#0f172a',
         'secondary-fixed': '#bfdbfe',
-        'on-secondary-fixed': '#1e3a8a'
+        'on-secondary-fixed': '#1e3a8a',
+        accent: '#0284c7',
+        'accent-soft': '#38bdf8'
+      },
+      boxShadow: {
+        sm: '0 1px 2px rgba(15,39,68,.14), 0 1px 3px rgba(15,39,68,.10)',
+        md: '0 2px 4px rgba(15,39,68,.12), 0 4px 10px rgba(15,39,68,.10)',
+        lg: '0 4px 8px rgba(15,39,68,.12), 0 12px 24px rgba(15,39,68,.14)'
       },
       fontFamily: {
         headline: ['Inter', 'system-ui', 'sans-serif'],

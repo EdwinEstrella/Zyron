@@ -59,4 +59,30 @@
   button.bg-primary:active {
     transform: translateY(1px);
   }
+
+  /* Table polish: bold dark navy header and subtle row hover */
+  :where(table thead th) {
+    background-color: #0f2744;
+    color: #fff;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    border-bottom: 2px solid #0a1a2e;
+  }
+
+  :where(table thead th button, table thead th a, table thead th span) {
+    color: inherit;
+  }
+
+  :where(table tbody tr:hover) {
+    background-color: #e3edf9;
+  }
+
+  /* Inputs: crisp focus ring */
+  :where(input:not([type='checkbox']):not([type='radio']), select, textarea):focus {
+    outline: none;
+    border-color: #1e4976;
+    box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.3);
+  }
 }
