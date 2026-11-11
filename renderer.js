@@ -5212,6 +5212,7 @@ const productsManageViaDb = async (body) => {
                     price: numOrNull(r.price),
                     cost_price: numOrNull(r.cost_price),
                     stock: isSvc ? null : numOrNull(r.stock),
+                    min_stock: isSvc ? null : numOrNull(r.min_stock),
                     tracks_stock: r.tracks_stock === false ? 'No' : 'Sí',
                     tax_rate_default: pctOrNull(r.tax_rate_default),
                     discount_default: pctOrNull(r.discount_default),
@@ -10812,6 +10813,12 @@ const renderInventarioModule = async () => {
             <button type="button" id="inv-export-btn" class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">${icon(
                 'download'
             )}Exportar Excel</button>
+            <button type="button" id="inv-print-btn" class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">${icon(
+                'print'
+            )}Imprimir</button>
+            <button type="button" id="inv-pdf-btn" class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">${icon(
+                'picture_as_pdf'
+            )}PDF</button>
             <div class="flex divide-x divide-outline-variant/40 overflow-hidden rounded-md border border-outline-variant/50" role="group" aria-label="Acciones del articulo seleccionado">
                 <button type="button" id="inv-view-selected" class="${segBtn}" ${selectedId ? '' : 'disabled'}>${icon('visibility')}Ver</button>
                 <button type="button" id="inv-edit-selected" class="${segBtn}" ${selectedId ? '' : 'disabled'}>${icon('edit')}Editar</button>
@@ -11300,6 +11307,80 @@ const renderInventarioModule = async () => {
         if (eu.err || eu.data?.error) {
             window.ZyronDialog.alert(eu.err || eu.data?.error || 'Error al guardar el archivo Excel');
             return;
+        }
+    });
+
+    const buildInventoryReportFromCatalog = async (tid) => {
+        const res = await productsManageViaDb({ tenantId: tid, action: 'export_catalog' });
+        const u = unwrapFnInvoke(res);
+        if (u.err || !u.data?.ok || !u.data?.rows) {
+            window.ZyronDialog.alert(u.err || u.data?.error || 'Error al exportar catálogo');
+            return null;
+        }
+        if (!u.data.rows.length) {
+            window.ZyronDialog.alert('No hay artículos para imprimir.');
+            return null;
+        }
+        const builder = window.ZyronInventoryReport?.buildInventoryReportHtml;
+        if (!builder) {
+            window.ZyronDialog.alert('El generador del reporte no está disponible.');
+            return null;
+        }
+        const tn = state.membershipsList.find((m) => String(m.tenant_id) === String(state.currentTenantId));
+        const businessName = tn?.tenant?.display_name || tn?.tenant?.legal_name || state.currentTenantId || 'Zyron';
+        const now = new Date();
+        const generatedAt = `${now.toLocaleDateString('es-DO')} ${now.toLocaleTimeString('es-DO')}`;
+        const cur = state.tenantContext?.defaultCurrency || 'DOP';
+        const currency = cur === 'DOP' ? 'RD$' : cur;
+        const html = builder({ businessName, generatedAt, rows: u.data.rows, currency });
+        if (!html || typeof html !== 'string' || !html.trim()) {
+            return null;
+        }
+        return html;
+    };
+
+    document.getElementById('inv-print-btn')?.addEventListener('click', async () => {
+        if (!window.electronAPI?.openHtmlPreview) {
+            window.ZyronDialog.alert('La vista previa de impresión no está disponible en este entorno.');
+            return;
+        }
+        const html = await buildInventoryReportFromCatalog(tid);
+        if (!html) return;
+        const pres = await safeCall(
+            () =>
+                window.electronAPI.openHtmlPreview({
+                    title: 'Reporte de Inventario',
+                    html,
+                    autoPrint: true
+                }),
+            'desktop.openHtmlPreview'
+        );
+        const pu = unwrapFnInvoke(pres);
+        if (pu.err || pu.data?.error) {
+            window.ZyronDialog.alert(pu.err || pu.data?.error || 'No se pudo abrir la vista previa de impresión.');
+        }
+    });
+
+    document.getElementById('inv-pdf-btn')?.addEventListener('click', async () => {
+        if (!window.electronAPI?.savePdfFromHtml) {
+            window.ZyronDialog.alert('La exportación a PDF no está disponible en este entorno.');
+            return;
+        }
+        const html = await buildInventoryReportFromCatalog(tid);
+        if (!html) return;
+        const safeDate = new Date().toISOString().slice(0, 10);
+        const pdfRes = await safeCall(
+            () =>
+                window.electronAPI.savePdfFromHtml({
+                    filename: `reporte_inventario_${safeDate}.pdf`,
+                    html,
+                    landscape: true
+                }),
+            'desktop.savePdfFromHtml'
+        );
+        const pu = unwrapFnInvoke(pdfRes);
+        if (pu.err || pu.data?.error) {
+            window.ZyronDialog.alert(pu.err || pu.data?.error || 'No se pudo guardar el archivo PDF.');
         }
     });
 

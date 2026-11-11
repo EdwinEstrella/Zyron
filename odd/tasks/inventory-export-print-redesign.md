@@ -32,14 +32,20 @@ Mode: off. Runner: `npm run test:behavior` (`node --test tests/behavior/*.test.c
 
 ## Tasks
 
-- [/] T1 Inventory export to real .xlsx (in progress)
+- [x] T1 Inventory export to real .xlsx (committed: 6ae6a16)
   - Install `exceljs` and keep lockfile in sync.
   - Implement pure workbook builder in `lib/xlsx-builder.cjs`.
   - Expose `desktop:save-xlsx` IPC handler in `main.js`.
   - Expose `saveXlsx` in `preload.js`.
   - Update `export_catalog` action and `#inv-export-btn` in `renderer.js`.
   - Add behavior test in `tests/behavior/inventory-export-xlsx.test.cjs`.
-- [ ] T2 Printable inventory report
+- [x] T2 Printable inventory report (ready for review, uncommitted)
+  - Pure HTML builder `buildInventoryReportHtml` in `components/inventory-report.js`.
+  - Support `payload.landscape === true` in `desktop:save-pdf-from-html` in `main.js`.
+  - Script inclusion in `index.html`.
+  - Add `min_stock` to `export_catalog` rows without Excel column changes.
+  - Add `#inv-print-btn` ("Imprimir") and `#inv-pdf-btn` ("PDF") with empty-catalog guard and error handling in `renderer.js`.
+  - Add behavior tests in `tests/behavior/inventory-report-print.test.cjs`.
 - [ ] T3 Design tokens & contrast redesign
 - [ ] T4 Sidebar & base components redesign
 - [ ] T5 Per-module polish
@@ -64,8 +70,9 @@ Mode: off. Runner: `npm run test:behavior` (`node --test tests/behavior/*.test.c
 ## Progress
 
 - 2026-11-11: T1 started. Tasks file created.
-- 2026-11-11: T1 completed. `exceljs` installed, `lib/xlsx-builder.cjs` implemented, `desktop:save-xlsx` IPC wired in `main.js` and `preload.js`, `renderer.js` export_catalog action and button updated, behavior tests added in `tests/behavior/inventory-export-xlsx.test.cjs`. Tests: 178 pass.
+- 2026-11-11: T1 completed. `exceljs` installed, `lib/xlsx-builder.cjs` implemented, `desktop:save-xlsx` IPC wired in `main.js` and `preload.js`, `renderer.js` export_catalog action and button updated, behavior tests added in `tests/behavior/inventory-export-xlsx.test.cjs`. Tests: 178 pass. Committed as `6ae6a16`.
+- 2026-11-11: T2 completed. `components/inventory-report.js` implemented with A4 landscape HTML/CSS, navy (#0f2744) theme, 4 KPI cards, totals row in `tfoot`, low-stock badge; `main.js` supports `landscape: true`; `renderer.js` adds `min_stock` in export_catalog and wires `#inv-print-btn` and `#inv-pdf-btn`; behavior tests added in `tests/behavior/inventory-report-print.test.cjs`. Sample report generated. Tests: 189 pass.
 
 ## Next step
 
-Claude reviews diff and commits T1. Next task is T2 (printable inventory report).
+Claude reviews diff of T2 (uncommitted). Next task is T3 (design tokens & contrast redesign).

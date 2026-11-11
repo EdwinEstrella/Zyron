@@ -1152,7 +1152,8 @@ ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
     const pdf = await pdfWindow.webContents.printToPDF({
       printBackground: true,
       pageSize: isThermal ? { width: 80000, height: 260000 } : 'A4',
-      margins: isThermal ? { marginType: 'none' } : { marginType: 'default' }
+      margins: isThermal ? { marginType: 'none' } : { marginType: 'default' },
+      ...(payload.landscape === true ? { landscape: true } : {})
     })
     await fs.promises.writeFile(target.filePath, pdf)
     return { data: { ok: true, path: target.filePath }, error: null }
