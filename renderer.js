@@ -326,6 +326,8 @@ const state = {
     _rtTenantChannel: null,
     /** Estado resumido de realtime administrado por main.js. */
     realtimeStatus: { degraded: false, channels: [] },
+    realtimeDegradedSince: null,
+    realtimeDegradedConfirmed: false,
     /** Super admin: modulo Acceso (cuentas, membresías, auditoría). */
     superAccessUi: { tab: 'platform', memTenantId: '', memEmailQ: '', memStatus: '', platformQ: '' },
     clientesUi: {
@@ -432,9 +434,13 @@ const filterTenantNavForRole = (modules) => {
     return modules.filter((m) => !superOnly.has(m.key));
 };
 
+const REALTIME_DEGRADED_BANNER_DEBOUNCE_MS = 5000;
+let realtimeDegradedBannerTimer = null;
+
 const updateSessionNoticeBanner = () => {
     if (!sessionNoticeBanner) return;
     if (state.isImpersonating && state.appUser) {
+        sessionNoticeBanner.className = 'mb-4 w-full rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3 text-sm text-on-surface';
         sessionNoticeBanner.innerHTML = '';
         const wrap = document.createElement('div');
         wrap.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between bg-amber-500 text-black px-4 py-2 rounded-lg font-medium';
@@ -458,25 +464,32 @@ const updateSessionNoticeBanner = () => {
         sessionNoticeBanner.classList.remove('hidden');
         return;
     }
-    if (state.realtimeStatus?.degraded && state.appUser && !isTenantPendingApproval()) {
+
+    const isDegraded = Boolean(state.realtimeStatus?.degraded && state.appUser && !isTenantPendingApproval());
+    const degradedDuration = isDegraded && state.realtimeDegradedSince ? Date.now() - state.realtimeDegradedSince : 0;
+    const shouldShowDegradedBanner =
+        isDegraded && (Boolean(state.realtimeDegradedConfirmed) || degradedDuration >= REALTIME_DEGRADED_BANNER_DEBOUNCE_MS);
+
+    if (shouldShowDegradedBanner) {
         const primary = state.realtimeStatus.channels.find((ch) => ch.degraded || ch.status === 'degraded') || {};
         const retryAt = primary.nextRetryAt ? new Date(primary.nextRetryAt) : null;
         const retryText = retryAt && !Number.isNaN(retryAt.getTime())
             ? `Proximo reintento automatico: ${retryAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
             : 'Reintentando automaticamente.';
+        sessionNoticeBanner.className = 'mb-4 w-full rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900';
         sessionNoticeBanner.innerHTML = '';
         const wrap = document.createElement('div');
         wrap.className = 'flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between';
         const copy = document.createElement('div');
         copy.innerHTML = `
-            <strong class="block text-on-surface">Realtime en modo degradado</strong>
-            <span class="text-on-surface-variant">La app sigue funcionando; los eventos criticos se encolan y se sincronizan cuando vuelva la conexion. ${retryText}</span>
+            <strong class="block font-semibold">Realtime en modo degradado</strong>
+            <span class="text-amber-900">La app sigue funcionando; los eventos criticos se encolan y se sincronizan cuando vuelva la conexion. ${escapeHtml(retryText)}</span>
         `;
         const retry = document.createElement('button');
         retry.type = 'button';
         retry.dataset.action = 'retry-realtime';
         retry.dataset.channel = primary.channel || state._rtTenantChannel || '';
-        retry.className = 'btn-secondary self-start whitespace-nowrap px-3 py-2 text-xs sm:self-center';
+        retry.className = 'rounded-md border border-outline-variant bg-white px-3 py-2 text-xs font-semibold text-primary hover:bg-surface-container-low self-start whitespace-nowrap sm:self-center';
         retry.textContent = 'Reintentar ahora';
         retry.disabled = !retry.dataset.channel;
         wrap.append(copy, retry);
@@ -484,8 +497,8 @@ const updateSessionNoticeBanner = () => {
         sessionNoticeBanner.classList.remove('hidden');
         return;
     }
+    sessionNoticeBanner.className = 'mb-4 hidden w-full rounded-xl border border-outline-variant/30 bg-surface-container px-4 py-3 text-sm text-on-surface';
     sessionNoticeBanner.innerHTML = '';
-    sessionNoticeBanner.classList.add('hidden');
 };
 
 sessionNoticeBanner?.addEventListener('click', async (event) => {
@@ -720,10 +733,30 @@ backendAPI?.auth?.onSessionExpired?.((payload) => {
 
 backendAPI?.realtime?.onStatusChanged?.((payload) => {
     const channels = Array.isArray(payload?.channels) ? payload.channels : [];
+    const isDegraded = Boolean(payload?.error || channels.some((ch) => ch.degraded || ch.status === 'degraded'));
     state.realtimeStatus = {
-        degraded: Boolean(payload?.error || channels.some((ch) => ch.degraded || ch.status === 'degraded')),
+        degraded: isDegraded,
         channels
     };
+    if (isDegraded) {
+        if (!state.realtimeDegradedSince) {
+            state.realtimeDegradedSince = Date.now();
+        }
+        if (!realtimeDegradedBannerTimer) {
+            realtimeDegradedBannerTimer = setTimeout(() => {
+                realtimeDegradedBannerTimer = null;
+                state.realtimeDegradedConfirmed = true;
+                updateSessionNoticeBanner();
+            }, REALTIME_DEGRADED_BANNER_DEBOUNCE_MS);
+        }
+    } else {
+        state.realtimeDegradedSince = null;
+        state.realtimeDegradedConfirmed = false;
+        if (realtimeDegradedBannerTimer) {
+            clearTimeout(realtimeDegradedBannerTimer);
+            realtimeDegradedBannerTimer = null;
+        }
+    }
     updateSessionNoticeBanner();
 });
 
@@ -2939,14 +2972,14 @@ const renderPanelModule = async () => {
         })
         .join('');
     const statCard = (icon, label, value, hint, tone = 'primary') => `
-        <div class="rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-4 text-left shadow-sm">
+        <div class="min-w-0 rounded-lg border border-outline-variant/25 bg-surface-container-lowest p-4 text-left shadow-sm">
             <div class="flex items-start justify-between gap-3">
-                <div>
-                    <div class="text-xs font-semibold uppercase tracking-wide text-on-surface-variant">${escapeHtml(label)}</div>
-                    <div class="mt-2 text-2xl font-bold ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-error' : 'text-primary'}">${value}</div>
-                    <p class="mt-1 text-xs text-on-surface-variant">${escapeHtml(hint || '')}</p>
+                <div class="min-w-0 flex-1">
+                    <div class="truncate text-xs font-semibold uppercase tracking-wide text-on-surface-variant" title="${escapeHtml(label)}">${escapeHtml(label)}</div>
+                    <div class="mt-2 text-xl lg:text-2xl font-bold truncate ${tone === 'green' ? 'text-emerald-600' : tone === 'red' ? 'text-error' : 'text-primary'}" title="${escapeHtml(String(value))}">${value}</div>
+                    <p class="mt-1 truncate text-xs text-on-surface-variant" title="${escapeHtml(hint || '')}">${escapeHtml(hint || '')}</p>
                 </div>
-                <span class="material-symbols-outlined rounded-md bg-surface-container-low p-2 text-primary/80" aria-hidden="true">${escapeHtml(icon)}</span>
+                <span class="material-symbols-outlined shrink-0 rounded-md bg-surface-container-low p-2 text-primary/80" aria-hidden="true">${escapeHtml(icon)}</span>
             </div>
         </div>`;
     const invoiceRow = (invoice, opts = {}) => {
@@ -2955,13 +2988,13 @@ const renderPanelModule = async () => {
         const amount = opts.balance ? openBalance(invoice) : Number(invoice.total || 0);
         return `
             <tr class="border-b border-outline-variant/15">
-                <td class="py-3 pr-4 text-on-surface-variant">${escapeHtml(toDateString(opts.due ? invoice.due_date || invoice.created_at : invoice.created_at))}</td>
-                <td class="py-3 pr-4">
-                    <div class="font-medium text-primary">${escapeHtml(cust?.name || 'Cliente sin nombre')}</div>
-                    <div class="font-mono text-[11px] text-on-surface-variant">${escapeHtml(String(num))}</div>
+                <td class="py-3 pr-4 whitespace-nowrap text-on-surface-variant">${escapeHtml(toDateString(opts.due ? invoice.due_date || invoice.created_at : invoice.created_at))}</td>
+                <td class="py-3 pr-4 max-w-[150px] sm:max-w-[200px]">
+                    <div class="font-medium text-primary truncate" title="${escapeHtml(cust?.name || 'Cliente sin nombre')}">${escapeHtml(cust?.name || 'Cliente sin nombre')}</div>
+                    <div class="font-mono text-[11px] text-on-surface-variant truncate" title="${escapeHtml(String(num))}">${escapeHtml(String(num))}</div>
                 </td>
-                <td class="py-3 pr-4 text-xs">${escapeHtml(String(invoice.status || '-'))}</td>
-                <td class="py-3 text-right font-semibold">${fmtMoneyPanel(amount, invoice.currency || currency)}</td>
+                <td class="py-3 pr-4 whitespace-nowrap text-xs">${escapeHtml(String(invoice.status || '-'))}</td>
+                <td class="py-3 whitespace-nowrap text-right font-semibold">${fmtMoneyPanel(amount, invoice.currency || currency)}</td>
             </tr>`;
     };
     const estimateRow = (estimate) => {
@@ -2969,19 +3002,19 @@ const renderPanelModule = async () => {
         const num = estimate.series != null && estimate.number != null ? `${estimate.series}-${estimate.number}` : estimate.id || '-';
         return `
             <tr class="border-b border-outline-variant/15">
-                <td class="py-3 pr-4 text-on-surface-variant">${escapeHtml(toDateString(estimate.created_at))}</td>
-                <td class="py-3 pr-4">
-                    <div class="font-medium text-primary">${escapeHtml(cust?.name || 'Cliente sin nombre')}</div>
-                    <div class="font-mono text-[11px] text-on-surface-variant">${escapeHtml(String(num))}</div>
+                <td class="py-3 pr-4 whitespace-nowrap text-on-surface-variant">${escapeHtml(toDateString(estimate.created_at))}</td>
+                <td class="py-3 pr-4 max-w-[150px] sm:max-w-[200px]">
+                    <div class="font-medium text-primary truncate" title="${escapeHtml(cust?.name || 'Cliente sin nombre')}">${escapeHtml(cust?.name || 'Cliente sin nombre')}</div>
+                    <div class="font-mono text-[11px] text-on-surface-variant truncate" title="${escapeHtml(String(num))}">${escapeHtml(String(num))}</div>
                 </td>
-                <td class="py-3 pr-4 text-xs">${escapeHtml(String(estimate.status || '-'))}</td>
-                <td class="py-3 text-right font-semibold">${fmtMoneyPanel(estimate.total, estimate.currency || currency)}</td>
+                <td class="py-3 pr-4 whitespace-nowrap text-xs">${escapeHtml(String(estimate.status || '-'))}</td>
+                <td class="py-3 whitespace-nowrap text-right font-semibold">${fmtMoneyPanel(estimate.total, estimate.currency || currency)}</td>
             </tr>`;
     };
 
     dashboardContent.innerHTML = `
         ${renderModuleHeader('Panel principal', 'Resumen operativo de ventas, cobros y documentos')}
-        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div class="grid gap-4 grid-cols-[repeat(auto-fit,minmax(220px,1fr))]">
             ${statCard('account_balance_wallet', 'Monto por cobrar', fmtMoneyPanel(totalDue, currency), 'Facturas con saldo abierto')}
             ${statCard('groups', 'Clientes', String(customers.length), 'Contactos activos en esta empresa')}
             ${statCard('receipt_long', 'Facturas', String(invoices.length), 'Documentos de venta registrados')}
@@ -3044,7 +3077,7 @@ const renderPanelModule = async () => {
                     dueInvoices.length
                         ? `<div class="w-full overflow-x-auto"><table class="w-full border-collapse text-left text-sm">
                     <thead><tr class="border-b border-outline-variant/30">
-                        <th class="py-2 pr-4">Vence</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4">Estado</th><th class="py-2 text-right">Saldo</th>
+                        <th class="py-2 pr-4 whitespace-nowrap">Vence</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4 whitespace-nowrap">Estado</th><th class="py-2 whitespace-nowrap text-right">Saldo</th>
                     </tr></thead>
                     <tbody>${dueInvoices
                         .map((invoice) => invoiceRow(invoice, { due: true, balance: true }))
@@ -3061,7 +3094,7 @@ const renderPanelModule = async () => {
                     recentEstimates.length
                         ? `<div class="w-full overflow-x-auto"><table class="w-full border-collapse text-left text-sm">
                     <thead><tr class="border-b border-outline-variant/30">
-                        <th class="py-2 pr-4">Fecha</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4">Estado</th><th class="py-2 text-right">Total</th>
+                        <th class="py-2 pr-4 whitespace-nowrap">Fecha</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4 whitespace-nowrap">Estado</th><th class="py-2 whitespace-nowrap text-right">Total</th>
                     </tr></thead>
                     <tbody>${recentEstimates.map((estimate) => estimateRow(estimate)).join('')}</tbody></table></div>`
                         : '<p class="text-sm text-on-surface-variant">No hay presupuestos recientes.</p>'
@@ -3077,7 +3110,7 @@ const renderPanelModule = async () => {
                 recentInvoices.length
                     ? `<div class="w-full overflow-x-auto"><table class="w-full border-collapse text-left text-sm">
                 <thead><tr class="border-b border-outline-variant/30">
-                    <th class="py-2 pr-4">Fecha</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4">Estado</th><th class="py-2 text-right">Total</th>
+                    <th class="py-2 pr-4 whitespace-nowrap">Fecha</th><th class="py-2 pr-4">Cliente</th><th class="py-2 pr-4 whitespace-nowrap">Estado</th><th class="py-2 whitespace-nowrap text-right">Total</th>
                 </tr></thead>
                 <tbody>${recentInvoices.map((invoice) => invoiceRow(invoice)).join('')}</tbody></table></div>`
                     : '<p class="text-sm text-on-surface-variant">No hay facturas todavia. Usa el modulo Facturas para crear la primera.</p>'
@@ -3632,7 +3665,7 @@ const renderSuperAccessModule = async () => {
             <p class="mb-2 text-xs text-on-surface-variant">Control de acceso por empresa: <code class="rounded bg-surface-container px-1">role_key</code> debe existir en <code class="rounded bg-surface-container px-1">role_catalog</code> del tenant (usa el modulo Roles para sembrar presets).</p>
             <div class="overflow-x-auto max-h-[60vh] overflow-y-auto rounded-lg border border-outline-variant/25">
                 <table class="w-full min-w-[920px] text-left text-sm">
-                    <thead class="sticky top-0 z-10 bg-surface-container-highest"><tr class="border-b border-outline-variant/30">
+                    <thead class="sticky top-0 z-10"><tr class="border-b border-outline-variant/30">
                         <th class="py-2 px-2">Empresa</th><th class="py-2 px-2">Usuario</th><th class="py-2 px-2">Rol</th><th class="py-2 px-2">Estado</th><th class="py-2 px-2">Dueño</th><th class="py-2 px-2 text-right">Guardar</th>
                     </tr></thead>
                     <tbody>
@@ -7849,12 +7882,12 @@ const renderFacturasModule = async () => {
         </div>
         ${window.ZyronActionBar.can(FACTURA_BAR, 'search') ? `
         <div class="mb-3 rounded-xl border border-outline-variant/25 bg-surface-container-low p-3">
-            <div class="flex flex-col gap-3 lg:flex-row lg:items-end">
-                <div class="flex-1">
+            <div class="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-end">
+                <div class="min-w-[200px] flex-1">
                     <label class="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-on-surface-variant">Buscar</label>
                     <div class="flex items-center gap-2 rounded-lg border border-outline-variant/50 bg-surface-container-lowest px-3 py-2">
                         <span class="material-symbols-outlined text-base text-on-surface-variant">search</span>
-                        <input id="fact-filter-q" type="text" class="w-full bg-transparent text-sm outline-none" placeholder="Documento, NCF o cliente…" value="${escapeHtml(activeFilters.q || '')}" />
+                        <input id="fact-filter-q" type="text" class="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="Documento, NCF o cliente…" value="${escapeHtml(activeFilters.q || '')}" />
                     </div>
                 </div>
                 <div class="w-full lg:w-56">
@@ -10143,7 +10176,7 @@ const renderClientesModule = async () => {
         </div>
         <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             ${window.ZyronActionBar.can(CLIENTE_BAR, 'search') ? `
-            <input id="cli-filter-q" type="search" class="max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Buscar nombre, correo, telefono, RNC…" value="${escapeHtml(
+            <input id="cli-filter-q" type="search" class="min-w-[200px] max-w-md flex-1 rounded-md border border-outline-variant/40 px-3 py-2 text-sm" placeholder="Buscar nombre, correo, telefono, RNC…" value="${escapeHtml(
                 q
             )}" />
             <select id="cli-filter-seg" class="rounded-md border border-outline-variant/40 px-3 py-2 text-sm">${segmentFilterOpts}</select>
@@ -10597,9 +10630,12 @@ const renderInventarioModule = async () => {
             const id = String(p.id);
             const selected = id === selectedId;
             const withTax = priceWithTax(p);
-            const tone = `${rowTone(p)} hover:bg-surface-container-high`;
-            return `<tr data-inv-row="${escapeHtml(id)}" data-tone="${tone}" class="cursor-default select-none border-b border-outline-variant/10 ${
-                selected ? 'bg-primary text-white' : tone
+            const tone = rowTone(p);
+            const baseRowCls = 'cursor-default select-none border-b border-outline-variant/10';
+            const selectedCls = `${baseRowCls} bg-accent/15 font-semibold shadow-[inset_3px_0_0_#0284c7] ${tone}`;
+            const unselectedCls = `${baseRowCls} hover:bg-surface-container-high ${tone}`;
+            return `<tr data-inv-row="${escapeHtml(id)}" data-tone="${tone}" class="${
+                selected ? selectedCls : unselectedCls
             }" aria-selected="${selected ? 'true' : 'false'}">
             <td class="${cell} font-mono">${escapeHtml(p.sku || '')}</td>
             <td class="${cell} truncate">${escapeHtml(p.name || '')}</td>
@@ -10615,10 +10651,15 @@ const renderInventarioModule = async () => {
         })
         .join('');
 
-    const detailField = (label, value, extra = '') =>
-        `<div class="flex items-center gap-3"><span class="w-32 shrink-0 text-right text-on-surface-variant">${label}</span><span class="min-w-0 flex-1 truncate rounded border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 ${extra}">${
-            value === '' || value == null ? '&nbsp;' : value
-        }</span></div>`;
+    const detailField = (label, value, extra = '', titleText = null) => {
+        const titleAttr = titleText != null && titleText !== '' ? ` title="${escapeHtml(String(titleText))}"` : '';
+        return `<div class="flex flex-col gap-1 min-w-0">
+            <span class="text-xs font-semibold uppercase tracking-wider text-on-surface-variant truncate" title="${escapeHtml(label)}">${label}</span>
+            <span class="w-full min-w-0 truncate rounded border border-outline-variant/30 bg-surface-container-low px-3 py-1.5 text-sm text-on-surface ${extra}"${titleAttr}>${
+                value === '' || value == null ? '&nbsp;' : value
+            }</span>
+        </div>`;
+    };
     const warehouseStockHtml = (p) => {
         if (isService(p)) return '<p class="text-sm text-on-surface-variant">Los servicios no llevan existencia.</p>';
         if (!catalogWarehouses.length) {
@@ -10781,12 +10822,12 @@ const renderInventarioModule = async () => {
         return `
             ${tabs}
             <div class="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_18rem]">
-            <div class="grid grid-cols-1 content-start gap-x-8 gap-y-2 text-sm md:grid-cols-3">
-                ${detailField('SKU', escapeHtml(p.sku || ''), 'font-mono')}
-                ${detailField('Nombre', escapeHtml(p.name || ''))}
+            <div class="grid grid-cols-1 content-start gap-x-6 gap-y-3 text-sm min-[700px]:grid-cols-2 min-[1280px]:grid-cols-3">
+                ${detailField('SKU', escapeHtml(p.sku || ''), 'font-mono', p.sku || '')}
+                ${detailField('Nombre', escapeHtml(p.name || ''), '', p.name || '')}
                 ${detailField('Tipo', service ? 'Servicio' : 'Producto')}
-                ${detailField('Categoria', escapeHtml(p.category?.label || ''))}
-                ${detailField('Unidad', escapeHtml(p.unit?.label || p.unit?.code || ''))}
+                ${detailField('Categoria', escapeHtml(p.category?.label || ''), '', p.category?.label || '')}
+                ${detailField('Unidad', escapeHtml(p.unit?.label || p.unit?.code || ''), '', p.unit?.label || p.unit?.code || '')}
                 ${detailField('Estado', p.is_active === false ? 'Inactivo' : 'Activo')}
                 ${detailField('Costo', p.cost_price != null && p.cost_price !== '' ? money(p.cost_price) : '', 'text-right tabular-nums')}
                 ${detailField('Precio', money(p.price), 'text-right tabular-nums')}
@@ -10831,30 +10872,38 @@ const renderInventarioModule = async () => {
             )}Nuevo articulo</button>
         </div>`;
     const toolbarInput = 'rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm';
-    const th = 'sticky top-0 z-10 border-b border-r border-outline-variant/30 bg-surface-container-high px-3 py-3 font-semibold';
+    const th = 'sticky top-0 z-10 border-b border-r border-outline-variant/30 px-3 py-3 font-semibold';
     const listPanel = `
         <div class="mb-4 flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-outline-variant/25 bg-surface-container-low px-4 py-3">
-            <label class="text-sm font-semibold" for="inv-filter-q">Buscar</label>
-            <input id="inv-filter-q" type="search" autocomplete="off" class="${toolbarInput} w-72" placeholder="SKU o nombre…" value="${escapeHtml(
-                q
-            )}" />
-            <label class="text-sm" for="inv-filter-cat">Categoria</label>
-            <select id="inv-filter-cat" class="${toolbarInput}">${catOpts}</select>
-            <label class="text-sm" for="inv-filter-kind">Tipo</label>
-            <select id="inv-filter-kind" class="${toolbarInput}">
-                <option value="" ${!itemKind ? 'selected' : ''}>Todos</option>
-                <option value="product" ${itemKind === 'product' ? 'selected' : ''}>Producto</option>
-                <option value="service" ${itemKind === 'service' ? 'selected' : ''}>Servicio</option>
-            </select>
-            <label class="text-sm" for="inv-filter-stock">Existencia</label>
-            <select id="inv-filter-stock" class="${toolbarInput}">
-                <option value="" ${!stockFilter ? 'selected' : ''}>Todas</option>
-                <option value="with" ${stockFilter === 'with' ? 'selected' : ''}>Con existencia</option>
-                <option value="without" ${stockFilter === 'without' ? 'selected' : ''}>Sin existencia</option>
-                <option value="negative" ${stockFilter === 'negative' ? 'selected' : ''}>Negativa</option>
-                <option value="low" ${stockFilter === 'low' ? 'selected' : ''}>Bajo minimo</option>
-            </select>
-            <label class="flex items-center gap-2 text-sm"><input type="checkbox" id="inv-filter-inactive" ${includeInactive ? 'checked' : ''} /> Inactivos</label>
+            <div class="inline-flex items-center gap-2">
+                <label class="text-sm font-semibold" for="inv-filter-q">Buscar</label>
+                <input id="inv-filter-q" type="search" autocomplete="off" class="${toolbarInput} w-72" placeholder="SKU o nombre…" value="${escapeHtml(
+                    q
+                )}" />
+            </div>
+            <div class="inline-flex items-center gap-2">
+                <label class="text-sm font-semibold" for="inv-filter-cat">Categoria</label>
+                <select id="inv-filter-cat" class="${toolbarInput}">${catOpts}</select>
+            </div>
+            <div class="inline-flex items-center gap-2">
+                <label class="text-sm font-semibold" for="inv-filter-kind">Tipo</label>
+                <select id="inv-filter-kind" class="${toolbarInput}">
+                    <option value="" ${!itemKind ? 'selected' : ''}>Todos</option>
+                    <option value="product" ${itemKind === 'product' ? 'selected' : ''}>Producto</option>
+                    <option value="service" ${itemKind === 'service' ? 'selected' : ''}>Servicio</option>
+                </select>
+            </div>
+            <div class="inline-flex items-center gap-2">
+                <label class="text-sm font-semibold" for="inv-filter-stock">Existencia</label>
+                <select id="inv-filter-stock" class="${toolbarInput}">
+                    <option value="" ${!stockFilter ? 'selected' : ''}>Todas</option>
+                    <option value="with" ${stockFilter === 'with' ? 'selected' : ''}>Con existencia</option>
+                    <option value="without" ${stockFilter === 'without' ? 'selected' : ''}>Sin existencia</option>
+                    <option value="negative" ${stockFilter === 'negative' ? 'selected' : ''}>Negativa</option>
+                    <option value="low" ${stockFilter === 'low' ? 'selected' : ''}>Bajo minimo</option>
+                </select>
+            </div>
+            <label class="inline-flex items-center gap-2 text-sm"><input type="checkbox" id="inv-filter-inactive" ${includeInactive ? 'checked' : ''} /> Inactivos</label>
             <button type="button" id="inv-filter-apply" class="rounded-md bg-primary px-4 py-2 text-sm text-white">Filtrar</button>
         </div>
         <div id="inv-grid" tabindex="0" class="min-h-[10rem] flex-1 overflow-auto rounded-lg border border-outline-variant/30 bg-surface-container-lowest outline-none focus:ring-1 focus:ring-primary/40">
@@ -10881,7 +10930,7 @@ const renderInventarioModule = async () => {
             <span>${visibleRows.length} encontrado(s)</span>
             <span>↑/↓ para moverte · Usa Ver o Editar para abrir el articulo</span>
         </div>
-        <div id="inv-detail" class="mt-2 max-h-[45%] shrink-0 overflow-y-auto rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-4">${detailHtml(rowsById.get(selectedId))}</div>`;
+        <div id="inv-detail" class="mt-2 max-h-[45%] min-h-0 overflow-y-auto rounded-lg border border-outline-variant/30 bg-surface-container-lowest p-4">${detailHtml(rowsById.get(selectedId))}</div>`;
 
     const catTable = (categories || [])
         .map(
@@ -10942,7 +10991,7 @@ const renderInventarioModule = async () => {
                 : ''
         }
         <div class="overflow-x-auto rounded-md border border-outline-variant/25">
-            <table class="w-full text-left text-sm"><thead class="bg-surface-container-high"><tr><th class="px-3 py-2">Codigo</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2">Simbolo</th><th></th></tr></thead>
+            <table class="w-full text-left text-sm"><thead><tr><th class="px-3 py-2">Codigo</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2">Simbolo</th><th></th></tr></thead>
             <tbody>${unitTable || `<tr><td colspan="4" class="py-6 text-center text-on-surface-variant">Sin unidades. Agrega las que uses.</td></tr>`}</tbody></table>
         </div>`;
 
@@ -11160,10 +11209,12 @@ const renderInventarioModule = async () => {
         const prev = invGrid.querySelector('tr[aria-selected="true"]');
         if (prev === tr) return;
         if (prev) {
-            prev.className = `cursor-default select-none border-b border-outline-variant/10 ${prev.getAttribute('data-tone') || ''}`;
+            const prevTone = prev.getAttribute('data-tone') || 'text-on-surface';
+            prev.className = `cursor-default select-none border-b border-outline-variant/10 hover:bg-surface-container-high ${prevTone}`;
             prev.setAttribute('aria-selected', 'false');
         }
-        tr.className = 'cursor-default select-none border-b border-outline-variant/10 bg-primary text-white';
+        const tone = tr.getAttribute('data-tone') || 'text-on-surface';
+        tr.className = `cursor-default select-none border-b border-outline-variant/10 bg-accent/15 font-semibold shadow-[inset_3px_0_0_#0284c7] ${tone}`;
         tr.setAttribute('aria-selected', 'true');
         tr.scrollIntoView({ block: 'nearest' });
         const id = tr.getAttribute('data-inv-row');
@@ -11805,6 +11856,38 @@ const printReportPdf = async (title, rows) => {
     }
 };
 
+const formatReportSummaryItem = (k, v) => {
+    const keyLower = String(k).toLowerCase();
+    let label = '';
+    let valStr = '';
+
+    if (keyLower === 'count' || keyLower === 'cantidad') {
+        label = 'Cantidad';
+        const num = Number(v);
+        valStr = Number.isFinite(num) ? Math.round(num).toLocaleString(getTenantNumberLocale()) : escapeHtml(String(v ?? '0'));
+    } else if (keyLower === 'subtotal') {
+        label = 'Subtotal';
+        valStr = fmtMoneyPanel(v);
+    } else if (keyLower === 'impuestos' || keyLower === 'tax' || keyLower === 'tax_total') {
+        label = 'Impuestos';
+        valStr = fmtMoneyPanel(v);
+    } else if (keyLower === 'total' || keyLower === 'monto') {
+        label = 'Total';
+        valStr = fmtMoneyPanel(v);
+    } else {
+        const humanKey = String(k).replace(/_/g, ' ');
+        label = humanKey.charAt(0).toUpperCase() + humanKey.slice(1);
+        if (typeof v === 'number') {
+            valStr = Number.isInteger(v)
+                ? v.toLocaleString(getTenantNumberLocale())
+                : v.toLocaleString(getTenantNumberLocale(), { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        } else {
+            valStr = escapeHtml(String(v ?? ''));
+        }
+    }
+    return `${escapeHtml(label)}: ${valStr}`;
+};
+
 const renderReportesModule = async () => {
     zyronLog('render:reportes:start', { tenantId: state.currentTenantId });
     if (!state.currentTenantId) {
@@ -11898,7 +11981,7 @@ const renderReportesModule = async () => {
             const rows = u.data.rows || [];
             const sum = u.data.summary || {};
             const sumStr = Object.entries(sum)
-                .map(([k, v]) => `${escapeHtml(k)}: ${typeof v === 'number' ? v.toFixed(2) : escapeHtml(String(v))}`)
+                .map(([k, v]) => formatReportSummaryItem(k, v))
                 .join(' · ');
             const keys = rows[0] ? Object.keys(rows[0]) : [];
             const th = keys.map((k) => `<th class="py-2 text-left text-xs font-semibold uppercase tracking-wide">${escapeHtml(k)}</th>`).join('');
@@ -12029,7 +12112,7 @@ const renderReportesModule = async () => {
             if (host) {
                 const sum = u.data.summary || {};
                 const sumStr = Object.entries(sum)
-                    .map(([k, v]) => `${escapeHtml(k)}: ${typeof v === 'number' ? v.toFixed(2) : escapeHtml(String(v))}`)
+                    .map(([k, v]) => formatReportSummaryItem(k, v))
                     .join(' · ');
                 host.innerHTML = `
                     <p class="mb-2 text-sm font-medium">Resultado plantilla</p>
@@ -12337,7 +12420,7 @@ const renderAccountingReports = async ({ mount, tid, accounts, kind }) => {
     const rep = ui.rep;
     const rerender = () => renderAccountingReports({ mount, tid, accounts, kind });
     const input = 'rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 text-sm';
-    const th = 'sticky top-0 z-10 border-b border-outline-variant/30 bg-surface-container-high px-3 py-2 text-xs font-semibold uppercase tracking-wide';
+    const th = 'sticky top-0 z-10 border-b border-outline-variant/30 px-3 py-2 text-xs font-semibold uppercase tracking-wide';
     const td = 'border-b border-outline-variant/10 px-3 py-1.5';
     const num = `${td} text-right tabular-nums whitespace-nowrap`;
     const errorBox = (msg) => `<div class="rounded-md border border-error/40 bg-error/10 px-4 py-3 text-sm text-error">${escapeHtml(msg)}</div>`;
@@ -13825,7 +13908,7 @@ const renderWarehouseSettings = async (mount, tid) => {
             </div>
             <div class="mt-5 overflow-x-auto rounded-md border border-outline-variant/25">
                 <table class="w-full text-left text-sm">
-                    <thead class="bg-surface-container-high"><tr>
+                    <thead><tr>
                         <th class="px-3 py-2">Codigo</th><th class="px-3 py-2">Nombre</th><th class="px-3 py-2 text-center">Predeterminado</th>
                         <th class="px-3 py-2 text-center">Activo</th><th class="px-3 py-2"></th>
                     </tr></thead>
@@ -15007,13 +15090,13 @@ const renderCrmModule = async () => {
                     <span class="material-symbols-outlined mr-1.5 text-[18px]">add</span>Nueva Oportunidad
                 </button>
             </div>
-            <div class="grid grid-cols-1 md:grid-cols-5 gap-4 overflow-x-auto pb-4">
+            <div class="flex items-start gap-4 overflow-x-auto pb-4">
                 ${stages
                     .map((st) => {
                         const stLeads = (leads || []).filter((l) => (l.status === 'ganado' ? st.key === 'ganado' : (l.source === st.key || (st.key === 'prospecto' && !['contactado','propuesta','negociacion','ganado'].includes(l.source)))));
                         const colTotal = stLeads.reduce((acc, l) => acc + Number(l.expected_revenue || 0), 0);
                         return `
-                        <div class="flex flex-col gap-3 rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 min-w-[220px]">
+                        <div class="flex flex-col gap-3 rounded-xl border border-outline-variant/20 bg-surface-container-low p-3 w-[280px] min-w-[260px] shrink-0">
                             <div class="flex items-center justify-between border-b border-outline-variant/15 pb-2">
                                 <div>
                                     <h4 class="font-bold text-xs uppercase tracking-wider text-primary">${escapeHtml(st.name)}</h4>

@@ -296,6 +296,35 @@
             border-color: transparent;
         }
 
+        #sidebar-modules-mount {
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+        }
+
+        #sidebar-modules-mount::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        #sidebar-modules-mount::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        #sidebar-modules-mount::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.25);
+            border-radius: 3px;
+        }
+
+        #sidebar-modules-mount::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.4);
+        }
+
+        @media (max-height: 900px) {
+            .nav-module {
+                padding-top: 0.5rem;
+                padding-bottom: 0.5rem;
+            }
+        }
+
         .dash-main {
             flex: 1;
             min-width: 0;
@@ -647,9 +676,9 @@
     </div>
 
     <div id="view-dashboard" class="hidden flex flex-1 flex-row min-h-0 overflow-hidden bg-surface text-on-surface">
-        <nav id="sidebar-nav" class="app-sidebar flex w-56 shrink-0 flex-col gap-1 px-3 py-4 z-20" aria-label="Módulos">
-            <div class="flex flex-1 flex-col gap-1" id="sidebar-modules-mount"></div>
-            <div class="mt-auto flex flex-col gap-1 border-t border-white/10 pt-3">
+        <nav id="sidebar-nav" class="app-sidebar flex w-56 shrink-0 flex-col min-h-0 gap-1 px-3 py-4 z-20" aria-label="Módulos">
+            <div class="flex flex-1 flex-col min-h-0 overflow-y-auto gap-1" id="sidebar-modules-mount"></div>
+            <div class="mt-auto shrink-0 flex flex-col gap-1 border-t border-white/10 pt-3">
                 <a class="nav-module" href="#">
                     <span class="material-symbols-outlined text-[20px] shrink-0">help</span>
                     <span>Ayuda</span>
