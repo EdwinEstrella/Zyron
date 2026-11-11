@@ -60,7 +60,8 @@
     "@supabase/supabase-js": "^2.117.1",
     "dotenv": "^17.4.2",
     "electron-log": "^5.4.4",
-    "electron-updater": "^6.8.3"
+    "electron-updater": "^6.8.3",
+    "exceljs": "^4.4.0"
   },
   "lint-staged": {
     "*.{js,cjs,mjs}": [
@@ -98,6 +99,7 @@
       "!**/*secret*.json",
       "components/**/*",
       "fragments/**/*",
+      "lib/**/*",
       "public/**/*",
       ".generated/insforge.json",
       ".generated/supabase.json",

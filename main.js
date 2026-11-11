@@ -12,6 +12,7 @@ autoUpdater.autoInstallOnAppQuit = true
 const mainVerboseIpc = () => process.env.ZYRON_MAIN_VERBOSE === '1'
 const fs = require('node:fs')
 const path = require('node:path')
+const { buildWorkbook } = require('./lib/xlsx-builder.cjs')
 
 /** Carga `.env` desde dev root y desde ubicaciones runtime del ejecutable empaquetado. */
 const loadEnvFromDotEnvFiles = () => {
@@ -1160,6 +1161,35 @@ ipcMain.handle('desktop:save-pdf-from-html', async (_event, payload = {}) => {
     return normalizeResult(null, error)
   } finally {
     if (pdfWindow && !pdfWindow.isDestroyed()) pdfWindow.destroy()
+  }
+})
+
+ipcMain.handle('desktop:save-xlsx', async (_event, payload = {}) => {
+  try {
+    const safeName =
+      String(payload.filename || 'reporte.xlsx')
+        .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '_')
+        .replace(/\.xlsx?$/i, '')
+        .replace(/\.csv$/i, '') + '.xlsx'
+    const defaultPath = path.join(app.getPath('desktop'), safeName)
+    const target = await dialog.showSaveDialog(mainWindow || undefined, {
+      title: 'Guardar Excel',
+      defaultPath,
+      filters: [{ name: 'Excel (*.xlsx)', extensions: ['xlsx'] }]
+    })
+    if (target.canceled || !target.filePath) return { data: { ok: false, canceled: true }, error: null }
+    const workbook = await buildWorkbook({
+      sheetName: payload.sheetName,
+      title: payload.title,
+      subtitle: payload.subtitle,
+      columns: payload.columns,
+      rows: payload.rows
+    })
+    await workbook.xlsx.writeFile(target.filePath)
+    return { data: { ok: true, path: target.filePath }, error: null }
+  } catch (error) {
+    zyronLog('desktop:saveXlsx:error', { message: error?.message || String(error) })
+    return normalizeResult(null, error)
   }
 })
 

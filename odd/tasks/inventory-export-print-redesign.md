@@ -1,0 +1,71 @@
+# Feature: Inventory Export, Print Report & Contrast Redesign
+
+## Objective
+
+Fix inventory Excel export by generating native, styled `.xlsx` workbooks, add a printable inventory report, and redesign UI contrast across the application.
+
+## Why
+
+- Current inventory export generates comma-separated CSV. In Latin American regional settings (Excel), `;` is the default delimiter, collapsing all columns into a single cell.
+- Users need an inventory catalog export formatted as a real, styled `.xlsx` spreadsheet with proper numbers, money formatting, and headers.
+- Zyron lacks a printable inventory report (PDF/print).
+- The current UI palette has low contrast across near-white background and surface layers.
+
+## Scope
+
+- **T1: Real .xlsx export** (main process `exceljs` integration, IPC channel `desktop:save-xlsx`, `lib/xlsx-builder.cjs`, renderer export action and button update).
+- **T2: Printable inventory report** (reuse `desktop:save-pdf-from-html` / `open-html-preview` for inventory catalog print/PDF).
+- **T3: Design tokens & contrast** (update `tailwind.config.cjs` palette for crisp surface contrast).
+- **T4: Sidebar & base components** (modernized sidebar, input fields, tables, action bars).
+- **T5: Per-module polish** (facturación, inventario, clientes, reportes, contabilidad).
+
+## Constraints
+
+- Branch `feat/inventory-export-print-redesign`.
+- Code and comments in English; UI labels in Spanish (Dominican Republic context: ITBIS, not IVA).
+- Renderer is sandboxed (`contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`); file system and `exceljs` operations belong in the main process.
+- No `Co-Authored-By` or AI attribution in commits. No commits in this turn (reviewed by Claude).
+
+## TDD
+
+Mode: off. Runner: `npm run test:behavior` (`node --test tests/behavior/*.test.cjs`).
+
+## Tasks
+
+- [/] T1 Inventory export to real .xlsx (in progress)
+  - Install `exceljs` and keep lockfile in sync.
+  - Implement pure workbook builder in `lib/xlsx-builder.cjs`.
+  - Expose `desktop:save-xlsx` IPC handler in `main.js`.
+  - Expose `saveXlsx` in `preload.js`.
+  - Update `export_catalog` action and `#inv-export-btn` in `renderer.js`.
+  - Add behavior test in `tests/behavior/inventory-export-xlsx.test.cjs`.
+- [ ] T2 Printable inventory report
+- [ ] T3 Design tokens & contrast redesign
+- [ ] T4 Sidebar & base components redesign
+- [ ] T5 Per-module polish
+
+## Acceptance criteria (T1)
+
+- Clicking "Exportar Excel" in the inventory module prompts a save dialog defaulting to the desktop with `.xlsx` extension.
+- Generated `.xlsx` contains:
+  - Title row (bold, large) and subtitle row with generation timestamp, then a blank row, then headers.
+  - Header row with navy fill (`FF0F2744`), bold white text, centered, thin borders, frozen panes below headers, and autofilter enabled.
+  - Data columns: SKU, Nombre, Tipo, Precio, Costo, Existencia, Controla stock (Sí/No), ITBIS %, Descuento %, Categoría, Unidad, Activo (Sí/No).
+  - Proper data types: money formatted as `#,##0.00`, integer as `#,##0`, percent as `0.00%`, numerics right-aligned, zebra striping with light gray fill (`FFF1F5F9`) on alternate rows, thin borders.
+- Canceling the save dialog does not produce errors or alerts.
+- Renderer no longer outputs comma-separated CSV for inventory export.
+
+## Checks
+
+- `npm run test:behavior`
+- `npx eslint main.js preload.js renderer.js lib tests`
+- Smoke test `node -e "require('./lib/xlsx-builder.cjs')"` writing and reading back a sample `.xlsx`.
+
+## Progress
+
+- 2026-11-11: T1 started. Tasks file created.
+- 2026-11-11: T1 completed. `exceljs` installed, `lib/xlsx-builder.cjs` implemented, `desktop:save-xlsx` IPC wired in `main.js` and `preload.js`, `renderer.js` export_catalog action and button updated, behavior tests added in `tests/behavior/inventory-export-xlsx.test.cjs`. Tests: 178 pass.
+
+## Next step
+
+Claude reviews diff and commits T1. Next task is T2 (printable inventory report).

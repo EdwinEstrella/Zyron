@@ -4769,12 +4769,6 @@ const productsNumOr = (v, def) => {
     return Number.isFinite(n) ? n : def;
 };
 
-const productsCsvEsc = (v) => {
-    const s = String(v ?? '');
-    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
-    return s;
-};
-
 const productsFriendlyDbError = (err, sku) => {
     if (!err) return null;
     const msg = String(err.message || '');
@@ -5183,42 +5177,61 @@ const productsManageViaDb = async (body) => {
             });
             if (pErr) return { data: { ok: false, error: pErr.message }, error: null };
             const res = await productsInvokeListCatalogLike(tenantId, prows || []);
-            const lines = [
-                [
-                    'sku',
-                    'name',
-                    'item_kind',
-                    'price',
-                    'cost_price',
-                    'stock',
-                    'tracks_stock',
-                    'tax_rate_default',
-                    'discount_default',
-                    'category',
-                    'unit',
-                    'is_active'
-                ].join(',')
+            const columns = [
+                { header: 'SKU', key: 'sku', width: 16, type: 'text' },
+                { header: 'Nombre', key: 'name', width: 32, type: 'text' },
+                { header: 'Tipo', key: 'item_kind', width: 14, type: 'text' },
+                { header: 'Precio', key: 'price', width: 14, type: 'money' },
+                { header: 'Costo', key: 'cost_price', width: 14, type: 'money' },
+                { header: 'Existencia', key: 'stock', width: 14, type: 'integer' },
+                { header: 'Controla stock (Sí/No)', key: 'tracks_stock', width: 22, type: 'text' },
+                { header: 'ITBIS %', key: 'tax_rate_default', width: 14, type: 'percent' },
+                { header: 'Descuento %', key: 'discount_default', width: 14, type: 'percent' },
+                { header: 'Categoría', key: 'category', width: 20, type: 'text' },
+                { header: 'Unidad', key: 'unit', width: 16, type: 'text' },
+                { header: 'Activo (Sí/No)', key: 'is_active', width: 16, type: 'text' }
             ];
+            const numOrNull = (v) => {
+                if (v == null || v === '') return null;
+                const n = Number(v);
+                return Number.isFinite(n) ? n : null;
+            };
+            // The DB columns (tax_rate_default, discount_default) store percent points (e.g. 18 = 18%); always divide by 100.
+            const pctOrNull = (v) => {
+                if (v == null || v === '') return null;
+                const n = Number(v);
+                return Number.isFinite(n) ? n / 100 : null;
+            };
+            const rows = [];
             for (const r of res) {
-                lines.push(
-                    [
-                        productsCsvEsc(r.sku),
-                        productsCsvEsc(r.name),
-                        r.item_kind || 'product',
-                        String(r.price ?? ''),
-                        r.cost_price == null ? '' : String(r.cost_price),
-                        String(r.stock ?? ''),
-                        r.tracks_stock === false ? '0' : '1',
-                        r.tax_rate_default == null ? '' : String(r.tax_rate_default),
-                        r.discount_default == null ? '' : String(r.discount_default),
-                        productsCsvEsc(r.category?.label || ''),
-                        productsCsvEsc(r.unit?.label || ''),
-                        r.is_active === false ? '0' : '1'
-                    ].join(',')
-                );
+                const isSvc = r.item_kind === 'service';
+                rows.push({
+                    sku: r.sku || '',
+                    name: r.name || '',
+                    item_kind: isSvc ? 'Servicio' : 'Producto',
+                    price: numOrNull(r.price),
+                    cost_price: numOrNull(r.cost_price),
+                    stock: isSvc ? null : numOrNull(r.stock),
+                    tracks_stock: r.tracks_stock === false ? 'No' : 'Sí',
+                    tax_rate_default: pctOrNull(r.tax_rate_default),
+                    discount_default: pctOrNull(r.discount_default),
+                    category: r.category?.label || '',
+                    unit: r.unit?.label || r.unit?.code || '',
+                    is_active: r.is_active === false ? 'No' : 'Sí'
+                });
             }
-            const csv = '\ufeff' + lines.join('\n');
-            return { data: { ok: true, format: 'csv', filename: 'catalogo_productos.csv', csv }, error: null };
+            return {
+                data: {
+                    ok: true,
+                    format: 'xlsx',
+                    filename: 'catalogo_productos.xlsx',
+                    title: 'Catálogo de Productos',
+                    sheetName: 'Inventario',
+                    columns,
+                    rows
+                },
+                error: null
+            };
         }
         return { data: { error: 'Unknown action' }, error: null };
     } catch (e) {
@@ -10798,7 +10811,7 @@ const renderInventarioModule = async () => {
         <div class="flex flex-wrap items-center gap-2">
             <button type="button" id="inv-export-btn" class="flex items-center gap-1.5 rounded-md px-3 py-2 text-sm text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface">${icon(
                 'download'
-            )}Exportar CSV</button>
+            )}Exportar Excel</button>
             <div class="flex divide-x divide-outline-variant/40 overflow-hidden rounded-md border border-outline-variant/50" role="group" aria-label="Acciones del articulo seleccionado">
                 <button type="button" id="inv-view-selected" class="${segBtn}" ${selectedId ? '' : 'disabled'}>${icon('visibility')}Ver</button>
                 <button type="button" id="inv-edit-selected" class="${segBtn}" ${selectedId ? '' : 'disabled'}>${icon('edit')}Editar</button>
@@ -11267,16 +11280,27 @@ const renderInventarioModule = async () => {
     document.getElementById('inv-export-btn')?.addEventListener('click', async () => {
         const res = await productsManageViaDb({ tenantId: tid, action: 'export_catalog' });
         const u = unwrapFnInvoke(res);
-        if (u.err || !u.data?.csv) {
-            window.ZyronDialog.alert(u.err || u.data?.error || 'Export fallo');
+        if (u.err || !u.data?.ok || !u.data?.columns || !u.data?.rows) {
+            window.ZyronDialog.alert(u.err || u.data?.error || 'Error al exportar catálogo');
             return;
         }
-        const blob = new Blob([u.data.csv], { type: 'text/csv;charset=utf-8' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = u.data.filename || 'catalogo.csv';
-        a.click();
-        URL.revokeObjectURL(a.href);
+        if (!window.electronAPI?.saveXlsx) {
+            window.ZyronDialog.alert('La exportación a Excel no está disponible en este entorno.');
+            return;
+        }
+        const exportRes = await window.electronAPI.saveXlsx({
+            filename: u.data.filename || 'catalogo_productos.xlsx',
+            sheetName: u.data.sheetName || 'Inventario',
+            title: u.data.title || 'Catálogo de Productos',
+            subtitle: `Generado: ${new Date().toLocaleDateString('es-DO')} ${new Date().toLocaleTimeString('es-DO')}`,
+            columns: u.data.columns,
+            rows: u.data.rows
+        });
+        const eu = unwrapFnInvoke(exportRes);
+        if (eu.err || eu.data?.error) {
+            window.ZyronDialog.alert(eu.err || eu.data?.error || 'Error al guardar el archivo Excel');
+            return;
+        }
     });
 
     document.getElementById('inv-cat-seed')?.addEventListener('click', async () => {

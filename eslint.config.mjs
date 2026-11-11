@@ -55,6 +55,8 @@ export default [
       'forge.config.js',
       'main.js',
       'preload.js',
+      'lib/**/*.cjs',
+      'lib/**/*.js',
       'playwright.config.cjs',
       'scripts/**/*.cjs',
       'tests/**/*.cjs',
